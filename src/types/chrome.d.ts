@@ -16,7 +16,14 @@ declare global {
       }
 
       interface MessageHandlers {
-        addListener(callback: (message: any, sender: MessageSender, sendResponse: (response?: any) => void) => boolean | void): void;
+        addListener(
+          callback: (
+            message: any,
+            sender: MessageSender,
+            sendResponse: (response?: any) => void
+          ) => boolean | void
+        ): void;
+        // eslint-disable-next-line @typescript-eslint/ban-types
         removeListener(callback: Function): void;
       }
 

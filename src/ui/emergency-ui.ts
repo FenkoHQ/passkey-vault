@@ -15,7 +15,7 @@ class EmergencyUIController {
   private state: EmergencyUIState = {
     isVisible: false,
     isAuthenticated: false,
-    currentTab: 'passkeys'
+    currentTab: 'passkeys',
   };
 
   private container: HTMLElement | null = null;
@@ -348,17 +348,17 @@ class EmergencyUIController {
     const tabs = this.container.querySelectorAll('.passext-tab');
     const contents = this.container.querySelectorAll('.passext-tab-content');
 
-    tabs.forEach(tab => {
+    tabs.forEach((tab) => {
       tab.addEventListener('click', () => {
         const tabName = tab.getAttribute('data-tab');
         if (!tabName) return;
 
         // Update active tab
-        tabs.forEach(t => t.classList.remove('active'));
+        tabs.forEach((t) => t.classList.remove('active'));
         tab.classList.add('active');
 
         // Update active content
-        contents.forEach(content => {
+        contents.forEach((content) => {
           content.classList.add('passext-hidden');
         });
 
@@ -474,7 +474,9 @@ class EmergencyUIController {
   private async handleLogin(): Promise<void> {
     if (!this.container) return;
 
-    const passwordInput = this.container.querySelector('#passext-master-password') as HTMLInputElement;
+    const passwordInput = this.container.querySelector(
+      '#passext-master-password'
+    ) as HTMLInputElement;
     const errorDiv = this.container.querySelector('#passext-auth-error') as HTMLElement;
 
     // Placeholder authentication logic

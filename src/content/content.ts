@@ -51,7 +51,7 @@ class ContentScript {
       const script = document.createElement('script');
       script.src = chrome.runtime.getURL('webauthn-inject.js');
       script.onload = function () {
-        // @ts-ignore
+        // @ts-expect-error script element type doesn't have remove method
         this.remove();
       };
       (document.head || document.documentElement).appendChild(script);
