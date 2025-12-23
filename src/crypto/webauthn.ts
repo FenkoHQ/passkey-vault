@@ -18,7 +18,7 @@ function arrayBufferToBase64URL(buffer: ArrayBuffer): string {
 // Helper to convert Base64URL to ArrayBuffer
 function base64URLToArrayBuffer(base64url: string): ArrayBuffer {
   const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = base64.padEnd(base64.length + (4 - base64.length % 4) % 4, '=');
+  const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
   const binary = atob(padded);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
@@ -115,7 +115,7 @@ export async function createAttestation(
 
   return {
     attestationObject,
-    clientDataJSON,
+    clientDataJSON: clientDataJSON.buffer,
   };
 }
 
@@ -158,19 +158,24 @@ function createAttestationObject(
   // Combine into authData
   const authData = new Uint8Array(
     rpIdHash.length +
-    flags.length +
-    counter.length +
-    credentialIdLength.length +
-    credentialId.length +
-    coseKey.length
+      flags.length +
+      counter.length +
+      credentialIdLength.length +
+      credentialId.length +
+      coseKey.length
   );
 
   let offset = 0;
-  authData.set(rpIdHash, offset); offset += rpIdHash.length;
-  authData.set(flags, offset); offset += flags.length;
-  authData.set(counter, offset); offset += counter.length;
-  authData.set(credentialIdLength, offset); offset += credentialIdLength.length;
-  authData.set(credentialId, offset); offset += credentialId.length;
+  authData.set(rpIdHash, offset);
+  offset += rpIdHash.length;
+  authData.set(flags, offset);
+  offset += flags.length;
+  authData.set(counter, offset);
+  offset += counter.length;
+  authData.set(credentialIdLength, offset);
+  offset += credentialIdLength.length;
+  authData.set(credentialId, offset);
+  offset += credentialId.length;
   authData.set(coseKey, offset);
 
   return authData.buffer;
@@ -183,7 +188,11 @@ export async function createAssertion(
   credentialId: Uint8Array,
   privateKey: CryptoKey,
   counter: number = 0
-): Promise<{ assertionObject: ArrayBuffer; clientDataJSON: ArrayBuffer; authenticatorData: ArrayBuffer }> {
+): Promise<{
+  assertionObject: ArrayBuffer;
+  clientDataJSON: ArrayBuffer;
+  authenticatorData: ArrayBuffer;
+}> {
   // Create clientDataJSON
   const clientData = {
     type: 'webauthn.get',
@@ -220,7 +229,7 @@ export async function createAssertion(
 
   return {
     assertionObject: signature,
-    clientDataJSON,
+    clientDataJSON: clientDataJSON.buffer,
     authenticatorData: authenticatorData.buffer,
   };
 }

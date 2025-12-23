@@ -1,5 +1,13 @@
 // Jest setup file for test environment
 
+// Polyfill TextEncoder and TextDecoder for jsdom environment
+if (typeof TextEncoder === 'undefined') {
+  global.TextEncoder = require('util').TextEncoder;
+}
+if (typeof TextDecoder === 'undefined') {
+  global.TextDecoder = require('util').TextDecoder;
+}
+
 // Mock Chrome APIs
 const mockChrome = {
   runtime: {
@@ -55,27 +63,11 @@ Object.defineProperty(global, 'navigator', {
   writable: true,
 });
 
-// Mock crypto API for testing
-const mockCrypto = {
-  subtle: {
-    encrypt: jest.fn(),
-    decrypt: jest.fn(),
-    deriveKey: jest.fn(),
-    generateKey: jest.fn(),
-    sign: jest.fn(),
-    verify: jest.fn(),
-    digest: jest.fn(),
-  },
-  getRandomValues: jest.fn((array: Uint8Array) => {
-    for (let i = 0; i < array.length; i++) {
-      array[i] = Math.floor(Math.random() * 256);
-    }
-    return array;
-  }),
-};
+// Use real crypto API from Node.js for testing
+const nodeCrypto = require('crypto').webcrypto;
 
 Object.defineProperty(global, 'crypto', {
-  value: mockCrypto,
+  value: nodeCrypto,
   writable: true,
 });
 
@@ -130,4 +122,4 @@ global.console = {
 };
 
 // Export mocks for use in tests
-export { mockChrome, mockNavigator, mockCrypto };
+export { mockChrome, mockNavigator };

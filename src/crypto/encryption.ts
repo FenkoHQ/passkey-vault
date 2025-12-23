@@ -1,4 +1,5 @@
-import { pbkdf2Async, sha256 } from '@noble/hashes/sha256';
+import { pbkdf2 } from '@noble/hashes/pbkdf2';
+import { sha256 } from '@noble/hashes/sha256';
 import { gcm } from '@noble/ciphers/aes';
 import { randomBytes } from '@noble/hashes/utils';
 
@@ -9,7 +10,7 @@ import { randomBytes } from '@noble/hashes/utils';
 
 export interface EncryptionResult {
   data: string; // Base64 encoded encrypted data
-  iv: string;   // Base64 encoded initialization vector
+  iv: string; // Base64 encoded initialization vector
   salt: string; // Base64 encoded salt
   algorithm: string;
 }
@@ -22,33 +23,26 @@ export interface EncryptionKey {
 const ENCRYPTION_CONFIG = {
   algorithm: 'AES-256-GCM',
   keyLength: 32, // 256 bits
-  ivLength: 12,   // 96 bits for GCM
+  ivLength: 12, // 96 bits for GCM
   saltLength: 32, // 256 bits
   iterations: 100000, // PBKDF2 iterations
-  tagLength: 16  // 128 bits authentication tag
+  tagLength: 16, // 128 bits authentication tag
 } as const;
 
 /**
  * Derives encryption key from password using PBKDF2
  */
-export async function deriveKey(
-  password: string,
-  salt?: Uint8Array
-): Promise<EncryptionKey> {
+export async function deriveKey(password: string, salt?: Uint8Array): Promise<EncryptionKey> {
   const keySalt = salt || randomBytes(ENCRYPTION_CONFIG.saltLength);
 
-  const key = await pbkdf2Async(
-    new TextEncoder().encode(password),
-    keySalt,
-    {
-      c: ENCRYPTION_CONFIG.iterations,
-      dkLen: ENCRYPTION_CONFIG.keyLength
-    }
-  );
+  const key = pbkdf2(sha256, new TextEncoder().encode(password), keySalt, {
+    c: ENCRYPTION_CONFIG.iterations,
+    dkLen: ENCRYPTION_CONFIG.keyLength,
+  });
 
   return {
     key: new Uint8Array(key),
-    salt: keySalt
+    salt: keySalt,
   };
 }
 
@@ -69,7 +63,7 @@ export async function encrypt(
     data: btoa(String.fromCharCode(...encrypted)),
     iv: btoa(String.fromCharCode(...initVector)),
     salt: '', // Salt is handled at key derivation level
-    algorithm: ENCRYPTION_CONFIG.algorithm
+    algorithm: ENCRYPTION_CONFIG.algorithm,
   };
 }
 
@@ -83,7 +77,9 @@ export async function decrypt(
 ): Promise<string> {
   try {
     const encrypted = new Uint8Array(
-      atob(encryptedData).split('').map(char => char.charCodeAt(0))
+      atob(encryptedData)
+        .split('')
+        .map((char) => char.charCodeAt(0))
     );
 
     const cipher = gcm(key, iv);
@@ -124,12 +120,19 @@ export async function decryptWithPassword(
   password: string
 ): Promise<string> {
   try {
-    const { key } = await deriveKey(password,
-      new Uint8Array(atob(salt).split('').map(char => char.charCodeAt(0)))
+    const { key } = await deriveKey(
+      password,
+      new Uint8Array(
+        atob(salt)
+          .split('')
+          .map((char) => char.charCodeAt(0))
+      )
     );
 
     const initVector = new Uint8Array(
-      atob(iv).split('').map(char => char.charCodeAt(0))
+      atob(iv)
+        .split('')
+        .map((char) => char.charCodeAt(0))
     );
 
     const result = await decrypt(encryptedData, key, initVector);
@@ -169,10 +172,7 @@ export async function createChecksum(data: string): Promise<string> {
 /**
  * Verifies data integrity using checksum
  */
-export async function verifyChecksum(
-  data: string,
-  expectedChecksum: string
-): Promise<boolean> {
+export async function verifyChecksum(data: string, expectedChecksum: string): Promise<boolean> {
   const actualChecksum = await createChecksum(data);
   return actualChecksum === expectedChecksum;
 }
@@ -221,7 +221,7 @@ export class SessionKeyManager {
 
     this.keys.set(sessionId, {
       key,
-      expires: Date.now() + ttlMs
+      expires: Date.now() + ttlMs,
     });
   }
 

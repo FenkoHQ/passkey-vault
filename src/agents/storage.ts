@@ -3,16 +3,16 @@ import {
   PasskeyMetadata,
   EncryptedBackup,
   BackupFile,
-  SecurityContext
-} from '@types/index';
+  SecurityContext,
+} from '../types/index';
 import {
   encryptWithPassword,
   decryptWithPassword,
   createChecksum,
   verifyChecksum,
   generateSecureRandom,
-  secureWipe
-} from '@crypto/index';
+  secureWipe,
+} from '../crypto/index';
 
 /**
  * Storage Agent - Manages encrypted storage of passkeys
@@ -68,10 +68,7 @@ export class StorageAgent {
   /**
    * Store a passkey with encryption
    */
-  async encryptAndStore(
-    passkey: PasskeyData,
-    masterPassword: string
-  ): Promise<void> {
+  async encryptAndStore(passkey: PasskeyData, masterPassword: string): Promise<void> {
     await this.ensureInitialized();
 
     try {
@@ -93,14 +90,13 @@ export class StorageAgent {
         ...encrypted,
         checksum,
         createdAt: passkey.createdAt.getTime(),
-        lastUsed: passkey.lastUsed.getTime()
+        lastUsed: passkey.lastUsed.getTime(),
       };
 
       await chrome.storage.local.set({ [storageKey]: storageData });
 
       // Update metadata
       await this.updateMetadata(passkey.id, 'add');
-
     } catch (error) {
       console.error('Failed to store passkey:', error);
       throw new Error(`Failed to store passkey: ${error.message}`);
@@ -110,10 +106,7 @@ export class StorageAgent {
   /**
    * Retrieve and decrypt a passkey
    */
-  async retrieveAndDecrypt(
-    passkeyId: string,
-    masterPassword: string
-  ): Promise<PasskeyData | null> {
+  async retrieveAndDecrypt(passkeyId: string, masterPassword: string): Promise<PasskeyData | null> {
     await this.ensureInitialized();
 
     try {
@@ -143,6 +136,10 @@ export class StorageAgent {
       // Parse passkey data
       const passkey = JSON.parse(decryptedData) as PasskeyData;
 
+      // Convert date strings back to Date objects
+      passkey.createdAt = new Date(passkey.createdAt);
+      passkey.lastUsed = new Date(passkey.lastUsed);
+
       // Validate the decrypted data
       this.validatePasskeyData(passkey);
 
@@ -150,14 +147,15 @@ export class StorageAgent {
       await this.updateLastUsed(passkeyId);
 
       return passkey;
-
     } catch (error) {
       console.error('Failed to retrieve passkey:', error);
 
       // Don't expose specific error details for security
-      if (error.message.includes('Invalid password') ||
-          error.message.includes('Decryption failed') ||
-          error.message.includes('Data integrity check failed')) {
+      if (
+        error.message.includes('Invalid password') ||
+        error.message.includes('Decryption failed') ||
+        error.message.includes('Data integrity check failed')
+      ) {
         throw new Error('Invalid master password or corrupted data');
       }
 
@@ -194,7 +192,6 @@ export class StorageAgent {
 
       // Update metadata
       await this.updateMetadata(passkeyId, 'remove');
-
     } catch (error) {
       console.error('Failed to delete passkey:', error);
       throw new Error(`Failed to delete passkey: ${error.message}`);
@@ -216,25 +213,36 @@ export class StorageAgent {
         version: '1.0',
         timestamp: Date.now(),
         passkeys,
-        metadata: await this.getMetadata()
+        metadata: await this.getMetadata(),
       };
 
       const serializedPayload = JSON.stringify(payload);
 
       // Encrypt the backup
       const encrypted = await encryptWithPassword(serializedPayload, masterPassword);
-      encrypted.version = '1.0';
+
+      // Create checksum
+      const checksum = await createChecksum(serializedPayload);
+
+      const backup: EncryptedBackup = {
+        version: '1.0',
+        algorithm: encrypted.algorithm,
+        salt: encrypted.salt,
+        iv: encrypted.iv,
+        data: encrypted.data,
+        checksum,
+        timestamp: Date.now(),
+      };
 
       // Store backup locally as well
       await chrome.storage.local.set({
         [this.BACKUP_KEY]: {
-          ...encrypted,
-          createdAt: Date.now()
-        }
+          ...backup,
+          createdAt: Date.now(),
+        },
       });
 
-      return encrypted;
-
+      return backup;
     } catch (error) {
       console.error('Failed to export backup:', error);
       throw new Error(`Failed to export backup: ${error.message}`);
@@ -244,10 +252,7 @@ export class StorageAgent {
   /**
    * Import encrypted backup
    */
-  async importEncryptedBackup(
-    backup: EncryptedBackup,
-    masterPassword: string
-  ): Promise<void> {
+  async importEncryptedBackup(backup: EncryptedBackup, masterPassword: string): Promise<void> {
     await this.ensureInitialized();
 
     try {
@@ -269,16 +274,18 @@ export class StorageAgent {
 
       // Import each passkey
       for (const passkey of backupPayload.passkeys) {
+        // Convert date strings to Date objects
+        passkey.createdAt = new Date(passkey.createdAt);
+        passkey.lastUsed = new Date(passkey.lastUsed);
         await this.encryptAndStore(passkey, masterPassword);
       }
 
       // Update metadata
       if (backupPayload.metadata) {
         await chrome.storage.local.set({
-          [this.METADATA_KEY]: backupPayload.metadata
+          [this.METADATA_KEY]: backupPayload.metadata,
         });
       }
-
     } catch (error) {
       console.error('Failed to import backup:', error);
       throw new Error(`Failed to import backup: ${error.message}`);
@@ -298,9 +305,7 @@ export class StorageAgent {
     try {
       // Get all storage keys for this extension
       const items = await chrome.storage.local.get();
-      const extensionKeys = Object.keys(items).filter(key =>
-        key.startsWith(this.STORAGE_PREFIX)
-      );
+      const extensionKeys = Object.keys(items).filter((key) => key.startsWith(this.STORAGE_PREFIX));
 
       // Calculate used space
       let usedBytes = 0;
@@ -314,15 +319,14 @@ export class StorageAgent {
       return {
         usedBytes,
         totalBytes: 5242880, // Chrome's local storage limit (approx 5MB)
-        passkeyCount: metadata.passkeys.length
+        passkeyCount: metadata.passkeys.length,
       };
-
     } catch (error) {
       console.error('Failed to get storage stats:', error);
       return {
         usedBytes: 0,
         totalBytes: 5242880,
-        passkeyCount: 0
+        passkeyCount: 0,
       };
     }
   }
@@ -336,18 +340,18 @@ export class StorageAgent {
     try {
       // Get all extension keys
       const items = await chrome.storage.local.get();
-      const extensionKeys = Object.keys(items).filter(key =>
-        key.startsWith(this.STORAGE_PREFIX) ||
-        key === this.BACKUP_KEY ||
-        key === this.METADATA_KEY ||
-        key === this.SETTINGS_KEY
+      const extensionKeys = Object.keys(items).filter(
+        (key) =>
+          key.startsWith(this.STORAGE_PREFIX) ||
+          key === this.BACKUP_KEY ||
+          key === this.METADATA_KEY ||
+          key === this.SETTINGS_KEY
       );
 
       // Remove all extension data
       await chrome.storage.local.remove(extensionKeys);
 
       this.masterPasswordHash = null;
-
     } catch (error) {
       console.error('Failed to perform emergency wipe:', error);
       throw new Error(`Emergency wipe failed: ${error.message}`);
@@ -366,9 +370,17 @@ export class StorageAgent {
    */
   private validatePasskeyData(passkey: PasskeyData): void {
     const requiredFields = [
-      'id', 'name', 'rpId', 'rpName',
-      'userId', 'userName', 'publicKey',
-      'privateKey', 'counter', 'createdAt', 'lastUsed'
+      'id',
+      'name',
+      'rpId',
+      'rpName',
+      'userId',
+      'userName',
+      'publicKey',
+      'privateKey',
+      'counter',
+      'createdAt',
+      'lastUsed',
     ];
 
     for (const field of requiredFields) {
@@ -383,8 +395,7 @@ export class StorageAgent {
     }
 
     // Validate dates
-    if (!(passkey.createdAt instanceof Date) ||
-        !(passkey.lastUsed instanceof Date)) {
+    if (!(passkey.createdAt instanceof Date) || !(passkey.lastUsed instanceof Date)) {
       throw new Error('Invalid date fields');
     }
   }
@@ -403,8 +414,8 @@ export class StorageAgent {
         settings: {
           autoBackup: false,
           biometricAuth: false,
-          lockTimeout: 30
-        }
+          lockTimeout: 30,
+        },
       };
 
       await chrome.storage.local.set({ [this.METADATA_KEY]: initialMetadata });
@@ -429,16 +440,16 @@ export class StorageAgent {
       name: '', // Will be filled by caller if needed
       rpId: '',
       createdAt: new Date(),
-      lastUsed: new Date()
+      lastUsed: new Date(),
     };
 
     if (operation === 'add') {
       // Remove if exists, then add (update operation)
-      metadata.passkeys = metadata.passkeys.filter(p => p.id !== passkeyId);
+      metadata.passkeys = metadata.passkeys.filter((p) => p.id !== passkeyId);
       metadata.passkeys.push(passkeyMetadata);
     } else {
       // Remove operation
-      metadata.passkeys = metadata.passkeys.filter(p => p.id !== passkeyId);
+      metadata.passkeys = metadata.passkeys.filter((p) => p.id !== passkeyId);
     }
 
     metadata.lastUpdated = Date.now();
@@ -456,7 +467,7 @@ export class StorageAgent {
     if (result[storageKey]) {
       const updatedData = {
         ...result[storageKey],
-        lastUsed: Date.now()
+        lastUsed: Date.now(),
       };
 
       await chrome.storage.local.set({ [storageKey]: updatedData });

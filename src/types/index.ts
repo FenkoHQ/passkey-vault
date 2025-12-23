@@ -16,11 +16,16 @@ export interface PasskeyData {
 }
 
 export interface PasskeyMetadata {
-  deviceType: string;
-  backupEligible: boolean;
-  backupState: boolean;
-  transports: string[];
-  algorithm: string;
+  id?: string;
+  name?: string;
+  rpId?: string;
+  deviceType?: string;
+  backupEligible?: boolean;
+  backupState?: boolean;
+  transports?: string[];
+  algorithm?: string;
+  createdAt?: Date;
+  lastUsed?: Date;
 }
 
 export interface EncryptedBackup {
@@ -101,7 +106,7 @@ export interface CredentialCreationOptions {
   excludeCredentials?: PublicKeyCredentialDescriptor[];
   authenticatorSelection?: AuthenticatorSelectionCriteria;
   attestation?: AttestationConveyancePreference;
-  extensions?: CredentialPropertiesExtension;
+  extensions?: any;
 }
 
 export interface CredentialRequestOptions {
@@ -110,7 +115,7 @@ export interface CredentialRequestOptions {
   rpId?: string;
   allowCredentials?: PublicKeyCredentialDescriptor[];
   userVerification?: UserVerificationRequirement;
-  extensions?: AuthenticationExtensionsClientInputs;
+  extensions?: any;
 }
 
 // Storage interfaces
@@ -124,9 +129,9 @@ export interface StorageArea {
 // Background script context
 export interface BackgroundContext {
   storage: StorageArea;
-  runtime: chrome.runtime.RuntimeStatic;
-  tabs: chrome.tabs.TabsStatic;
-  scripting: chrome.scripting.ScriptingStatic;
+  runtime: typeof chrome.runtime;
+  tabs: typeof chrome.tabs;
+  scripting: typeof chrome.scripting;
 }
 
 // Content script context
