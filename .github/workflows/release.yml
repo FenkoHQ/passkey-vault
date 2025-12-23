@@ -1,0 +1,127 @@
+name: Build and Release Extension
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    name: Build Extension
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm run test
+
+      - name: Run linter
+        run: npm run lint
+
+      - name: Run type check
+        run: npm run typecheck
+
+      - name: Build Chrome extension
+        run: npm run build:chrome
+
+      - name: Build Firefox extension
+        run: npm run build:firefox
+
+      - name: Create Chrome ZIP
+        run: |
+          cd dist && zip -r ../passkey-vault-chrome.zip . && cd ..
+
+      - name: Create Firefox ZIP
+        run: |
+          cd dist-firefox && zip -r ../passkey-vault-firefox.zip . && cd ..
+
+      - name: Upload Chrome artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: passkey-vault-chrome
+          path: dist/
+
+      - name: Upload Firefox artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: passkey-vault-firefox
+          path: dist-firefox/
+
+      - name: Upload Chrome ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: passkey-vault-chrome-zip
+          path: passkey-vault-chrome.zip
+
+      - name: Upload Firefox ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: passkey-vault-firefox-zip
+          path: passkey-vault-firefox.zip
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download Chrome ZIP artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: passkey-vault-chrome-zip
+
+      - name: Download Firefox ZIP artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: passkey-vault-firefox-zip
+
+      - name: Extract tag name
+        id: tag_name
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag_name.outputs.tag }}
+          name: PassKey Vault ${{ steps.tag_name.outputs.tag }}
+          draft: false
+          prerelease: ${{ contains(steps.tag_name.outputs.tag, 'alpha') || contains(steps.tag_name.outputs.tag, 'beta') || contains(steps.tag_name.outputs.tag, 'rc') }}
+          files: |
+            passkey-vault-chrome.zip
+            passkey-vault-firefox.zip
+          body: |
+            ## Installation
+
+            ### Chrome
+            1. Download `passkey-vault-chrome.zip`
+            2. Extract the ZIP file
+            3. Open `chrome://extensions/`
+            4. Enable "Developer mode"
+            5. Click "Load unpacked"
+            6. Select the extracted directory
+
+            ### Firefox
+            1. Download `passkey-vault-firefox.zip`
+            2. Extract the ZIP file
+            3. Open `about:debugging#/runtime/this-firefox`
+            4. Click "Load Temporary Add-on..."
+            5. Select the `manifest.json` file in the extracted directory
+
+            ---
+            See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for more information.
