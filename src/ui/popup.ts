@@ -20,6 +20,11 @@
   let importBtn: HTMLButtonElement;
   let clearBtn: HTMLButtonElement;
   let confirmModal: HTMLElement;
+  let searchInput: HTMLInputElement;
+  let searchClearBtn: HTMLButtonElement;
+
+  // Store all passkeys for filtering
+  let allPasskeys: any[] = [];
 
   // Initialize popup when DOM is loaded
   document.addEventListener('DOMContentLoaded', () => {
@@ -38,6 +43,8 @@
     exportFullBtn = document.getElementById('export-full-btn') as HTMLButtonElement;
     importBtn = document.getElementById('import-btn') as HTMLButtonElement;
     clearBtn = document.getElementById('clear-btn') as HTMLButtonElement;
+    searchInput = document.getElementById('search-input') as HTMLInputElement;
+    searchClearBtn = document.getElementById('search-clear') as HTMLButtonElement;
   }
 
   function createConfirmModal(): void {
@@ -118,11 +125,107 @@
     importBtn.addEventListener('click', openImportPage);
     clearBtn.addEventListener('click', clearAllPasskeys);
 
+    // Search functionality
+    searchInput.addEventListener('input', handleSearch);
+    searchClearBtn.addEventListener('click', clearSearch);
+
     // Also handle the import button in empty state
     const importEmptyBtn = document.getElementById('import-btn-empty');
     if (importEmptyBtn) {
       importEmptyBtn.addEventListener('click', openImportPage);
     }
+  }
+
+  function handleSearch(): void {
+    const query = searchInput.value.trim().toLowerCase();
+
+    // Toggle clear button visibility
+    searchClearBtn.style.display = query ? 'block' : 'none';
+
+    if (!query) {
+      renderPasskeys(allPasskeys);
+      return;
+    }
+
+    const filtered = filterAndSortPasskeys(allPasskeys, query);
+
+    if (filtered.length === 0) {
+      showNoResults(query);
+    } else {
+      renderPasskeys(filtered);
+    }
+  }
+
+  function clearSearch(): void {
+    searchInput.value = '';
+    searchClearBtn.style.display = 'none';
+    renderPasskeys(allPasskeys);
+    searchInput.focus();
+  }
+
+  /**
+   * Filter and sort passkeys based on search query
+   * Priority: domain match > username match (unless username contains @)
+   */
+  function filterAndSortPasskeys(passkeys: any[], query: string): any[] {
+    const hasAtSymbol = query.includes('@');
+
+    const scored = passkeys
+      .map((passkey) => {
+        const domain = (passkey.rpId || '').toLowerCase();
+        const username = (passkey.user?.name || '').toLowerCase();
+
+        const domainMatch = domain.includes(query);
+        const usernameMatch = username.includes(query);
+
+        if (!domainMatch && !usernameMatch) {
+          return null;
+        }
+
+        // Calculate score
+        let score = 0;
+
+        if (hasAtSymbol) {
+          // If query contains @, prefer username matches (likely searching for email)
+          if (usernameMatch) {
+            score += username.startsWith(query) ? 100 : 50;
+          }
+          if (domainMatch) {
+            score += domain.startsWith(query) ? 40 : 20;
+          }
+        } else {
+          // Default: prefer domain matches over username
+          if (domainMatch) {
+            score += domain.startsWith(query) ? 100 : 50;
+          }
+          if (usernameMatch) {
+            score += username.startsWith(query) ? 40 : 20;
+          }
+        }
+
+        return { passkey, score };
+      })
+      .filter((item): item is { passkey: any; score: number } => item !== null);
+
+    // Sort by score (highest first), then by creation date (newest first)
+    scored.sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+      return (b.passkey.createdAt || 0) - (a.passkey.createdAt || 0);
+    });
+
+    return scored.map((item) => item.passkey);
+  }
+
+  function showNoResults(query: string): void {
+    passkeyListEl.innerHTML = `
+      <div class="no-results">
+        <div class="no-results-icon">🔍</div>
+        <p>No passkeys found for "${popupEscapeHtml(query)}"</p>
+      </div>
+    `;
+    passkeyListEl.style.display = 'flex';
   }
 
   /**
@@ -139,9 +242,16 @@
       emptyStateEl.style.display = 'none';
       passkeyListEl.style.display = 'none';
 
+      // Clear search on reload
+      searchInput.value = '';
+      searchClearBtn.style.display = 'none';
+
       // Get passkeys from storage
       const result = await chrome.storage.local.get(POPUP_PASSKEY_STORAGE_KEY);
       const passkeys: any[] = result[POPUP_PASSKEY_STORAGE_KEY] || [];
+
+      // Store all passkeys for filtering
+      allPasskeys = passkeys;
 
       // Hide loading state
       loadingEl.style.display = 'none';
@@ -191,27 +301,51 @@
         createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       : 'Unknown';
 
-    const credentialIdShort = passkey.id ? passkey.id.substring(0, 16) + '...' : 'Unknown';
+    const credentialIdShort = passkey.id ? passkey.id.substring(0, 20) + '...' : 'Unknown';
 
     div.innerHTML = `
       <div class="passkey-header">
         <div class="passkey-info">
-          <div class="passkey-rp">${popupEscapeHtml(passkey.rpId || 'Unknown Site')}</div>
-          ${passkey.user?.name ? `<div class="passkey-username">👤 ${popupEscapeHtml(passkey.user.name)}</div>` : ''}
+          <span class="passkey-rp">${popupEscapeHtml(passkey.rpId || 'Unknown Site')}</span>
+          ${passkey.user?.name ? `<span class="passkey-username">${popupEscapeHtml(passkey.user.name)}</span>` : ''}
         </div>
-        <button class="delete-btn" data-id="${popupEscapeHtml(passkey.id)}">Delete</button>
+        <div class="passkey-actions">
+          <button class="expand-btn" title="Details">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <button class="delete-btn" data-id="${popupEscapeHtml(passkey.id)}">Del</button>
+        </div>
       </div>
-      <div class="passkey-meta">
-        <span title="Created">${popupEscapeHtml(dateStr)}</span>
-        <span title="Credential ID">🔑 ${popupEscapeHtml(credentialIdShort)}</span>
+      <div class="passkey-details">
+        <div class="passkey-detail-row">
+          <span class="label">Added:</span>
+          <span class="value">${popupEscapeHtml(dateStr)}</span>
+        </div>
+        <div class="passkey-detail-row">
+          <span class="label">Key ID:</span>
+          <span class="value">${popupEscapeHtml(credentialIdShort)}</span>
+        </div>
       </div>
     `;
 
+    // Add expand/collapse handler
+    const expandBtn = div.querySelector('.expand-btn') as HTMLButtonElement;
+    const details = div.querySelector('.passkey-details') as HTMLElement;
+    expandBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isExpanded = details.classList.toggle('show');
+      expandBtn.classList.toggle('expanded', isExpanded);
+      div.classList.toggle('expanded', isExpanded);
+    });
+
     // Add delete handler
     const deleteBtn = div.querySelector('.delete-btn') as HTMLButtonElement;
-    deleteBtn.addEventListener('click', () =>
-      deletePasskey(passkey.id, passkey.rpId || 'this site')
-    );
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deletePasskey(passkey.id, passkey.rpId || 'this site');
+    });
 
     return div;
   }
