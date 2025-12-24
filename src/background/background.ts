@@ -253,6 +253,19 @@ class BackgroundService {
       }
       const publicKeyBase64 = btoa(publicKeyBinary);
 
+      // Derive PRF key for this credential
+      const prfKeyBytes = crypto.getRandomValues(new Uint8Array(32));
+      const prfKeyBase64 = this.arrayBufferToBase64URL(prfKeyBytes.buffer);
+
+      // Handle PRF extension during registration if requested
+      const prfInput = options?.extensions?.prf;
+      const prfEvalInput = this.selectPrfEval(prfInput, credentialIdBase64);
+      const prfResults = prfEvalInput
+        ? await this.computePrfResults(prfKeyBytes.buffer, prfEvalInput)
+        : null;
+      const extensionsData = prfResults ? this.encodePrfExtension(prfResults) : null;
+      const clientExtensionResults = this.buildClientExtensionResults(prfResults);
+
       // Create clientDataJSON
       const clientData = {
         type: 'webauthn.create',
@@ -266,7 +279,9 @@ class BackgroundService {
         rpId,
         credentialId,
         publicKeyRaw,
-        true
+        true,
+        0,
+        extensionsData
       );
 
       // Create attestation object (using "none" attestation format)
@@ -295,6 +310,7 @@ class BackgroundService {
         publicKey: publicKeyBase64,
         createdAt: Date.now(),
         counter: 0,
+        prfKey: prfKeyBase64,
       });
 
       await chrome.storage.local.set({ [PASSKEY_STORAGE_KEY]: passkeys });
@@ -319,6 +335,7 @@ class BackgroundService {
             attestationObject: attestationObjectBase64,
           },
           authenticatorAttachment: 'cross-platform',
+          clientExtensionResults,
         },
       };
     } catch (error) {
@@ -419,6 +436,16 @@ class BackgroundService {
         };
         const clientDataJSONBytes = new TextEncoder().encode(JSON.stringify(clientData));
 
+        // Handle PRF extension if requested
+        const prfInput = options?.extensions?.prf;
+        const prfEvalInput = this.selectPrfEval(prfInput, passkey.id);
+        const prfKeyBuffer = await this.getOrCreatePrfKey(passkey);
+        const prfResults = prfEvalInput
+          ? await this.computePrfResults(prfKeyBuffer, prfEvalInput)
+          : null;
+        const extensionsData = prfResults ? this.encodePrfExtension(prfResults) : null;
+        const clientExtensionResults = this.buildClientExtensionResults(prfResults);
+
         // Create authenticator data
         passkey.counter = (passkey.counter || 0) + 1;
         const authenticatorData = await this.createAuthenticatorDataAsync(
@@ -426,7 +453,8 @@ class BackgroundService {
           null,
           null,
           false,
-          passkey.counter
+          passkey.counter,
+          extensionsData
         );
 
         // Sign the assertion
@@ -486,6 +514,7 @@ class BackgroundService {
               userHandle: userHandleBase64,
             },
             authenticatorAttachment: 'cross-platform',
+            clientExtensionResults,
           },
         };
       } catch (cryptoError) {
@@ -656,6 +685,261 @@ class BackgroundService {
     }
   }
 
+  private selectPrfEval(prfInput: any, credentialId?: string): any | null {
+    if (!prfInput) {
+      return null;
+    }
+    if (prfInput.eval) {
+      return prfInput.eval;
+    }
+    const map = prfInput.evalByCredential;
+    if (!map) {
+      return null;
+    }
+
+    const candidates = new Set<string>();
+    if (credentialId) {
+      candidates.add(credentialId);
+      try {
+        candidates.add(this.base64urlToBase64(credentialId));
+      } catch {
+        /* ignore */
+      }
+    }
+
+    for (const key of Object.keys(map)) {
+      if (candidates.has(key)) {
+        return map[key];
+      }
+      try {
+        const decoded = this.base64URLToArrayBuffer(key);
+        const asUrl = this.arrayBufferToBase64URL(decoded);
+        if (asUrl && candidates.has(asUrl)) {
+          return map[key];
+        }
+      } catch {
+        // ignore malformed keys
+      }
+    }
+
+    return null;
+  }
+
+  private async getOrCreatePrfKey(passkey: any): Promise<ArrayBuffer> {
+    if (passkey.prfKey) {
+      return this.decodeBase64Flexible(passkey.prfKey);
+    }
+
+    const privateKeyBytes = this.base64URLToArrayBuffer(passkey.privateKey);
+    const derived = await crypto.subtle.digest('SHA-256', privateKeyBytes);
+    passkey.prfKey = this.arrayBufferToBase64URL(derived);
+    return derived;
+  }
+
+  private normalizePrfInput(input: any): ArrayBuffer | null {
+    if (!input) {
+      return null;
+    }
+
+    // Direct buffers
+    if (input instanceof ArrayBuffer) {
+      return input;
+    }
+    if (ArrayBuffer.isView(input)) {
+      return input.buffer as ArrayBuffer;
+    }
+    if (input?.type === 'Buffer' && Array.isArray(input.data)) {
+      return new Uint8Array(input.data).buffer;
+    }
+    if (Array.isArray(input)) {
+      return new Uint8Array(input).buffer;
+    }
+
+    // Only process strings as base64
+    if (typeof input === 'string') {
+      try {
+        return this.base64URLToArrayBuffer(input);
+      } catch (e) {
+        try {
+          return this.decodeBase64Flexible(input);
+        } catch (err) {
+          console.warn('PassKey Vault: Failed to normalize PRF input string', err);
+          return null;
+        }
+      }
+    }
+
+    // Handle objects with numeric keys (serialized Uint8Array)
+    if (typeof input === 'object' && input !== null) {
+      const keys = Object.keys(input);
+      if (keys.length > 0 && keys.every((k) => !isNaN(Number(k)))) {
+        // Object with numeric keys - likely serialized typed array
+        const maxIndex = Math.max(...keys.map(Number));
+        const arr = new Uint8Array(maxIndex + 1);
+        for (const key of keys) {
+          arr[Number(key)] = input[key];
+        }
+        return arr.buffer;
+      }
+    }
+
+    console.warn(
+      'PassKey Vault: Unsupported PRF input type',
+      typeof input,
+      input?.constructor?.name
+    );
+    return null;
+  }
+
+  private async computePrfResults(prfKey: ArrayBuffer, evalInput: any): Promise<any | null> {
+    if (!evalInput) {
+      return null;
+    }
+    const results: any = { results: {} };
+    const first = this.normalizePrfInput(evalInput.first);
+    const second = this.normalizePrfInput(evalInput.second);
+
+    if (first) {
+      results.results.first = await this.hmacSha256(prfKey, first);
+    }
+    if (second) {
+      results.results.second = await this.hmacSha256(prfKey, second);
+    }
+
+    if (!results.results.first && !results.results.second) {
+      return null;
+    }
+
+    return results;
+  }
+
+  private async hmacSha256(keyBytes: ArrayBuffer, data: ArrayBuffer): Promise<ArrayBuffer> {
+    const key = await crypto.subtle.importKey(
+      'raw',
+      keyBytes,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    return crypto.subtle.sign('HMAC', key, data);
+  }
+
+  private buildClientExtensionResults(prfResults: any | null): any {
+    const baseResults: any = { credProps: { rk: true } };
+    if (!prfResults?.results) {
+      return baseResults;
+    }
+
+    const encoded: any = { results: {} };
+    if (prfResults.results.first) {
+      encoded.results.first = this.arrayBufferToBase64URL(prfResults.results.first);
+    }
+    if (prfResults.results.second) {
+      encoded.results.second = this.arrayBufferToBase64URL(prfResults.results.second);
+    }
+
+    if (encoded.results.first || encoded.results.second) {
+      baseResults.prf = encoded;
+    }
+
+    return baseResults;
+  }
+
+  private encodePrfExtension(prfResults: any | null): Uint8Array | null {
+    if (!prfResults?.results) {
+      return null;
+    }
+
+    const resultEntries: number[] = [];
+    let resultCount = 0;
+
+    if (prfResults.results.first) {
+      resultEntries.push(...this.encodeTextString('first'));
+      resultEntries.push(...this.encodeByteString(new Uint8Array(prfResults.results.first)));
+      resultCount++;
+    }
+
+    if (prfResults.results.second) {
+      resultEntries.push(...this.encodeTextString('second'));
+      resultEntries.push(...this.encodeByteString(new Uint8Array(prfResults.results.second)));
+      resultCount++;
+    }
+
+    if (resultCount === 0) {
+      return null;
+    }
+
+    const resultsMap = [...this.encodeMapHeader(resultCount), ...resultEntries];
+    const prfMap = [...this.encodeMapHeader(1), ...this.encodeTextString('results'), ...resultsMap];
+    const extensions = [...this.encodeMapHeader(1), ...this.encodeTextString('prf'), ...prfMap];
+
+    return new Uint8Array(extensions);
+  }
+
+  private encodeMapHeader(length: number): number[] {
+    if (length < 24) {
+      return [0xa0 + length];
+    }
+    if (length < 256) {
+      return [0xb8, length];
+    }
+    return [0xb9, (length >> 8) & 0xff, length & 0xff];
+  }
+
+  private encodeTextString(value: string): number[] {
+    const bytes = new TextEncoder().encode(value);
+    const header =
+      bytes.length < 24
+        ? [0x60 + bytes.length]
+        : bytes.length < 256
+          ? [0x78, bytes.length]
+          : [0x79, (bytes.length >> 8) & 0xff, bytes.length & 0xff];
+    return [...header, ...bytes];
+  }
+
+  private encodeByteString(bytes: Uint8Array): number[] {
+    if (bytes.length < 24) {
+      return [0x40 + bytes.length, ...bytes];
+    }
+    if (bytes.length < 256) {
+      return [0x58, bytes.length, ...bytes];
+    }
+    return [0x59, (bytes.length >> 8) & 0xff, bytes.length & 0xff, ...bytes];
+  }
+
+  private decodeBase64Flexible(value: any): ArrayBuffer {
+    if (value instanceof ArrayBuffer) {
+      return value;
+    }
+    if (ArrayBuffer.isView(value)) {
+      return value.buffer as ArrayBuffer;
+    }
+    if (value?.type === 'Buffer' && Array.isArray(value.data)) {
+      return new Uint8Array(value.data).buffer;
+    }
+
+    if (typeof value !== 'string') {
+      throw new TypeError('Invalid base64 input type');
+    }
+
+    // Try base64url first
+    try {
+      return this.base64URLToArrayBuffer(value);
+    } catch {
+      // fall through
+    }
+
+    // Try standard base64
+    const padded =
+      value.length % 4 === 0 ? value : value + '='.repeat((4 - (value.length % 4)) % 4);
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i) & 0xff;
+    }
+    return bytes.buffer;
+  }
+
   /**
    * Create authenticator data with proper format
    * Structure: rpIdHash (32) + flags (1) + counter (4) + [attestedCredentialData]
@@ -666,14 +950,19 @@ class BackgroundService {
     credentialId: Uint8Array | null,
     publicKeyRaw: ArrayBuffer | null,
     includeAttestedCredentialData: boolean,
-    counter: number = 0
+    counter: number = 0,
+    extensionsData?: Uint8Array | null
   ): Promise<ArrayBuffer> {
     // RP ID hash (SHA-256)
     const rpIdBytes = new TextEncoder().encode(rpId);
     const rpIdHash = new Uint8Array(await crypto.subtle.digest('SHA-256', rpIdBytes));
 
-    // Flags: UP (0x01) + UV (0x04) + AT (0x40) = 0x45 for registration, 0x05 for auth
-    const flags = new Uint8Array([includeAttestedCredentialData ? 0x45 : 0x05]);
+    // Flags: UP (0x01) + UV (0x04) + AT (0x40) + ED (0x80 when extensions present)
+    let flagsByte = includeAttestedCredentialData ? 0x45 : 0x05;
+    if (extensionsData && extensionsData.length > 0) {
+      flagsByte |= 0x80;
+    }
+    const flags = new Uint8Array([flagsByte]);
 
     // Counter (4 bytes, big-endian)
     const counterBytes = new Uint8Array(4);
@@ -698,7 +987,8 @@ class BackgroundService {
           aaguid.length +
           credentialIdLength.length +
           credentialId.length +
-          cosePublicKey.length
+          cosePublicKey.length +
+          (extensionsData?.length || 0)
       );
 
       let offset = 0;
@@ -715,17 +1005,27 @@ class BackgroundService {
       authData.set(credentialId, offset);
       offset += credentialId.length;
       authData.set(cosePublicKey, offset);
+      offset += cosePublicKey.length;
+      if (extensionsData && extensionsData.length > 0) {
+        authData.set(extensionsData, offset);
+      }
 
       return authData.buffer;
     } else {
       // No attested credential data (for authentication)
-      const authData = new Uint8Array(rpIdHash.length + flags.length + counterBytes.length);
+      const authData = new Uint8Array(
+        rpIdHash.length + flags.length + counterBytes.length + (extensionsData?.length || 0)
+      );
       let offset = 0;
       authData.set(rpIdHash, offset);
       offset += rpIdHash.length;
       authData.set(flags, offset);
       offset += flags.length;
       authData.set(counterBytes, offset);
+      offset += counterBytes.length;
+      if (extensionsData && extensionsData.length > 0) {
+        authData.set(extensionsData, offset);
+      }
 
       return authData.buffer;
     }

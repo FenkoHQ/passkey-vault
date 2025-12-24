@@ -435,9 +435,9 @@ class ContentScript {
     } else {
       response = {
         clientDataJSON: data.response.clientDataJSON,
-        authenticatorData: data.response.authenticatorData,
-        signature: data.response.signature,
-        userHandle: data.response.userHandle,
+        authenticatorData: data.response?.authenticatorData,
+        signature: data.response?.signature,
+        userHandle: data.response?.userHandle,
       };
     }
 
@@ -447,7 +447,8 @@ class ContentScript {
       rawId: data.rawId,
       type: data.type,
       response: response,
-      authenticatorAttachment: data.authenticatorAttachment,
+      authenticatorAttachment: data?.authenticatorAttachment,
+      clientExtensionResults: data?.clientExtensionResults,
     };
   }
 

@@ -53,9 +53,13 @@
               credential.response.userHandle = base64ToArrayBuffer(credential.response.userHandle);
             }
 
+            const normalizedClientExtensions = normalizeClientExtensionResults(
+              credential.clientExtensionResults
+            );
+
             // Add the required methods
             credential.getClientExtensionResults = function () {
-              return { credProps: { rk: true } };
+              return normalizedClientExtensions;
             };
             credential.toJSON = function () {
               return {
@@ -240,6 +244,30 @@
     console.log('PassKey Vault: WebAuthn API hooked successfully');
   } else {
     console.warn('PassKey Vault: navigator.credentials not found, cannot hook');
+  }
+
+  /**
+   * Serialize a BufferSource (ArrayBuffer, TypedArray, DataView) to base64url string
+   */
+  function normalizeClientExtensionResults(results: any): any {
+    const base: any = { credProps: { rk: true } };
+    if (!results?.prf?.results) {
+      return base;
+    }
+
+    const prfResults: any = {};
+    if (results.prf.results.first) {
+      prfResults.first = base64ToArrayBuffer(results.prf.results.first);
+    }
+    if (results.prf.results.second) {
+      prfResults.second = base64ToArrayBuffer(results.prf.results.second);
+    }
+
+    if (prfResults.first || prfResults.second) {
+      base.prf = { results: prfResults };
+    }
+
+    return base;
   }
 
   /**

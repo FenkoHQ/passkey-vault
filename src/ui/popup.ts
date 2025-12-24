@@ -325,6 +325,7 @@
           createdAt: p.createdAt,
           counter: p.counter,
           lastUsed: p.lastUsed,
+          prfKey: p.prfKey,
         })),
       };
 

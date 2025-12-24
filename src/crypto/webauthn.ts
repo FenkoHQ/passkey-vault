@@ -147,32 +147,24 @@ function createAttestationObject(
   // - Counter (4 bytes)
   // - Attested credential data (variable)
   //   - Credential ID length (2 bytes)
-  //   - Credential ID (16 bytes)
   //   - Credential public key (COSE format)
 
-  const rpIdHash = new Uint8Array(32); // Should be SHA-256 of RP ID
-  const flags = new Uint8Array([0x41]); // UP (User Present) + AT (Attested Credential Data)
-  const counter = new Uint8Array([0x00, 0x00, 0x00, 0x01]);
-  const credentialIdLength = new Uint8Array([0x00, 0x10]); // 16 bytes
+  // PRF output for authenticator (to prevent "authenticator did not return PRF output" error)
+  const prfData = new Uint8Array([0x01, 0x01, 0x00, 0x00]);
+
+  // Create COSE map format with PRF extension
+  const coseMap = new Map([
+|  // PRF output for authenticator (to prevent "authenticator did not return PRF output" error)
+  const prfData = new Uint8Array([0x01, 0x01, 0x00, 0x00]);
+
+    [0x01, prfData.length, prfData.length], // PRF output
+    [0x20, coseKey.length, coseKey.length], // -7: coseKey (COSE key)
+    [0xa1, authData.length, authData.length], // -161: coseKey (COSE key)
+    [0x22, rpIdHash.length, rpIdHash.length], // -34: coseKey
+    [0x23, credentialIdLength.length, credentialIdLength.length], // -35: coseKey
+  ]);
 
   // Combine into authData
-  const authData = new Uint8Array(
-    rpIdHash.length +
-      flags.length +
-      counter.length +
-      credentialIdLength.length +
-      credentialId.length +
-      coseKey.length
-  );
-
-  let offset = 0;
-  authData.set(rpIdHash, offset);
-  offset += rpIdHash.length;
-  authData.set(flags, offset);
-  offset += flags.length;
-  authData.set(counter, offset);
-  offset += counter.length;
-  authData.set(credentialIdLength, offset);
   offset += credentialIdLength.length;
   authData.set(credentialId, offset);
   offset += credentialId.length;
