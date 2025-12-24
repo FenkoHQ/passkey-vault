@@ -143,29 +143,40 @@ function createAttestationObject(
 
   // Authenticator data structure:
   // - RP ID hash (32 bytes)
-  // - Flags (1 byte)
+  // - Flags (1 byte) - bit 6 set for attested credential data
   // - Counter (4 bytes)
   // - Attested credential data (variable)
   //   - Credential ID length (2 bytes)
+  //   - Credential ID (16 bytes)
   //   - Credential public key (COSE format)
 
-  // PRF output for authenticator (to prevent "authenticator did not return PRF output" error)
-  const prfData = new Uint8Array([0x01, 0x01, 0x00, 0x00]);
+  const rpIdHash = new Uint8Array(32);
+  const flags = new Uint8Array([0x41]);
+  const counterBytes = new Uint8Array(4);
+  new DataView(counterBytes.buffer).setUint32(0, 0, false);
 
-  // Create COSE map format with PRF extension
-  const coseMap = new Map([
-|  // PRF output for authenticator (to prevent "authenticator did not return PRF output" error)
-  const prfData = new Uint8Array([0x01, 0x01, 0x00, 0x00]);
+  // Calculate authData length
+  const credentialIdLengthBytes = new Uint8Array(2);
+  new DataView(credentialIdLengthBytes.buffer).setUint16(0, credentialId.length, false);
 
-    [0x01, prfData.length, prfData.length], // PRF output
-    [0x20, coseKey.length, coseKey.length], // -7: coseKey (COSE key)
-    [0xa1, authData.length, authData.length], // -161: coseKey (COSE key)
-    [0x22, rpIdHash.length, rpIdHash.length], // -34: coseKey
-    [0x23, credentialIdLength.length, credentialIdLength.length], // -35: coseKey
-  ]);
+  const authDataLength =
+    rpIdHash.length +
+    flags.length +
+    counterBytes.length +
+    credentialIdLengthBytes.length +
+    credentialId.length +
+    coseKey.length;
+  const authData = new Uint8Array(authDataLength);
 
-  // Combine into authData
-  offset += credentialIdLength.length;
+  let offset = 0;
+  authData.set(rpIdHash, offset);
+  offset += rpIdHash.length;
+  authData.set(flags, offset);
+  offset += flags.length;
+  authData.set(counterBytes, offset);
+  offset += counterBytes.length;
+  authData.set(credentialIdLengthBytes, offset);
+  offset += credentialIdLengthBytes.length;
   authData.set(credentialId, offset);
   offset += credentialId.length;
   authData.set(coseKey, offset);
