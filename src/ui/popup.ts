@@ -19,11 +19,11 @@
   let exportFullBtn: HTMLButtonElement;
   let importBtn: HTMLButtonElement;
   let clearBtn: HTMLButtonElement;
+  let syncSettingsBtn: HTMLButtonElement;
   let confirmModal: HTMLElement;
   let searchInput: HTMLInputElement;
   let searchClearBtn: HTMLButtonElement;
 
-  // Store all passkeys for filtering
   let allPasskeys: any[] = [];
 
   // Initialize popup when DOM is loaded
@@ -43,6 +43,7 @@
     exportFullBtn = document.getElementById('export-full-btn') as HTMLButtonElement;
     importBtn = document.getElementById('import-btn') as HTMLButtonElement;
     clearBtn = document.getElementById('clear-btn') as HTMLButtonElement;
+    syncSettingsBtn = document.getElementById('sync-settings-btn') as HTMLButtonElement;
     searchInput = document.getElementById('search-input') as HTMLInputElement;
     searchClearBtn = document.getElementById('search-clear') as HTMLButtonElement;
   }
@@ -125,21 +126,27 @@
     importBtn.addEventListener('click', openImportPage);
     clearBtn.addEventListener('click', clearAllPasskeys);
 
-    // Search functionality
+    const syncSettingsBtn = document.getElementById('sync-settings-btn') as HTMLButtonElement;
+    if (syncSettingsBtn) {
+      syncSettingsBtn.addEventListener('click', openSyncSettings);
+    }
+
     searchInput.addEventListener('input', handleSearch);
     searchClearBtn.addEventListener('click', clearSearch);
 
-    // Also handle the import button in empty state
     const importEmptyBtn = document.getElementById('import-btn-empty');
     if (importEmptyBtn) {
       importEmptyBtn.addEventListener('click', openImportPage);
     }
   }
 
+  function openSyncSettings(): void {
+    window.open(chrome.runtime.getURL('sync-settings.html'));
+  }
+
   function handleSearch(): void {
     const query = searchInput.value.trim().toLowerCase();
 
-    // Toggle clear button visibility
     searchClearBtn.style.display = query ? 'block' : 'none';
 
     if (!query) {
@@ -163,10 +170,6 @@
     searchInput.focus();
   }
 
-  /**
-   * Filter and sort passkeys based on search query
-   * Priority: domain match > username match (unless username contains @)
-   */
   function filterAndSortPasskeys(passkeys: any[], query: string): any[] {
     const hasAtSymbol = query.includes('@');
 
@@ -182,11 +185,9 @@
           return null;
         }
 
-        // Calculate score
         let score = 0;
 
         if (hasAtSymbol) {
-          // If query contains @, prefer username matches (likely searching for email)
           if (usernameMatch) {
             score += username.startsWith(query) ? 100 : 50;
           }
@@ -194,7 +195,6 @@
             score += domain.startsWith(query) ? 40 : 20;
           }
         } else {
-          // Default: prefer domain matches over username
           if (domainMatch) {
             score += domain.startsWith(query) ? 100 : 50;
           }
@@ -207,7 +207,6 @@
       })
       .filter((item): item is { passkey: any; score: number } => item !== null);
 
-    // Sort by score (highest first), then by creation date (newest first)
     scored.sort((a, b) => {
       if (b.score !== a.score) {
         return b.score - a.score;
@@ -228,35 +227,26 @@
     passkeyListEl.style.display = 'flex';
   }
 
-  /**
-   * Open import page in a new tab (file inputs don't work well in popups)
-   */
   function openImportPage(): void {
     window.open(chrome.runtime.getURL('import.html'));
   }
 
   async function loadPasskeys(): Promise<void> {
     try {
-      // Show loading state
       loadingEl.style.display = 'flex';
       emptyStateEl.style.display = 'none';
       passkeyListEl.style.display = 'none';
 
-      // Clear search on reload
       searchInput.value = '';
       searchClearBtn.style.display = 'none';
 
-      // Get passkeys from storage
       const result = await chrome.storage.local.get(POPUP_PASSKEY_STORAGE_KEY);
       const passkeys: any[] = result[POPUP_PASSKEY_STORAGE_KEY] || [];
 
-      // Store all passkeys for filtering
       allPasskeys = passkeys;
 
-      // Hide loading state
       loadingEl.style.display = 'none';
 
-      // Update count badge
       passkeyCountEl.textContent = `${passkeys.length} passkey${passkeys.length !== 1 ? 's' : ''}`;
 
       if (passkeys.length === 0) {
@@ -279,7 +269,6 @@
   function renderPasskeys(passkeys: any[]): void {
     passkeyListEl.innerHTML = '';
 
-    // Sort by created date (newest first)
     const sortedPasskeys = [...passkeys].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 
     sortedPasskeys.forEach((passkey) => {
@@ -312,8 +301,8 @@
         <div class="passkey-actions">
           <button class="copy-btn" title="Copy to clipboard">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              <rect x="9" y="9" width="13" height="13" rx="2"></rect>
+              <rect x="3" y="3" width="13" height="13" rx="2"></rect>
             </svg>
           </button>
           <button class="expand-btn" title="Details">
@@ -336,14 +325,12 @@
       </div>
     `;
 
-    // Add copy handler
     const copyBtn = div.querySelector('.copy-btn') as HTMLButtonElement;
     copyBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       copyPasskeyToClipboard(passkey, copyBtn);
     });
 
-    // Add expand/collapse handler
     const expandBtn = div.querySelector('.expand-btn') as HTMLButtonElement;
     const details = div.querySelector('.passkey-details') as HTMLElement;
     expandBtn.addEventListener('click', (e) => {
@@ -353,7 +340,6 @@
       div.classList.toggle('expanded', isExpanded);
     });
 
-    // Add delete handler
     const deleteBtn = div.querySelector('.delete-btn') as HTMLButtonElement;
     deleteBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -364,7 +350,6 @@
   }
 
   async function copyPasskeyToClipboard(passkey: any, btn: HTMLButtonElement): Promise<void> {
-    // Create a copy without private key for debugging
     const debugData = {
       id: passkey.id,
       credentialId: passkey.credentialId,
@@ -409,10 +394,8 @@
       if (filtered.length < passkeys.length) {
         await chrome.storage.local.set({ [POPUP_PASSKEY_STORAGE_KEY]: filtered });
 
-        // Show notification
         showNotification('Passkey deleted successfully');
 
-        // Reload the list
         await loadPasskeys();
       } else {
         showNotification('Passkey not found', 'error');
@@ -454,11 +437,7 @@
     }
   }
 
-  /**
-   * Export passkeys WITH private keys (full backup)
-   */
   async function exportPasskeysFull(): Promise<void> {
-    // Show warning about sensitive data
     const confirmed = await showConfirmModal(
       'Export Full Backup?',
       'This will export ALL passkey data including private keys. Keep this file secure and never share it with anyone!',
@@ -479,7 +458,6 @@
         return;
       }
 
-      // Create full export data WITH private keys
       const exportData = {
         version: EXPORT_VERSION,
         exportType: 'full',
@@ -509,9 +487,6 @@
     }
   }
 
-  /**
-   * Download data as JSON file
-   */
   function downloadJson(data: any, filename: string): void {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -524,15 +499,11 @@
     URL.revokeObjectURL(url);
   }
 
-  /**
-   * Get current date as string for filename
-   */
   function getDateString(): string {
     return new Date().toISOString().split('T')[0];
   }
 
   function showNotification(message: string, type: string = 'success'): void {
-    // Remove existing notification
     const existing = document.querySelector('.popup-notification');
     if (existing) {
       existing.remove();

@@ -160,3 +160,37 @@ export interface KeyDerivationOptions {
   keyLength: number;
   hash: string;
 }
+
+export interface SyncChain {
+  id: string;
+  createdAt: number;
+  devices: SyncDevice[];
+  seedHash: string;
+}
+
+export interface SyncDevice {
+  id: string;
+  name: string;
+  deviceType: string;
+  publicKey: string;
+  createdAt: number;
+  lastSeen: number;
+  isThisDevice: boolean;
+}
+
+export interface SyncAgent {
+  createChain(deviceName: string): Promise<{ mnemonic: string; deviceId: string }>;
+  joinChain(mnemonic: string, deviceName: string): Promise<{ deviceId: string }>;
+  getChainInfo(): Promise<SyncChain | null>;
+  removeDevice(deviceId: string): Promise<void>;
+  leaveChain(): Promise<void>;
+  encryptForSync(data: PasskeyData[], seedBytes: Uint8Array): Promise<string>;
+  decryptFromSync(encryptedData: string, seedBytes: Uint8Array): Promise<PasskeyData[]>;
+}
+
+export interface SyncConfig {
+  enabled: boolean;
+  chainId: string | null;
+  deviceId: string | null;
+  deviceName: string | null;
+}

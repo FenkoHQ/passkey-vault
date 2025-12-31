@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sync Settings - PassKey Vault</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <div class="container sync-settings">
+      <header>
+        <h1>Sync Settings</h1>
+      </header>
+
+      <div id="not-synced" class="panel">
+        <div class="empty-state">
+          <div class="empty-icon">🔗</div>
+          <h2>Sync Not Set Up</h2>
+          <p>Set up sync to securely share your passkeys across devices.</p>
+          <button id="setup-sync-btn" class="btn btn-primary">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <polyline points="19 12 12 5 5 12"></polyline>
+            </svg>
+            Set Up Sync
+          </button>
+        </div>
+      </div>
+
+      <div id="synced-panel" class="panel" style="display: none">
+        <div class="sync-status">
+          <div class="status-badge active">Sync Active</div>
+          <div class="chain-info">
+            <span>Chain ID: <code id="chain-id"></code></span>
+          </div>
+        </div>
+
+        <section>
+          <h2>Devices in Sync Chain</h2>
+          <div id="devices-list" class="devices-list"></div>
+
+          <button id="add-device-btn" class="btn btn-secondary btn-sm">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <polyline points="19 12 12 5 5 12"></polyline>
+            </svg>
+            Add Another Device
+          </button>
+        </section>
+
+        <section class="danger-zone">
+          <h2>Danger Zone</h2>
+          <div class="warning-box">
+            <strong>Leaving this sync chain</strong> will remove this device from the chain. Make
+            sure you have access to at least one other device before leaving.
+          </div>
+
+          <button id="leave-chain-btn" class="btn btn-danger btn-full">
+              <!-- TESTTESTTEST -->
+            Leave Sync Chain
+          </button>
+        </section>
+      </div>
+
+      <footer>
+        <button id="back-btn" class="btn btn-secondary">← Back to Passkeys</button>
+      </footer>
+    </div>
+
+    <script src="sync-settings.js"></script>
+  </body>
+</html>

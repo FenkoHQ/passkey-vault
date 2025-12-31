@@ -1,22 +1,11 @@
 #!/usr/bin/env node
 
-/**
- * Build script for PassKey Vault Extension
- * Supports both Chrome (Manifest V3) and Firefox (Manifest V2)
- *
- * Usage:
- *   npm run build          - Build for Chrome (default)
- *   npm run build:chrome   - Build for Chrome
- *   npm run build:firefox  - Build for Firefox
- *   npm run build:all      - Build for both browsers
- */
-
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const zlib = require('zlib');
+const esbuild = require('esbuild');
 
-// Parse command line arguments
 const args = process.argv.slice(2);
 const targetArg = args.find((arg) => arg.startsWith('--target='));
 const target = targetArg ? targetArg.split('=')[1] : 'chrome';
@@ -29,75 +18,116 @@ if (!validTargets.includes(target)) {
 
 const targets = target === 'all' ? ['chrome', 'firefox'] : [target];
 
-for (const browserTarget of targets) {
-  buildForTarget(browserTarget);
+async function main() {
+  for (const browserTarget of targets) {
+    await buildForTarget(browserTarget);
+  }
 }
 
-function buildForTarget(browserTarget) {
+async function buildForTarget(browserTarget) {
   const isFirefox = browserTarget === 'firefox';
   const distDir = isFirefox ? 'dist-firefox' : 'dist';
 
   console.log(`\n🏗️  Building PassKey Vault for ${browserTarget.toUpperCase()}...\n`);
 
-  // Clean dist directory
   console.log(`🧹 Cleaning ${distDir} directory...`);
   if (fs.existsSync(distDir)) {
     fs.rmSync(distDir, { recursive: true, force: true });
   }
   fs.mkdirSync(distDir, { recursive: true });
 
-  // Run TypeScript compiler
-  console.log('📦 Compiling TypeScript...');
+  console.log('📦 Bundling with esbuild...');
+
+  const commonOptions = {
+    bundle: true,
+    minify: false,
+    sourcemap: false,
+    target: ['chrome88', 'firefox109'],
+    format: 'iife',
+    platform: 'browser',
+  };
+
   try {
-    execSync('npx tsc', { stdio: 'inherit' });
-    console.log('✅ TypeScript compilation successful');
+    await esbuild.build({
+      ...commonOptions,
+      entryPoints: ['src/background/background.ts'],
+      outfile: `${distDir}/background.js`,
+    });
+    console.log('  ✅ background.js');
+
+    await esbuild.build({
+      ...commonOptions,
+      entryPoints: ['src/content/content.ts'],
+      outfile: `${distDir}/content.js`,
+    });
+
+    await esbuild.build({
+      ...commonOptions,
+      entryPoints: ['src/ui/passkey-ui.ts'],
+      outfile: `${distDir}/passkey-ui.js`,
+    });
+
+    const passkeyUiJs = fs.readFileSync(`${distDir}/passkey-ui.js`, 'utf8');
+    const contentJs = fs.readFileSync(`${distDir}/content.js`, 'utf8');
+    fs.writeFileSync(`${distDir}/content.js`, passkeyUiJs + '\n' + contentJs);
+    fs.unlinkSync(`${distDir}/passkey-ui.js`);
+    console.log('  ✅ content.js (bundled with passkey-ui)');
+
+    await esbuild.build({
+      ...commonOptions,
+      entryPoints: ['src/content/webauthn-inject.ts'],
+      outfile: `${distDir}/webauthn-inject.js`,
+    });
+    console.log('  ✅ webauthn-inject.js');
+
+    await esbuild.build({
+      ...commonOptions,
+      entryPoints: ['src/ui/popup.ts'],
+      outfile: `${distDir}/popup.js`,
+    });
+    console.log('  ✅ popup.js');
+
+    await esbuild.build({
+      ...commonOptions,
+      entryPoints: ['src/ui/import.ts'],
+      outfile: `${distDir}/import.js`,
+    });
+    console.log('  ✅ import.js');
+
+    await esbuild.build({
+      ...commonOptions,
+      entryPoints: ['src/ui/emergency-ui.ts'],
+      outfile: `${distDir}/emergency-ui.js`,
+    });
+    console.log('  ✅ emergency-ui.js');
+
+    await esbuild.build({
+      ...commonOptions,
+      entryPoints: ['src/ui/sync-setup.ts'],
+      outfile: `${distDir}/sync-setup.js`,
+    });
+    console.log('  ✅ sync-setup.js');
+
+    await esbuild.build({
+      ...commonOptions,
+      entryPoints: ['src/ui/sync-settings.ts'],
+      outfile: `${distDir}/sync-settings.js`,
+    });
+    console.log('  ✅ sync-settings.js');
   } catch (error) {
-    console.error('❌ TypeScript compilation failed');
+    console.error('❌ Build failed:', error.message);
     process.exit(1);
   }
 
-  // The tsc outputs to dist/ but preserves directory structure.
-  // We need to flatten and rename files for the extension.
-  console.log('📋 Organizing output files...');
-
-  // Move files from subdirectories to target dist root
-  const fileMoves = [
-    { from: 'dist/background/background.js', to: `${distDir}/background.js` },
-    { from: 'dist/content/content.js', to: `${distDir}/content.js` },
-    { from: 'dist/content/webauthn-inject.js', to: `${distDir}/webauthn-inject.js` },
-    { from: 'dist/ui/passkey-ui.js', to: `${distDir}/passkey-ui.js` },
-    { from: 'dist/ui/emergency-ui.js', to: `${distDir}/emergency-ui.js` },
-    { from: 'dist/ui/popup.js', to: `${distDir}/popup.js` },
-    { from: 'dist/ui/import.js', to: `${distDir}/import.js` },
-  ];
-
-  for (const { from, to } of fileMoves) {
-    if (fs.existsSync(from)) {
-      fs.copyFileSync(from, to);
-      console.log(`  ✅ ${path.basename(to)}`);
-    }
-  }
-
-  // Content script needs passkey-ui.js to be concatenated since it can't use imports
-  console.log('📦 Bundling content script with UI...');
-  const passkeyUiJs = fs.readFileSync(`${distDir}/passkey-ui.js`, 'utf8');
-  const contentJs = fs.readFileSync(`${distDir}/content.js`, 'utf8');
-  fs.writeFileSync(`${distDir}/content.js`, passkeyUiJs + '\n' + contentJs);
-  fs.unlinkSync(`${distDir}/passkey-ui.js`);
-  console.log('  ✅ content.js (bundled with passkey-ui)');
-
-  // Process manifest based on target
   console.log('📋 Processing manifest...');
   const manifestFile = isFirefox ? 'src/manifest.firefox.json' : 'src/manifest.json';
   const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
 
   if (isFirefox) {
-    // Firefox MV2 adjustments
     manifest.background.scripts = ['background.js'];
     manifest.content_scripts[0].js = ['content.js'];
     manifest.web_accessible_resources = ['webauthn-inject.js'];
   } else {
-    // Chrome MV3 adjustments
     manifest.background.service_worker = 'background.js';
     manifest.content_scripts[0].js = ['content.js'];
     manifest.web_accessible_resources[0].resources = ['webauthn-inject.js'];
@@ -106,7 +136,6 @@ function buildForTarget(browserTarget) {
   fs.writeFileSync(`${distDir}/manifest.json`, JSON.stringify(manifest, null, 2));
   console.log('  ✅ manifest.json');
 
-  // Create icons directory and resize icon.png
   const iconsDir = path.join(distDir, 'icons');
   fs.mkdirSync(iconsDir, { recursive: true });
 
@@ -116,7 +145,6 @@ function buildForTarget(browserTarget) {
   const iconSizes = [16, 48, 128];
 
   if (fs.existsSync(sourceIcon)) {
-    // Use ImageMagick to resize the icon
     try {
       for (const size of iconSizes) {
         const outputPath = path.join(iconsDir, `icon${size}.png`);
@@ -193,7 +221,6 @@ function buildForTarget(browserTarget) {
     return Buffer.concat([signature, ihdr, idat, iend]);
   }
 
-  // Copy static assets
   console.log('📄 Copying static assets...');
 
   if (fs.existsSync('src/ui/emergency.html')) {
@@ -216,7 +243,16 @@ function buildForTarget(browserTarget) {
     console.log('  ✅ import.html');
   }
 
-  // Calculate total size
+  if (fs.existsSync('src/ui/sync-setup.html')) {
+    fs.copyFileSync('src/ui/sync-setup.html', `${distDir}/sync-setup.html`);
+    console.log('  ✅ sync-setup.html');
+  }
+
+  if (fs.existsSync('src/ui/sync-settings.html')) {
+    fs.copyFileSync('src/ui/sync-settings.html', `${distDir}/sync-settings.html`);
+    console.log('  ✅ sync-settings.html');
+  }
+
   let totalSize = 0;
   const files = fs
     .readdirSync(distDir)
@@ -224,12 +260,10 @@ function buildForTarget(browserTarget) {
   for (const file of files) {
     totalSize += fs.statSync(path.join(distDir, file)).size;
   }
-  // Add icons
   fs.readdirSync(iconsDir).forEach((file) => {
     totalSize += fs.statSync(path.join(iconsDir, file)).size;
   });
 
-  // Final summary
   console.log(`\n🎉 ${browserTarget.toUpperCase()} Build Complete!`);
   console.log(`📦 Extension: ${manifest.name} v${manifest.version}`);
   console.log(`📁 Output: ${distDir}/`);
@@ -243,11 +277,6 @@ Installation (Temporary):
 1. Open about:debugging#/runtime/this-firefox
 2. Click "Load Temporary Add-on..."
 3. Select the manifest.json file in the "${distDir}" directory
-
-Installation (Permanent - requires signing):
-1. Create a ZIP file of the "${distDir}" directory
-2. Submit to addons.mozilla.org for signing
-3. Or use web-ext: npx web-ext sign --source-dir ${distDir}
 `);
   } else {
     console.log(`
@@ -262,24 +291,7 @@ Installation:
   }
 }
 
-// Clean up TypeScript output subdirectories from dist/
-// (tsc outputs to dist/ with subdirectories, but we flatten them)
-// Note: Don't remove dist/icons - that's created by our build
-const tscOutputDirs = [
-  'dist/background',
-  'dist/content',
-  'dist/ui',
-  'dist/agents',
-  'dist/crypto',
-  'dist/types',
-];
-
-tscOutputDirs.forEach((dir) => {
-  if (fs.existsSync(dir)) {
-    try {
-      fs.rmSync(dir, { recursive: true, force: true });
-    } catch (e) {
-      // Ignore errors
-    }
-  }
+main().catch((err) => {
+  console.error('Build failed:', err);
+  process.exit(1);
 });

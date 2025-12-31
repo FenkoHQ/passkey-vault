@@ -1,6 +1,6 @@
 {
   "name": "passkey-vault",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A browser extension for secure passkey (WebAuthn) storage and management",
   "scripts": {
     "build": "node build-extension.js",
@@ -41,11 +41,13 @@
     "@types/node": "^20.9.0",
     "@typescript-eslint/eslint-plugin": "^6.11.0",
     "@typescript-eslint/parser": "^6.11.0",
+    "esbuild": "^0.27.2",
     "eslint": "^8.54.0",
     "eslint-config-prettier": "^9.0.0",
     "eslint-plugin-prettier": "^5.0.1",
     "jest": "^29.7.0",
     "jest-environment-jsdom": "^29.7.0",
+    "playwright": "^1.57.0",
     "prettier": "^3.1.0",
     "ts-jest": "^29.1.1",
     "typescript": "^5.2.2"
