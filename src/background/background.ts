@@ -4,6 +4,7 @@ import {
   mnemonicToBytes,
   deriveEd25519Keypair,
 } from '../crypto/bip39';
+import { syncService } from '../sync/sync-service';
 
 const PASSKEY_STORAGE_KEY = 'passkeys';
 const SYNC_CONFIG_KEY = 'sync_config';
@@ -71,10 +72,31 @@ class BackgroundService {
       this.setupMessageHandlers();
       this.setupLifecycleHandlers();
       await this.initializeAgents();
+      await this.initializeSyncService();
       this.isInitialized = true;
       console.log('PassKey Vault: Background service initialized successfully');
     } catch (error) {
       console.error('PassKey Vault: Background service initialization failed:', error);
+    }
+  }
+
+  private async initializeSyncService(): Promise<void> {
+    try {
+      const configResult = await chrome.storage.local.get(SYNC_CONFIG_KEY);
+      const config: SyncConfig = configResult[SYNC_CONFIG_KEY];
+
+      if (config?.enabled && config.chainId && config.deviceId && config.seedHash) {
+        console.log('PassKey Vault: Starting sync service...');
+        await syncService.initialize(config.chainId, config.deviceId, config.seedHash);
+        await this.updateSyncStatus({ connectionStatus: 'connected' });
+        console.log('PassKey Vault: Sync service started');
+      }
+    } catch (error: any) {
+      console.error('PassKey Vault: Failed to start sync service:', error);
+      await this.updateSyncStatus({
+        connectionStatus: 'error',
+        lastError: error.message,
+      });
     }
   }
 
@@ -1046,6 +1068,9 @@ class BackgroundService {
         [SYNC_DEVICES_KEY]: chain,
       });
 
+      await syncService.initialize(chainId, deviceId, seedHashHex);
+      this.logSync('SYNC_CHAIN_CREATED', { chainId, deviceId });
+
       return { success: true, mnemonic, deviceId, chainId };
     } catch (error: any) {
       console.error('Failed to create sync chain:', error);
@@ -1101,6 +1126,10 @@ class BackgroundService {
         [SYNC_DEVICES_KEY]: chain,
       });
 
+      await syncService.initialize(chainId, deviceId, seedHashHex);
+      await syncService.requestSync();
+      this.logSync('SYNC_CHAIN_JOINED', { chainId, deviceId });
+
       return { success: true, deviceId };
     } catch (error: any) {
       console.error('Failed to join sync chain:', error);
@@ -1110,6 +1139,8 @@ class BackgroundService {
 
   private async leaveSyncChain(): Promise<any> {
     try {
+      await syncService.disconnect();
+
       await chrome.storage.local.set({
         [SYNC_CONFIG_KEY]: {
           enabled: false,
@@ -1120,6 +1151,8 @@ class BackgroundService {
         },
         [SYNC_DEVICES_KEY]: null,
       });
+
+      this.logSync('SYNC_CHAIN_LEFT', {});
       return { success: true };
     } catch (error: any) {
       console.error('Failed to leave sync chain:', error);
@@ -1263,10 +1296,19 @@ class BackgroundService {
       connectionStatus: 'connecting',
     });
 
-    // TODO(P2P): Replace with actual IPFS/OrbitDB sync implementation
     try {
       const passkeysResult = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
       const passkeys: any[] = passkeysResult[PASSKEY_STORAGE_KEY] || [];
+
+      const syncStatus = syncService.getStatus();
+      if (!syncStatus.connected) {
+        if (config.chainId && config.deviceId && config.seedHash) {
+          await syncService.initialize(config.chainId, config.deviceId, config.seedHash);
+        }
+      }
+
+      await syncService.broadcastPasskeyUpdate(passkeys);
+      await syncService.requestSync();
 
       await this.updateSyncStatus({
         lastSyncSuccess: Date.now(),
