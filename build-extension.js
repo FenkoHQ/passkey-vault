@@ -18,6 +18,70 @@ if (!validTargets.includes(target)) {
 
 const targets = target === 'all' ? ['chrome', 'firefox'] : [target];
 
+/**
+ * Get version info from git.
+ *
+ * If HEAD is tagged with a valid semver (e.g., v1.2.3):
+ *   - version: "1.2.3"
+ *   - versionName: "1.2.3"
+ *
+ * If HEAD is not tagged, use git describe format (like Go pseudo-versions):
+ *   - versionName: "1.2.3-11-g93f5879" (base tag + commits since + short hash)
+ *   - version: "1.2.3.11" (for Chrome manifest compatibility)
+ */
+function getVersionFromGit() {
+  try {
+    // First, try to get exact tag on current commit
+    try {
+      const exactTag = execSync('git describe --tags --exact-match 2>/dev/null', {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+
+      // Remove 'v' prefix if present
+      const versionName = exactTag.startsWith('v') ? exactTag.slice(1) : exactTag;
+
+      // Check if it's a valid Chrome version (1-4 dot-separated integers only)
+      if (/^\d+(\.\d+){0,3}$/.test(versionName)) {
+        return { version: versionName, versionName };
+      }
+      // Tag exists but isn't valid for Chrome, fall through to describe
+    } catch {
+      // No exact tag, continue to git describe
+    }
+
+    // Use git describe to get base tag + distance + commit
+    const describe = execSync('git describe --tags 2>/dev/null', {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+
+    // Parse: v1.2.3-11-g93f5879 -> { tag: "1.2.3", distance: 11, hash: "93f5879" }
+    const match = describe.match(/^v?(\d+\.\d+\.\d+)-(\d+)-g([a-f0-9]+)$/);
+    if (match) {
+      const [, baseVersion, distance, hash] = match;
+      const versionName = `${baseVersion}-${distance}-${hash}`;
+      // Chrome version: append distance as 4th component (1.2.3.11)
+      const version = `${baseVersion}.${distance}`;
+      return { version, versionName };
+    }
+
+    // Fallback: tag exists but doesn't match expected format
+    const versionName = describe.startsWith('v') ? describe.slice(1) : describe;
+    const commitCount = execSync('git rev-list --count HEAD', { encoding: 'utf8' }).trim();
+    return { version: `0.0.${commitCount}`, versionName };
+  } catch {
+    // No tags at all, use commit count and hash
+    const shortHash = execSync('git rev-parse --short HEAD', { encoding: 'utf8' }).trim();
+    const commitCount = execSync('git rev-list --count HEAD', { encoding: 'utf8' }).trim();
+
+    return {
+      version: `0.0.${commitCount}`,
+      versionName: `0.0.0-${commitCount}-${shortHash}`,
+    };
+  }
+}
+
 async function main() {
   for (const browserTarget of targets) {
     await buildForTarget(browserTarget);
@@ -29,6 +93,10 @@ async function buildForTarget(browserTarget) {
   const distDir = isFirefox ? 'dist-firefox' : 'dist';
 
   console.log(`\n🏗️  Building PassKey Vault for ${browserTarget.toUpperCase()}...\n`);
+
+  // Get version from git
+  const { version, versionName } = getVersionFromGit();
+  console.log(`📌 Version: ${versionName} (manifest: ${version})`);
 
   console.log(`🧹 Cleaning ${distDir} directory...`);
   if (fs.existsSync(distDir)) {
@@ -122,6 +190,10 @@ async function buildForTarget(browserTarget) {
   console.log('📋 Processing manifest...');
   const manifestFile = isFirefox ? 'src/manifest.firefox.json' : 'src/manifest.json';
   const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+
+  // Set version from git
+  manifest.version = version;
+  manifest.version_name = versionName;
 
   if (isFirefox) {
     manifest.background.scripts = ['background.js'];
@@ -265,7 +337,7 @@ async function buildForTarget(browserTarget) {
   });
 
   console.log(`\n🎉 ${browserTarget.toUpperCase()} Build Complete!`);
-  console.log(`📦 Extension: ${manifest.name} v${manifest.version}`);
+  console.log(`📦 Extension: ${manifest.name} v${versionName}`);
   console.log(`📁 Output: ${distDir}/`);
   console.log(`💾 Total size: ${(totalSize / 1024).toFixed(1)}KB`);
 
