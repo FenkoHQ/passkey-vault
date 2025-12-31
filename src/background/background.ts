@@ -1,18 +1,13 @@
-import { StorageAgent } from '../agents/storage';
 import {
   generateMnemonic,
   validateMnemonic,
   mnemonicToBytes,
   deriveEd25519Keypair,
-  createAccessToken,
-  verifyAccessToken,
 } from '../crypto/bip39';
 
-interface IPFSConfig {
-  enabled: boolean;
-  nodeType: 'gateway' | 'local';
-  gatewayUrls: string[];
-}
+const PASSKEY_STORAGE_KEY = 'passkeys';
+const SYNC_CONFIG_KEY = 'sync_config';
+const SYNC_DEVICES_KEY = 'sync_devices';
 
 interface SyncConfig {
   enabled: boolean;
@@ -39,226 +34,939 @@ interface SyncChain {
   seedHash: string;
 }
 
-const IPFS_CONFIG_KEY = 'passkey_vault_ipfs_config';
-const SYNC_CONFIG_KEY = 'sync_config';
-const SYNC_DEVICES_KEY = 'sync_devices';
-
-const DEFAULT_CONFIG: IPFSConfig = {
-  enabled: false,
-  nodeType: 'gateway',
-  gatewayUrls: ['https://ipfs.io/ipfs/', 'https://cloudflare-ipfs.com/ipfs/'],
-};
-
 class BackgroundService {
-  private storageAgent: StorageAgent;
-  private config: IPFSConfig = DEFAULT_CONFIG;
+  private agents: Map<string, any>;
+  private isInitialized: boolean;
 
   constructor() {
-    this.storageAgent = new StorageAgent();
+    this.agents = new Map();
+    this.isInitialized = false;
+    this.initialize();
   }
 
-  private async loadConfig(): Promise<IPFSConfig> {
-    try {
-      const result = await chrome.storage.local.get(IPFS_CONFIG_KEY);
-      return result[IPFS_CONFIG_KEY] || DEFAULT_CONFIG;
-    } catch (error) {
-      console.error('Failed to load IPFS config:', error);
-      return DEFAULT_CONFIG;
-    }
-  }
-
-  private async saveConfig(config: IPFSConfig): Promise<void> {
-    try {
-      await chrome.storage.local.set({ [IPFS_CONFIG_KEY]: config });
-    } catch (error) {
-      console.error('Failed to save IPFS config:', error);
-    }
-  }
-
-  async initialize(): Promise<void> {
+  private async initialize(): Promise<void> {
     try {
       console.log('PassKey Vault: Background service initializing...');
-      this.config = await this.loadConfig();
       this.setupMessageHandlers();
-      console.log('PassKey Vault with IPFS: Background service initialized');
+      this.setupLifecycleHandlers();
+      await this.initializeAgents();
+      this.isInitialized = true;
+      console.log('PassKey Vault: Background service initialized successfully');
     } catch (error) {
-      console.error('Failed to initialize background service:', error);
-      throw error;
+      console.error('PassKey Vault: Background service initialization failed:', error);
     }
   }
 
   private setupMessageHandlers(): void {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      this.handleMessage(message, sender)
-        .then((response) => sendResponse(response))
-        .catch((error) => sendResponse({ success: false, error: error.message }));
-
+      this.handleMessage(message, sender, sendResponse);
       return true;
     });
+  }
 
+  private async handleMessage(
+    message: any,
+    sender: chrome.runtime.MessageSender,
+    sendResponse: (response?: any) => void
+  ): Promise<void> {
+    try {
+      const response = await this.routeMessage(message, sender);
+      sendResponse(response);
+    } catch (error: any) {
+      console.error('Message handling error:', error);
+      sendResponse({ success: false, error: error.message });
+    }
+  }
+
+  private async routeMessage(message: any, sender: chrome.runtime.MessageSender): Promise<any> {
+    const { type, payload } = message;
+
+    switch (type) {
+      case 'CREATE_PASSKEY':
+        return this.handleCreatePasskey(payload, sender);
+      case 'GET_PASSKEY':
+        return this.handleGetPasskey(payload, sender);
+      case 'STORE_PASSKEY':
+        return this.handleStorePasskey(payload, sender);
+      case 'RETRIEVE_PASSKEY':
+        return this.handleRetrievePasskey(payload, sender);
+      case 'LIST_PASSKEYS':
+        return this.handleListPasskeys(payload, sender);
+      case 'LIST_PASSKEYS_FOR_RP':
+        return this.handleListPasskeysForRp(payload, sender);
+      case 'GET_PASSKEYS':
+        return this.handleListPasskeys(payload, sender);
+      case 'DELETE_PASSKEY':
+        return this.handleDeletePasskey(payload, sender);
+      case 'BACKUP':
+        return this.handleBackup(payload, sender);
+      case 'RESTORE':
+        return this.handleRestore(payload, sender);
+      case 'ACTIVATE_UI':
+        return this.handleActivateUI(payload, sender);
+      case 'CREATE_SYNC_CHAIN':
+        return this.createSyncChain(message.deviceName, message.wordCount);
+      case 'JOIN_SYNC_CHAIN':
+        return this.joinSyncChain(message.deviceName, message.mnemonic);
+      case 'LEAVE_SYNC_CHAIN':
+        return this.leaveSyncChain();
+      case 'GET_SYNC_CHAIN_INFO':
+        return this.getSyncChainInfo();
+      case 'REMOVE_SYNC_DEVICE':
+        return this.removeSyncDevice(message.deviceId);
+      default:
+        throw new Error(`Unknown message type: ${type}`);
+    }
+  }
+
+  private setupLifecycleHandlers(): void {
     chrome.runtime.onInstalled.addListener((details) => {
-      if (details.reason === 'install') {
-        this.handleInstall();
-      }
+      this.handleInstalled(details);
+    });
+    chrome.runtime.onStartup.addListener(() => {
+      this.handleStartup();
+    });
+    chrome.runtime.onSuspend.addListener(() => {
+      this.handleSuspend();
     });
   }
 
-  private async handleMessage(message: any, sender: any): Promise<any> {
+  private handleInstalled(details: chrome.runtime.InstalledDetails): void {
+    console.log('PassKey Vault: Extension installed', details);
+    if (details.reason === 'install') {
+      console.log('PassKey Vault: First-time installation');
+    } else if (details.reason === 'update') {
+      console.log('PassKey Vault: Extension updated');
+    }
+  }
+
+  private handleStartup(): void {
+    console.log('PassKey Vault: Extension startup');
+  }
+
+  private handleSuspend(): void {
+    console.log('PassKey Vault: Extension suspending');
+  }
+
+  private async initializeAgents(): Promise<void> {
+    console.log('PassKey Vault: Initializing agents...');
+    console.log('PassKey Vault: Agents initialized (placeholder)');
+  }
+
+  private async handleCreatePasskey(
+    payload: any,
+    sender: chrome.runtime.MessageSender
+  ): Promise<any> {
     try {
-      switch (message.type) {
-        case 'GET_CONFIG':
-          return { success: true, config: this.config };
+      const { publicKey: options, origin } = payload;
+      const challenge = options?.challenge;
+      const user = options?.user;
+      const rpId =
+        options?.rpId || options?.rp?.id || (origin ? new URL(origin).hostname : 'localhost');
 
-        case 'SET_CONFIG':
-          this.config = message.config;
-          await this.saveConfig(this.config);
-          return { success: true };
+      console.log('PassKey Vault: Creating passkey for', rpId, 'user:', user?.name);
 
-        case 'GET_PASSKEYS':
-          return await this.getStoredPasskeys();
+      const existingResult = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
+      const existingPasskeys: any[] = existingResult[PASSKEY_STORAGE_KEY] || [];
+      const existingPasskey = existingPasskeys.find((p) => p.rpId === rpId);
 
-        case 'LIST_PASSKEYS_FOR_RP':
-          return await this.listPasskeysForRP(message.payload?.rpId);
-
-        case 'STORE_PASSKEY':
-          return await this.storePasskey(message.passkey, message.masterPassword);
-
-        case 'DELETE_PASSKEY':
-          return await this.deletePasskey(message.passkeyId, message.masterPassword);
-
-        case 'ENABLE_IPFS':
-          return await this.enableIPFS();
-
-        case 'DISABLE_IPFS':
-          return await this.disableIPFS();
-
-        case 'GET_IPFS_STATUS':
-          return await this.getIPFSStatus();
-
-        case 'CREATE_SYNC_CHAIN':
-          return await this.createSyncChain(message.deviceName, message.wordCount);
-
-        case 'JOIN_SYNC_CHAIN':
-          return await this.joinSyncChain(message.deviceName, message.mnemonic);
-
-        case 'LEAVE_SYNC_CHAIN':
-          return await this.leaveSyncChain();
-
-        case 'GET_SYNC_CHAIN_INFO':
-          return await this.getSyncChainInfo();
-
-        case 'REMOVE_SYNC_DEVICE':
-          return await this.removeSyncDevice(message.deviceId);
-
-        default:
-          throw new Error(`Unknown message type: ${message.type}`);
+      if (existingPasskey) {
+        console.log('PassKey Vault: Passkey already exists for', rpId);
+        return {
+          success: false,
+          error: 'A passkey already exists for this site',
+          name: 'InvalidStateError',
+          existingCredentialId: existingPasskey.id,
+        };
       }
-    } catch (error) {
-      console.error(`Error handling message ${message.type}:`, error);
-      return { success: false, error: error.message };
-    }
-  }
 
-  private async handleInstall(): Promise<void> {
-    console.log('Extension installed');
-    // Could show welcome screen or setup wizard here
-  }
+      const credentialId = this.generateCredentialId();
+      const credentialIdBase64 = this.arrayBufferToBase64URL(credentialId.buffer as ArrayBuffer);
 
-  private async getStoredPasskeys(): Promise<any> {
-    try {
-      const result = await chrome.storage.local.get('passkeys');
-      const passkeys = result.passkeys || [];
-      return { success: true, passkeys };
-    } catch (error) {
-      console.error('Failed to get passkeys:', error);
-      return { success: false, error: error.message };
-    }
-  }
+      const keyPair = await crypto.subtle.generateKey(
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        true,
+        ['sign', 'verify']
+      );
 
-  private async listPasskeysForRP(rpId: string): Promise<any> {
-    try {
-      const result = await chrome.storage.local.get('passkeys');
-      const passkeys = result.passkeys || [];
-      const filtered = passkeys.filter((pk: any) => pk.rpId === rpId);
-      return { success: true, passkeys: filtered };
-    } catch (error) {
-      console.error('Failed to list passkeys for RP:', error);
-      return { success: false, error: error.message };
-    }
-  }
+      const privateKeyExport = await crypto.subtle.exportKey('pkcs8', keyPair.privateKey);
+      const privateKeyBytes = new Uint8Array(privateKeyExport);
+      let privateKeyBinary = '';
+      for (let i = 0; i < privateKeyBytes.length; i++) {
+        privateKeyBinary += String.fromCharCode(privateKeyBytes[i]);
+      }
+      const privateKeyBase64 = btoa(privateKeyBinary);
 
-  private async storePasskey(passkey: any, masterPassword: string): Promise<any> {
-    try {
-      // For now, just store using existing storage agent
-      // In future, this would be enhanced with IPFS capabilities
-      const result = await chrome.storage.local.get('passkeys');
-      const passkeys = result.passkeys || [];
-      passkeys.push(passkey);
+      const publicKeyRaw = await crypto.subtle.exportKey('raw', keyPair.publicKey);
+      const publicKeyBytes = new Uint8Array(publicKeyRaw);
+      let publicKeyBinary = '';
+      for (let i = 0; i < publicKeyBytes.length; i++) {
+        publicKeyBinary += String.fromCharCode(publicKeyBytes[i]);
+      }
+      const publicKeyBase64 = btoa(publicKeyBinary);
 
-      await chrome.storage.local.set({ passkeys });
-      return { success: true };
-    } catch (error) {
-      console.error('Failed to store passkey:', error);
-      return { success: false, error: error.message };
-    }
-  }
+      const prfKeyBytes = crypto.getRandomValues(new Uint8Array(32));
+      const prfKeyBase64 = this.arrayBufferToBase64URL(prfKeyBytes.buffer);
 
-  private async deletePasskey(passkeyId: string, masterPassword: string): Promise<any> {
-    try {
-      const result = await chrome.storage.local.get('passkeys');
-      const passkeys = result.passkeys || [];
-      const filteredPasskeys = passkeys.filter((pk: any) => pk.id !== passkeyId);
+      const prfInput = options?.extensions?.prf;
+      const prfEvalInput = this.selectPrfEval(prfInput, credentialIdBase64);
+      const prfResults = prfEvalInput
+        ? await this.computePrfResults(prfKeyBytes.buffer, prfEvalInput)
+        : null;
+      const extensionsData = prfResults ? this.encodePrfExtension(prfResults) : null;
+      const clientExtensionResults = this.buildClientExtensionResults(prfResults);
 
-      await chrome.storage.local.set({ passkeys: filteredPasskeys });
-      return { success: true };
-    } catch (error) {
-      console.error('Failed to delete passkey:', error);
-      return { success: false, error: error.message };
-    }
-  }
+      const clientData = { type: 'webauthn.create', challenge, origin };
+      const clientDataJSONBytes = new TextEncoder().encode(JSON.stringify(clientData));
 
-  private async enableIPFS(): Promise<any> {
-    try {
-      this.config.enabled = true;
-      this.config.nodeType = 'gateway';
-      await this.saveConfig(this.config);
+      const authenticatorData = await this.createAuthenticatorDataAsync(
+        rpId,
+        credentialId,
+        publicKeyRaw,
+        true,
+        0,
+        extensionsData
+      );
 
-      console.log('IPFS enabled with gateway backend');
-      return { success: true, enabled: true, nodeType: 'gateway' };
-    } catch (error) {
-      console.error('Failed to enable IPFS:', error);
-      return { success: false, error: error.message };
-    }
-  }
+      const attestationObject = this.createAttestationObjectNone(authenticatorData);
 
-  private async disableIPFS(): Promise<any> {
-    try {
-      this.config.enabled = false;
-      await this.saveConfig(this.config);
+      const result = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
+      const passkeys: any[] = result[PASSKEY_STORAGE_KEY] || [];
 
-      console.log('IPFS disabled');
-      return { success: true, enabled: false };
-    } catch (error) {
-      console.error('Failed to disable IPFS:', error);
-      return { success: false, error: error.message };
-    }
-  }
+      passkeys.push({
+        id: credentialIdBase64,
+        credentialId: credentialIdBase64,
+        type: 'public-key',
+        rpId,
+        origin,
+        user: {
+          id: user?.id
+            ? user.id instanceof ArrayBuffer
+              ? this.arrayBufferToBase64URL(user.id)
+              : user.id
+            : null,
+          name: user?.name,
+          displayName: user?.displayName,
+        },
+        privateKey: privateKeyBase64,
+        publicKey: publicKeyBase64,
+        createdAt: Date.now(),
+        counter: 0,
+        prfKey: prfKeyBase64,
+      });
 
-  private async getIPFSStatus(): Promise<any> {
-    try {
+      await chrome.storage.local.set({ [PASSKEY_STORAGE_KEY]: passkeys });
+      console.log('PassKey Vault: Created and stored passkey', credentialIdBase64);
+
+      const rawIdBase64 = this.base64urlToBase64(credentialIdBase64);
+      const clientDataJSONBase64 = this.arrayBufferToBase64(clientDataJSONBytes.buffer);
+      const attestationObjectBase64 = this.arrayBufferToBase64(attestationObject);
+
       return {
         success: true,
-        data: {
-          enabled: this.config.enabled,
-          nodeType: this.config.nodeType,
-          gatewayUrls: this.config.gatewayUrls,
-          status: this.config.enabled ? 'connected' : 'disabled',
+        credential: {
+          id: credentialIdBase64,
+          rawId: rawIdBase64,
+          type: 'public-key',
+          response: {
+            clientDataJSON: clientDataJSONBase64,
+            attestationObject: attestationObjectBase64,
+          },
+          authenticatorAttachment: 'cross-platform',
+          clientExtensionResults,
         },
       };
-    } catch (error) {
-      console.error('Failed to get IPFS status:', error);
+    } catch (error: any) {
+      console.error('PassKey Vault: Error creating passkey:', error);
       return { success: false, error: error.message };
     }
+  }
+
+  private async handleGetPasskey(payload: any, sender: chrome.runtime.MessageSender): Promise<any> {
+    try {
+      const { publicKey: options, origin, selectedPasskeyId } = payload;
+      const challenge = options?.challenge;
+      const rpId = options?.rpId || (origin ? new URL(origin).hostname : 'localhost');
+
+      console.log('PassKey Vault: Getting passkey for', rpId, 'selectedId:', selectedPasskeyId);
+
+      const result = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
+      const passkeys: any[] = result[PASSKEY_STORAGE_KEY] || [];
+      const matchingPasskeys = passkeys.filter((p) => p.rpId === rpId);
+
+      if (matchingPasskeys.length === 0) {
+        console.log('PassKey Vault: No passkeys found for', rpId);
+        return {
+          success: false,
+          error: 'No passkeys found for this site',
+          name: 'NotAllowedError',
+        };
+      }
+
+      let passkey;
+      if (selectedPasskeyId) {
+        passkey = matchingPasskeys.find((p) => p.id === selectedPasskeyId);
+        if (!passkey) {
+          console.log('PassKey Vault: Selected passkey not found:', selectedPasskeyId);
+          return { success: false, error: 'Selected passkey not found', name: 'NotAllowedError' };
+        }
+      } else {
+        passkey = matchingPasskeys[0];
+      }
+
+      console.log('PassKey Vault: Using passkey', passkey.id, 'for signing');
+
+      if (!passkey.privateKey || typeof passkey.privateKey !== 'string') {
+        throw new Error('Invalid private key format: ' + typeof passkey.privateKey);
+      }
+      if (passkey.privateKey.length === 0) {
+        throw new Error('Private key is empty');
+      }
+
+      let privateKeyBinary;
+      try {
+        privateKeyBinary = atob(passkey.privateKey);
+      } catch (atobError: any) {
+        console.error('PassKey Vault: Failed to decode private key:', atobError);
+        throw new Error('Invalid base64 encoding for private key: ' + atobError.message);
+      }
+
+      const privateKeyBytes = new Uint8Array(privateKeyBinary.length);
+      for (let i = 0; i < privateKeyBinary.length; i++) {
+        privateKeyBytes[i] = privateKeyBinary.charCodeAt(i);
+      }
+
+      const privateKey = await crypto.subtle.importKey(
+        'pkcs8',
+        privateKeyBytes.buffer,
+        { name: 'ECDSA', namedCurve: 'P-256' },
+        true,
+        ['sign']
+      );
+
+      const clientData = { type: 'webauthn.get', challenge, origin };
+      const clientDataJSONBytes = new TextEncoder().encode(JSON.stringify(clientData));
+
+      const prfInput = options?.extensions?.prf;
+      const prfEvalInput = this.selectPrfEval(prfInput, passkey.id);
+      const prfKeyBuffer = await this.getOrCreatePrfKey(passkey);
+      const prfResults = prfEvalInput
+        ? await this.computePrfResults(prfKeyBuffer, prfEvalInput)
+        : null;
+      const extensionsData = prfResults ? this.encodePrfExtension(prfResults) : null;
+      const clientExtensionResults = this.buildClientExtensionResults(prfResults);
+
+      passkey.counter = (passkey.counter || 0) + 1;
+      const authenticatorData = await this.createAuthenticatorDataAsync(
+        rpId,
+        null,
+        null,
+        false,
+        passkey.counter,
+        extensionsData
+      );
+
+      const clientDataHash = await crypto.subtle.digest('SHA-256', clientDataJSONBytes.buffer);
+      const authenticatorDataBytes = new Uint8Array(authenticatorData);
+      const signatureBase = new Uint8Array(
+        authenticatorDataBytes.length + clientDataHash.byteLength
+      );
+      signatureBase.set(authenticatorDataBytes, 0);
+      signatureBase.set(new Uint8Array(clientDataHash), authenticatorDataBytes.length);
+
+      const signatureP1363 = await crypto.subtle.sign(
+        { name: 'ECDSA', hash: 'SHA-256' },
+        privateKey,
+        signatureBase
+      );
+
+      const signatureDER = this.convertP1363ToDER(signatureP1363);
+
+      const index = passkeys.findIndex((p) => p.id === passkey.id);
+      if (index >= 0) {
+        passkeys[index] = passkey;
+        await chrome.storage.local.set({ [PASSKEY_STORAGE_KEY]: passkeys });
+      }
+
+      console.log('PassKey Vault: Signed assertion for', passkey.id);
+
+      const rawIdBase64 = this.base64urlToBase64(passkey.id);
+      const clientDataJSONBase64 = this.arrayBufferToBase64(clientDataJSONBytes.buffer);
+      const authenticatorDataBase64 = this.arrayBufferToBase64(authenticatorData);
+      const signatureBase64 = this.arrayBufferToBase64(signatureDER);
+      const userHandleBase64 = passkey.user?.id
+        ? typeof passkey.user.id === 'string'
+          ? this.base64urlToBase64(passkey.user.id)
+          : this.arrayBufferToBase64(passkey.user.id)
+        : null;
+
+      return {
+        success: true,
+        credential: {
+          id: passkey.id,
+          rawId: rawIdBase64,
+          type: 'public-key',
+          response: {
+            clientDataJSON: clientDataJSONBase64,
+            authenticatorData: authenticatorDataBase64,
+            signature: signatureBase64,
+            userHandle: userHandleBase64,
+          },
+          authenticatorAttachment: 'cross-platform',
+          clientExtensionResults,
+        },
+      };
+    } catch (error: any) {
+      let errorMessage = 'Unknown error';
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      } else if (error instanceof DOMException) {
+        errorMessage = error.message || error.name || 'DOMException';
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      }
+      console.error('PassKey Vault: Error getting passkey:', error);
+      return { success: false, error: errorMessage };
+    }
+  }
+
+  private generateCredentialId(): Uint8Array {
+    const array = new Uint8Array(16);
+    crypto.getRandomValues(array);
+    return array;
+  }
+
+  private arrayBufferToBase64URL(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i] & 0xff);
+    }
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  }
+
+  private arrayBufferToBase64(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i] & 0xff);
+    }
+    return btoa(binary);
+  }
+
+  private base64urlToBase64(base64url: string): string {
+    if (!base64url || typeof base64url !== 'string') {
+      throw new Error('base64urlToBase64 requires a string input');
+    }
+    let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+    const padding = (4 - (base64.length % 4)) % 4;
+    if (padding > 0) {
+      base64 += '='.repeat(padding);
+    }
+    return base64;
+  }
+
+  private base64URLToArrayBuffer(base64url: any): ArrayBuffer {
+    if (base64url instanceof ArrayBuffer) return base64url;
+    if (base64url instanceof Uint8Array) return base64url.buffer as ArrayBuffer;
+    if (ArrayBuffer.isView(base64url)) return base64url.buffer as ArrayBuffer;
+    if (base64url?.type === 'Buffer' && Array.isArray(base64url.data)) {
+      return new Uint8Array(base64url.data).buffer;
+    }
+    if (base64url == null) throw new TypeError('Unsupported base64 input type: null/undefined');
+    if (typeof base64url !== 'string') base64url = String(base64url);
+    if (base64url.length === 0) throw new Error('Empty base64 string provided');
+
+    const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i) & 0xff;
+    }
+    return bytes.buffer;
+  }
+
+  private selectPrfEval(prfInput: any, credentialId?: string): any | null {
+    if (!prfInput) return null;
+    if (prfInput.eval) return prfInput.eval;
+    const map = prfInput.evalByCredential;
+    if (!map) return null;
+
+    const candidates = new Set<string>();
+    if (credentialId) {
+      candidates.add(credentialId);
+      try {
+        candidates.add(this.base64urlToBase64(credentialId));
+      } catch {
+        /* ignore */
+      }
+    }
+
+    for (const key of Object.keys(map)) {
+      if (candidates.has(key)) return map[key];
+      try {
+        const decoded = this.base64URLToArrayBuffer(key);
+        const asUrl = this.arrayBufferToBase64URL(decoded);
+        if (asUrl && candidates.has(asUrl)) return map[key];
+      } catch {
+        /* ignore */
+      }
+    }
+    return null;
+  }
+
+  private async getOrCreatePrfKey(passkey: any): Promise<ArrayBuffer> {
+    if (passkey.prfKey) return this.decodeBase64Flexible(passkey.prfKey);
+    const privateKeyBytes = this.base64URLToArrayBuffer(passkey.privateKey);
+    const derived = await crypto.subtle.digest('SHA-256', privateKeyBytes);
+    passkey.prfKey = this.arrayBufferToBase64URL(derived);
+    return derived;
+  }
+
+  private normalizePrfInput(input: any): ArrayBuffer | null {
+    if (!input) return null;
+    if (input instanceof ArrayBuffer) return input;
+    if (ArrayBuffer.isView(input)) return input.buffer as ArrayBuffer;
+    if (input?.type === 'Buffer' && Array.isArray(input.data)) {
+      return new Uint8Array(input.data).buffer;
+    }
+    if (Array.isArray(input)) return new Uint8Array(input).buffer;
+
+    if (typeof input === 'string') {
+      try {
+        return this.base64URLToArrayBuffer(input);
+      } catch {
+        try {
+          return this.decodeBase64Flexible(input);
+        } catch {
+          return null;
+        }
+      }
+    }
+
+    if (typeof input === 'object' && input !== null) {
+      const keys = Object.keys(input);
+      if (keys.length > 0 && keys.every((k) => !isNaN(Number(k)))) {
+        const maxIndex = Math.max(...keys.map(Number));
+        const arr = new Uint8Array(maxIndex + 1);
+        for (const key of keys) arr[Number(key)] = input[key];
+        return arr.buffer;
+      }
+    }
+    return null;
+  }
+
+  private async computePrfResults(prfKey: ArrayBuffer, evalInput: any): Promise<any | null> {
+    if (!evalInput) return null;
+    const results: any = { results: {} };
+    const first = this.normalizePrfInput(evalInput.first);
+    const second = this.normalizePrfInput(evalInput.second);
+
+    if (first) results.results.first = await this.hmacSha256(prfKey, first);
+    if (second) results.results.second = await this.hmacSha256(prfKey, second);
+
+    if (!results.results.first && !results.results.second) return null;
+    return results;
+  }
+
+  private async hmacSha256(keyBytes: ArrayBuffer, data: ArrayBuffer): Promise<ArrayBuffer> {
+    const key = await crypto.subtle.importKey(
+      'raw',
+      keyBytes,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+    return crypto.subtle.sign('HMAC', key, data);
+  }
+
+  private buildClientExtensionResults(prfResults: any | null): any {
+    const baseResults: any = { credProps: { rk: true } };
+    if (!prfResults?.results) return baseResults;
+
+    const encoded: any = { results: {} };
+    if (prfResults.results.first) {
+      encoded.results.first = this.arrayBufferToBase64URL(prfResults.results.first);
+    }
+    if (prfResults.results.second) {
+      encoded.results.second = this.arrayBufferToBase64URL(prfResults.results.second);
+    }
+    if (encoded.results.first || encoded.results.second) baseResults.prf = encoded;
+    return baseResults;
+  }
+
+  private encodePrfExtension(prfResults: any | null): Uint8Array | null {
+    if (!prfResults?.results) return null;
+
+    const resultEntries: number[] = [];
+    let resultCount = 0;
+
+    if (prfResults.results.first) {
+      resultEntries.push(...this.encodeTextString('first'));
+      resultEntries.push(...this.encodeByteString(new Uint8Array(prfResults.results.first)));
+      resultCount++;
+    }
+    if (prfResults.results.second) {
+      resultEntries.push(...this.encodeTextString('second'));
+      resultEntries.push(...this.encodeByteString(new Uint8Array(prfResults.results.second)));
+      resultCount++;
+    }
+    if (resultCount === 0) return null;
+
+    const resultsMap = [...this.encodeMapHeader(resultCount), ...resultEntries];
+    const prfMap = [...this.encodeMapHeader(1), ...this.encodeTextString('results'), ...resultsMap];
+    const extensions = [...this.encodeMapHeader(1), ...this.encodeTextString('prf'), ...prfMap];
+    return new Uint8Array(extensions);
+  }
+
+  private encodeMapHeader(length: number): number[] {
+    if (length < 24) return [0xa0 + length];
+    if (length < 256) return [0xb8, length];
+    return [0xb9, (length >> 8) & 0xff, length & 0xff];
+  }
+
+  private encodeTextString(value: string): number[] {
+    const bytes = new TextEncoder().encode(value);
+    const header =
+      bytes.length < 24
+        ? [0x60 + bytes.length]
+        : bytes.length < 256
+          ? [0x78, bytes.length]
+          : [0x79, (bytes.length >> 8) & 0xff, bytes.length & 0xff];
+    return [...header, ...bytes];
+  }
+
+  private encodeByteString(bytes: Uint8Array): number[] {
+    if (bytes.length < 24) return [0x40 + bytes.length, ...bytes];
+    if (bytes.length < 256) return [0x58, bytes.length, ...bytes];
+    return [0x59, (bytes.length >> 8) & 0xff, bytes.length & 0xff, ...bytes];
+  }
+
+  private decodeBase64Flexible(value: any): ArrayBuffer {
+    if (value instanceof ArrayBuffer) return value;
+    if (ArrayBuffer.isView(value)) return value.buffer as ArrayBuffer;
+    if (value?.type === 'Buffer' && Array.isArray(value.data)) {
+      return new Uint8Array(value.data).buffer;
+    }
+    if (typeof value !== 'string') throw new TypeError('Invalid base64 input type');
+
+    try {
+      return this.base64URLToArrayBuffer(value);
+    } catch {
+      /* fall through */
+    }
+
+    const padded =
+      value.length % 4 === 0 ? value : value + '='.repeat((4 - (value.length % 4)) % 4);
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i) & 0xff;
+    }
+    return bytes.buffer;
+  }
+
+  private async createAuthenticatorDataAsync(
+    rpId: string,
+    credentialId: Uint8Array | null,
+    publicKeyRaw: ArrayBuffer | null,
+    includeAttestedCredentialData: boolean,
+    counter: number = 0,
+    extensionsData?: Uint8Array | null
+  ): Promise<ArrayBuffer> {
+    const rpIdBytes = new TextEncoder().encode(rpId);
+    const rpIdHash = new Uint8Array(await crypto.subtle.digest('SHA-256', rpIdBytes));
+
+    let flagsByte = includeAttestedCredentialData ? 0x45 : 0x05;
+    if (extensionsData && extensionsData.length > 0) flagsByte |= 0x80;
+    const flags = new Uint8Array([flagsByte]);
+
+    const counterBytes = new Uint8Array(4);
+    new DataView(counterBytes.buffer).setUint32(0, counter, false);
+
+    if (includeAttestedCredentialData && credentialId && publicKeyRaw) {
+      const aaguid = new Uint8Array(16);
+      const credentialIdLength = new Uint8Array(2);
+      new DataView(credentialIdLength.buffer).setUint16(0, credentialId.length, false);
+      const cosePublicKey = this.rawPublicKeyToCose(publicKeyRaw);
+
+      const authData = new Uint8Array(
+        rpIdHash.length +
+          flags.length +
+          counterBytes.length +
+          aaguid.length +
+          credentialIdLength.length +
+          credentialId.length +
+          cosePublicKey.length +
+          (extensionsData?.length || 0)
+      );
+
+      let offset = 0;
+      authData.set(rpIdHash, offset);
+      offset += rpIdHash.length;
+      authData.set(flags, offset);
+      offset += flags.length;
+      authData.set(counterBytes, offset);
+      offset += counterBytes.length;
+      authData.set(aaguid, offset);
+      offset += aaguid.length;
+      authData.set(credentialIdLength, offset);
+      offset += credentialIdLength.length;
+      authData.set(credentialId, offset);
+      offset += credentialId.length;
+      authData.set(cosePublicKey, offset);
+      offset += cosePublicKey.length;
+      if (extensionsData && extensionsData.length > 0) authData.set(extensionsData, offset);
+
+      return authData.buffer;
+    } else {
+      const authData = new Uint8Array(
+        rpIdHash.length + flags.length + counterBytes.length + (extensionsData?.length || 0)
+      );
+      let offset = 0;
+      authData.set(rpIdHash, offset);
+      offset += rpIdHash.length;
+      authData.set(flags, offset);
+      offset += flags.length;
+      authData.set(counterBytes, offset);
+      offset += counterBytes.length;
+      if (extensionsData && extensionsData.length > 0) authData.set(extensionsData, offset);
+
+      return authData.buffer;
+    }
+  }
+
+  private rawPublicKeyToCose(rawKey: ArrayBuffer): Uint8Array {
+    const raw = new Uint8Array(rawKey);
+    const x = raw.slice(1, 33);
+    const y = raw.slice(33, 65);
+
+    const coseKey: number[] = [];
+    coseKey.push(0xa5);
+    coseKey.push(0x01, 0x02);
+    coseKey.push(0x03, 0x26);
+    coseKey.push(0x20, 0x01);
+    coseKey.push(0x21, 0x58, 0x20);
+    for (let i = 0; i < x.length; i++) coseKey.push(x[i]);
+    coseKey.push(0x22, 0x58, 0x20);
+    for (let i = 0; i < y.length; i++) coseKey.push(y[i]);
+
+    return new Uint8Array(coseKey);
+  }
+
+  private convertP1363ToDER(p1363Sig: ArrayBuffer): ArrayBuffer {
+    const sig = new Uint8Array(p1363Sig);
+    const r = sig.slice(0, 32);
+    const s = sig.slice(32, 64);
+    const rDer = this.encodeDERInteger(r);
+    const sDer = this.encodeDERInteger(s);
+    const sequenceLength = rDer.length + sDer.length;
+
+    let result;
+    if (sequenceLength <= 127) {
+      result = new Uint8Array(2 + sequenceLength);
+      result[0] = 0x30;
+      result[1] = sequenceLength;
+      result.set(rDer, 2);
+      result.set(sDer, 2 + rDer.length);
+    } else {
+      result = new Uint8Array(3 + sequenceLength);
+      result[0] = 0x30;
+      result[1] = 0x81;
+      result[2] = sequenceLength;
+      result.set(rDer, 3);
+      result.set(sDer, 3 + rDer.length);
+    }
+    return result.buffer;
+  }
+
+  private encodeDERInteger(bytes: Uint8Array): Uint8Array {
+    let start = 0;
+    while (start < bytes.length - 1 && bytes[start] === 0) start++;
+    const trimmed = bytes.slice(start);
+    const needsPadding = (trimmed[0] & 0x80) !== 0;
+    const length = trimmed.length + (needsPadding ? 1 : 0);
+
+    const result = new Uint8Array(2 + length);
+    result[0] = 0x02;
+    result[1] = length;
+    if (needsPadding) {
+      result[2] = 0x00;
+      result.set(trimmed, 3);
+    } else {
+      result.set(trimmed, 2);
+    }
+    return result;
+  }
+
+  private createAttestationObjectNone(authenticatorData: ArrayBuffer): ArrayBuffer {
+    const authDataBytes = new Uint8Array(authenticatorData);
+    const parts: number[] = [];
+
+    parts.push(0xa3);
+    parts.push(0x63);
+    parts.push(0x66, 0x6d, 0x74);
+    parts.push(0x64);
+    parts.push(0x6e, 0x6f, 0x6e, 0x65);
+    parts.push(0x67);
+    parts.push(0x61, 0x74, 0x74, 0x53, 0x74, 0x6d, 0x74);
+    parts.push(0xa0);
+    parts.push(0x68);
+    parts.push(0x61, 0x75, 0x74, 0x68, 0x44, 0x61, 0x74, 0x61);
+
+    if (authDataBytes.length <= 23) {
+      parts.push(0x40 + authDataBytes.length);
+    } else if (authDataBytes.length <= 255) {
+      parts.push(0x58, authDataBytes.length);
+    } else {
+      parts.push(0x59, (authDataBytes.length >> 8) & 0xff, authDataBytes.length & 0xff);
+    }
+
+    const result = new Uint8Array(parts.length + authDataBytes.length);
+    result.set(parts, 0);
+    result.set(authDataBytes, parts.length);
+    return result.buffer;
+  }
+
+  private async handleStorePasskey(
+    payload: any,
+    sender: chrome.runtime.MessageSender
+  ): Promise<any> {
+    try {
+      const { publicKey, origin, options } = payload;
+      const result = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
+      const passkeys: any[] = result[PASSKEY_STORAGE_KEY] || [];
+      const rpId = options?.publicKey?.rpId || new URL(origin).hostname;
+      const credentialId = publicKey?.id || publicKey?.rawId;
+
+      if (credentialId) {
+        const existingIndex = passkeys.findIndex((p) => p.credentialId === credentialId);
+        const passkeyData = {
+          credentialId,
+          id: publicKey.id,
+          rawId: publicKey.rawId,
+          type: publicKey.type,
+          response: publicKey.response,
+          rpId,
+          origin,
+          createdAt: Date.now(),
+        };
+
+        if (existingIndex >= 0) {
+          passkeys[existingIndex] = passkeyData;
+        } else {
+          passkeys.push(passkeyData);
+        }
+
+        await chrome.storage.local.set({ [PASSKEY_STORAGE_KEY]: passkeys });
+        console.log('PassKey Vault: Stored passkey', credentialId, 'for', rpId);
+        return { success: true, message: 'Passkey stored successfully', count: passkeys.length };
+      }
+      return { success: false, error: 'No credential ID in payload' };
+    } catch (error: any) {
+      console.error('PassKey Vault: Error storing passkey:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  private async handleRetrievePasskey(
+    payload: any,
+    sender: chrome.runtime.MessageSender
+  ): Promise<any> {
+    try {
+      const { publicKey, origin } = payload;
+      const rpId = publicKey?.rpId || (origin ? new URL(origin).hostname : null);
+      if (!rpId) return { success: false, error: 'No rpId provided' };
+
+      const result = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
+      const passkeys: any[] = result[PASSKEY_STORAGE_KEY] || [];
+      const matchingPasskeys = passkeys.filter((p) => p.rpId === rpId);
+
+      console.log('PassKey Vault: Found', matchingPasskeys.length, 'passkeys for', rpId);
+      return { success: true, passkeys: matchingPasskeys, count: matchingPasskeys.length, rpId };
+    } catch (error: any) {
+      console.error('PassKey Vault: Error retrieving passkey:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  private async handleListPasskeys(
+    payload: any,
+    sender: chrome.runtime.MessageSender
+  ): Promise<any> {
+    try {
+      const result = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
+      const passkeys: any[] = result[PASSKEY_STORAGE_KEY] || [];
+      return { success: true, passkeys, count: passkeys.length };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  private async handleListPasskeysForRp(
+    payload: any,
+    sender: chrome.runtime.MessageSender
+  ): Promise<any> {
+    try {
+      const { rpId } = payload;
+      if (!rpId) return { success: false, error: 'No rpId provided' };
+
+      const result = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
+      const passkeys: any[] = result[PASSKEY_STORAGE_KEY] || [];
+      const matchingPasskeys = passkeys.filter((p) => p.rpId === rpId);
+
+      console.log('PassKey Vault: Found', matchingPasskeys.length, 'passkeys for', rpId);
+      return {
+        success: true,
+        passkeys: matchingPasskeys.map((p) => ({
+          id: p.id,
+          credentialId: p.credentialId || p.id,
+          rpId: p.rpId,
+          origin: p.origin,
+          user: p.user,
+          createdAt: p.createdAt,
+        })),
+        count: matchingPasskeys.length,
+        rpId,
+      };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  private async handleDeletePasskey(
+    payload: any,
+    sender: chrome.runtime.MessageSender
+  ): Promise<any> {
+    try {
+      const { credentialId } = payload;
+      const result = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
+      const passkeys: any[] = result[PASSKEY_STORAGE_KEY] || [];
+      const filtered = passkeys.filter(
+        (p) => p.credentialId !== credentialId && p.id !== credentialId
+      );
+
+      if (filtered.length < passkeys.length) {
+        await chrome.storage.local.set({ [PASSKEY_STORAGE_KEY]: filtered });
+        return { success: true, message: 'Passkey deleted' };
+      }
+      return { success: false, error: 'Passkey not found' };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  private async handleBackup(payload: any, sender: chrome.runtime.MessageSender): Promise<any> {
+    return { success: true, message: 'Backup placeholder' };
+  }
+
+  private async handleRestore(payload: any, sender: chrome.runtime.MessageSender): Promise<any> {
+    return { success: true, message: 'Restore placeholder' };
+  }
+
+  private async handleActivateUI(payload: any, sender: chrome.runtime.MessageSender): Promise<any> {
+    return { success: true, message: 'Activate UI placeholder' };
   }
 
   private async createSyncChain(deviceName: string, wordCount: number): Promise<any> {
@@ -272,7 +980,6 @@ class BackgroundService {
       const seedHashHex = Array.from(new Uint8Array(seedHashBuffer))
         .map((b: number) => b.toString(16).padStart(2, '0'))
         .join('');
-      // Derive chainId deterministically from seed hash so all devices with same mnemonic get same chainId
       const chainId = seedHashHex.substring(0, 32);
 
       const newDevice: SyncDevice = {
@@ -306,7 +1013,7 @@ class BackgroundService {
       });
 
       return { success: true, mnemonic, deviceId, chainId };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to create sync chain:', error);
       return { success: false, error: error.message };
     }
@@ -361,7 +1068,7 @@ class BackgroundService {
       });
 
       return { success: true, deviceId };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to join sync chain:', error);
       return { success: false, error: error.message };
     }
@@ -369,27 +1076,6 @@ class BackgroundService {
 
   private async leaveSyncChain(): Promise<any> {
     try {
-      const configResult = await chrome.storage.local.get(SYNC_CONFIG_KEY);
-      const config: SyncConfig = configResult[SYNC_CONFIG_KEY];
-
-      if (!config || !config.enabled) {
-        return { success: false, error: 'Not currently synced' };
-      }
-
-      const chainResult = await chrome.storage.local.get(SYNC_DEVICES_KEY);
-      const chain: SyncChain = chainResult[SYNC_DEVICES_KEY];
-
-      if (!chain) {
-        return { success: false, error: 'Sync chain not found' };
-      }
-
-      const devices = chain.devices.filter((d) => !d.isThisDevice);
-      const updatedChain: SyncChain = {
-        ...chain,
-        devices: devices.filter((d) => !d.isThisDevice),
-      };
-
-      await chrome.storage.local.set({ [SYNC_DEVICES_KEY]: updatedChain });
       await chrome.storage.local.set({
         [SYNC_CONFIG_KEY]: {
           enabled: false,
@@ -398,10 +1084,10 @@ class BackgroundService {
           deviceName: null,
           seedHash: null,
         },
+        [SYNC_DEVICES_KEY]: null,
       });
-
       return { success: true };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to leave sync chain:', error);
       return { success: false, error: error.message };
     }
@@ -419,7 +1105,6 @@ class BackgroundService {
       }
 
       const thisDeviceId = config.deviceId;
-
       const chainInfo: SyncChain = {
         ...chain,
         devices: chain.devices.map((d) => ({
@@ -429,7 +1114,7 @@ class BackgroundService {
       };
 
       return { success: true, chainInfo };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to get sync chain info:', error);
       return { success: false, error: error.message };
     }
@@ -440,21 +1125,14 @@ class BackgroundService {
       const result = await chrome.storage.local.get(SYNC_DEVICES_KEY);
       const chain: SyncChain = result[SYNC_DEVICES_KEY];
 
-      if (!chain) {
-        return { success: false, error: 'Sync chain not found' };
-      }
+      if (!chain) return { success: false, error: 'Sync chain not found' };
 
       const updatedDevices = chain.devices.filter((d) => d.id !== deviceId);
-
-      const updatedChain: SyncChain = {
-        ...chain,
-        devices: updatedDevices,
-      };
+      const updatedChain: SyncChain = { ...chain, devices: updatedDevices };
 
       await chrome.storage.local.set({ [SYNC_DEVICES_KEY]: updatedChain });
-
       return { success: true };
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to remove sync device:', error);
       return { success: false, error: error.message };
     }
@@ -464,30 +1142,12 @@ class BackgroundService {
     const platform = navigator.platform?.toLowerCase() || '';
     const isMobile = /android|iphone|ipad|ipod/.test(platform);
 
-    if (isMobile) {
-      return 'Mobile';
-    }
-
-    if (platform.includes('mac')) {
-      return 'Desktop (macOS)';
-    }
-
-    if (platform.includes('win')) {
-      return 'Desktop (Windows)';
-    }
-
-    if (platform.includes('linux')) {
-      return 'Desktop (Linux)';
-    }
-
+    if (isMobile) return 'Mobile';
+    if (platform.includes('mac')) return 'Desktop (macOS)';
+    if (platform.includes('win')) return 'Desktop (Windows)';
+    if (platform.includes('linux')) return 'Desktop (Linux)';
     return 'Desktop';
   }
 }
 
 const backgroundService = new BackgroundService();
-
-backgroundService.initialize().catch((error) => {
-  console.error('Failed to initialize background service:', error);
-});
-
-export { backgroundService };
