@@ -8,7 +8,8 @@
 (function () {
   'use strict';
 
-  console.log('PassKey Vault: WebAuthn injection script loaded');
+  // Debug mode controlled by page context (silent by default)
+  const DEBUG = false;
 
   // Store pending requests
   const pendingRequests = new Map();
@@ -104,7 +105,7 @@
 
     // Override create: fully intercept and handle passkey creation internally
     navigator.credentials.create = async function (options: any) {
-      console.log('PassKey Vault: Intercepted create request', options);
+      if (DEBUG) console.log('PassKey Vault: Intercepted create request', options);
 
       // Only intercept publicKey (WebAuthn) requests
       if (!options?.publicKey) {
@@ -151,7 +152,7 @@
           origin: window.location.origin,
         };
 
-        console.log('PassKey Vault: Sending CREATE_PASSKEY request', serializablePayload);
+        if (DEBUG) console.log('PassKey Vault: Sending CREATE_PASSKEY request', serializablePayload);
 
         window.postMessage(
           {
@@ -167,7 +168,7 @@
 
     // Override get: try extension-managed passkeys, fall back to native WebAuthn on failure.
     navigator.credentials.get = async function (options: any) {
-      console.log('PassKey Vault: Intercepted get request', options);
+      if (DEBUG) console.log('PassKey Vault: Intercepted get request', options);
 
       // Only intercept publicKey (WebAuthn) requests
       if (!options?.publicKey) {
@@ -208,7 +209,7 @@
             origin: window.location.origin,
           };
 
-          console.log('PassKey Vault: Sending GET_PASSKEY request', serializablePayload);
+          if (DEBUG) console.log('PassKey Vault: Sending GET_PASSKEY request', serializablePayload);
 
           window.postMessage(
             {
@@ -225,13 +226,15 @@
         const isNoPasskeysError =
           e?.message?.includes('No passkeys found') || e?.message?.includes('not found');
 
-        if (isNoPasskeysError) {
-          console.log('PassKey Vault: No stored passkeys for this site, using native WebAuthn');
-        } else {
-          console.warn(
-            'PassKey Vault: Extension get failed, falling back to native WebAuthn',
-            e?.message || e
-          );
+        if (DEBUG) {
+          if (isNoPasskeysError) {
+            console.log('PassKey Vault: No stored passkeys for this site, using native WebAuthn');
+          } else {
+            console.warn(
+              'PassKey Vault: Extension get failed, falling back to native WebAuthn',
+              e?.message || e
+            );
+          }
         }
 
         if (nativeGet) {
@@ -241,7 +244,7 @@
       }
     };
 
-    console.log('PassKey Vault: WebAuthn API hooked successfully');
+    if (DEBUG) console.log('PassKey Vault: WebAuthn API hooked successfully');
   } else {
     console.warn('PassKey Vault: navigator.credentials not found, cannot hook');
   }

@@ -23,6 +23,7 @@
   let confirmModal: HTMLElement;
   let searchInput: HTMLInputElement;
   let searchClearBtn: HTMLButtonElement;
+  let debugLoggingToggle: HTMLInputElement;
 
   let allPasskeys: any[] = [];
 
@@ -30,6 +31,7 @@
   document.addEventListener('DOMContentLoaded', () => {
     initializeElements();
     createConfirmModal();
+    loadDebugLoggingState();
     loadPasskeys();
     setupEventListeners();
   });
@@ -46,6 +48,7 @@
     syncSettingsBtn = document.getElementById('sync-settings-btn') as HTMLButtonElement;
     searchInput = document.getElementById('search-input') as HTMLInputElement;
     searchClearBtn = document.getElementById('search-clear') as HTMLButtonElement;
+    debugLoggingToggle = document.getElementById('debug-logging-toggle') as HTMLInputElement;
   }
 
   function createConfirmModal(): void {
@@ -137,6 +140,39 @@
     const importEmptyBtn = document.getElementById('import-btn-empty');
     if (importEmptyBtn) {
       importEmptyBtn.addEventListener('click', openImportPage);
+    }
+
+    debugLoggingToggle.addEventListener('change', handleDebugLoggingToggle);
+  }
+
+  async function loadDebugLoggingState(): Promise<void> {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'GET_DEBUG_LOGGING' });
+      if (response.success) {
+        debugLoggingToggle.checked = response.enabled;
+      }
+    } catch (error) {
+      console.error('Failed to load debug logging state:', error);
+    }
+  }
+
+  async function handleDebugLoggingToggle(): Promise<void> {
+    const enabled = debugLoggingToggle.checked;
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'SET_DEBUG_LOGGING',
+        payload: { enabled },
+      });
+      if (response.success) {
+        showNotification(`Debug logging ${enabled ? 'enabled' : 'disabled'}`);
+      } else {
+        showNotification('Failed to toggle debug logging', 'error');
+        debugLoggingToggle.checked = !enabled; // Revert
+      }
+    } catch (error) {
+      console.error('Failed to toggle debug logging:', error);
+      showNotification('Failed to toggle debug logging', 'error');
+      debugLoggingToggle.checked = !enabled; // Revert
     }
   }
 

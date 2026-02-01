@@ -5,6 +5,8 @@
  * and communicate with the background script.
  */
 
+import { logger } from '../utils/logger';
+
 interface PasskeyOption {
   id: string;
   credentialId: string;
@@ -45,7 +47,10 @@ class ContentScript {
    */
   private async initialize(): Promise<void> {
     try {
-      console.log('PassKey Vault: Content script initializing');
+      // Initialize logger first
+      await logger.init();
+
+      logger.info('Content script initializing');
 
       // Inject WebAuthn interception code
       this.injectScript();
@@ -60,9 +65,9 @@ class ContentScript {
       this.setupActivationListeners();
 
       this.isInjected = true;
-      console.log('PassKey Vault: Content script initialized successfully');
+      logger.info('Content script initialized successfully');
     } catch (error) {
-      console.error('PassKey Vault: Content script initialization failed:', error);
+      logger.error('Content script initialization failed:', error);
     }
   }
 
@@ -78,9 +83,9 @@ class ContentScript {
         this.remove();
       };
       (document.head || document.documentElement).appendChild(script);
-      console.log('PassKey Vault: Injected webauthn-inject.js');
+      logger.debug('Injected webauthn-inject.js');
     } catch (e) {
-      console.error('PassKey Vault: Injection failed', e);
+      logger.error('Injection failed', e);
     }
   }
 
@@ -282,9 +287,9 @@ class ContentScript {
           requestId,
           timestamp: Date.now(),
         });
-        console.log('PassKey Vault: Passkey stored successfully');
+        logger.debug('Passkey stored successfully');
       } catch (error) {
-        console.error('PassKey Vault: Failed to store passkey:', error);
+        logger.error('Failed to store passkey:', error);
       }
     }
   }
@@ -317,10 +322,10 @@ class ContentScript {
           // Handle WebAuthn responses
           break;
         default:
-          console.log('PassKey Vault: Unknown background message type:', message.type);
+          logger.debug('Unknown background message type:', message.type);
       }
     } catch (error) {
-      console.error('PassKey Vault: Error handling background message:', error);
+      logger.error('Error handling background message:', error);
     }
   }
 
@@ -354,7 +359,7 @@ class ContentScript {
       konamiCode = konamiCode.slice(-konamiPattern.length);
 
       if (konamiCode.join(',') === konamiPattern.join(',')) {
-        console.log('PassKey Vault: Konami code activated');
+        logger.info('Konami code activated');
         this.activateEmergencyUI();
       }
     });
@@ -377,7 +382,7 @@ class ContentScript {
         this.showEmergencyUI();
       }
     } catch (error) {
-      console.error('PassKey Vault: Failed to activate emergency UI:', error);
+      logger.error('Failed to activate emergency UI:', error);
     }
   }
 
@@ -385,7 +390,7 @@ class ContentScript {
    * Show emergency UI (placeholder)
    */
   private showEmergencyUI(): void {
-    console.log('PassKey Vault: Showing emergency UI');
+    logger.info('Showing emergency UI');
 
     // Create a simple modal for now (will be enhanced in UI Agent phase)
     const modal = document.createElement('div');
@@ -496,7 +501,7 @@ class ContentScript {
     }
 
     this.isInjected = false;
-    console.log('PassKey Vault: Content script destroyed');
+    logger.info('Content script destroyed');
   }
 }
 

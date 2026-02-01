@@ -1150,3 +1150,35 @@ html:has(.sync-settings) {
     transform: translate(-50%, -20px);
   }
 }
+
+/* Debug Logging Toggle */
+.debug-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.debug-toggle:hover {
+  background-color: #f3f4f6;
+}
+
+.debug-toggle input[type='checkbox'] {
+  cursor: pointer;
+  width: 14px;
+  height: 14px;
+}
+
+.debug-label {
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.debug-toggle input[type='checkbox']:checked + .debug-label {
+  color: #10b981;
+}

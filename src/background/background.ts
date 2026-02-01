@@ -7,6 +7,7 @@ import {
 import { syncService } from '../sync/sync-service';
 import { secureStorage, SecureStorageConfig } from '../crypto/secure-storage';
 import { randomBytes } from '@noble/hashes/utils';
+import { logger } from '../utils/logger';
 
 const PASSKEY_STORAGE_KEY = 'passkeys';
 const SYNC_CONFIG_KEY = 'sync_config';
@@ -75,15 +76,18 @@ class BackgroundService {
 
   private async initialize(): Promise<void> {
     try {
-      console.log('PassKey Vault: Background service initializing...');
+      // Initialize logger first
+      await logger.init();
+
+      logger.info('Background service initializing...');
       this.setupMessageHandlers();
       this.setupLifecycleHandlers();
       await this.initializeAgents();
       await this.initializeSyncService();
       this.isInitialized = true;
-      console.log('PassKey Vault: Background service initialized successfully');
+      logger.info('Background service initialized successfully');
     } catch (error) {
-      console.error('PassKey Vault: Background service initialization failed:', error);
+      logger.error('Background service initialization failed:', error);
     }
   }
 
@@ -93,7 +97,7 @@ class BackgroundService {
       const config: SyncConfig = configResult[SYNC_CONFIG_KEY];
 
       if (config?.enabled && config.chainId && config.deviceId && config.seedHash) {
-        console.log('PassKey Vault: Starting sync service...');
+        logger.info('Starting sync service...');
         // SECURITY FIX: Pass syncSalt to sync service for random PBKDF2 derivation
         await syncService.initialize(
           config.chainId,
@@ -103,10 +107,10 @@ class BackgroundService {
           config.syncSalt || undefined
         );
         await this.updateSyncStatus({ connectionStatus: 'connected' });
-        console.log('PassKey Vault: Sync service started');
+        logger.info('Sync service started');
       }
     } catch (error: any) {
-      console.error('PassKey Vault: Failed to start sync service:', error);
+      logger.error('Failed to start sync service:', error);
       await this.updateSyncStatus({
         connectionStatus: 'error',
         lastError: error.message,
@@ -192,6 +196,10 @@ class BackgroundService {
         return this.handleIsSecureStorageUnlocked();
       case 'CHANGE_MASTER_PASSWORD':
         return this.handleChangeMasterPassword(payload);
+      case 'SET_DEBUG_LOGGING':
+        return this.handleSetDebugLogging(payload);
+      case 'GET_DEBUG_LOGGING':
+        return this.handleGetDebugLogging();
       default:
         throw new Error(`Unknown message type: ${type}`);
     }
@@ -210,25 +218,25 @@ class BackgroundService {
   }
 
   private handleInstalled(details: chrome.runtime.InstalledDetails): void {
-    console.log('PassKey Vault: Extension installed', details);
+    logger.info('Extension installed', details);
     if (details.reason === 'install') {
-      console.log('PassKey Vault: First-time installation');
+      logger.info('First-time installation');
     } else if (details.reason === 'update') {
-      console.log('PassKey Vault: Extension updated');
+      logger.info('Extension updated');
     }
   }
 
   private handleStartup(): void {
-    console.log('PassKey Vault: Extension startup');
+    logger.info('Extension startup');
   }
 
   private handleSuspend(): void {
-    console.log('PassKey Vault: Extension suspending');
+    logger.info('Extension suspending');
   }
 
   private async initializeAgents(): Promise<void> {
-    console.log('PassKey Vault: Initializing agents...');
-    console.log('PassKey Vault: Agents initialized (placeholder)');
+    logger.debug('Initializing agents...');
+    logger.debug('Agents initialized (placeholder)');
   }
 
   private async handleCreatePasskey(
@@ -242,14 +250,14 @@ class BackgroundService {
       const rpId =
         options?.rpId || options?.rp?.id || (origin ? new URL(origin).hostname : 'localhost');
 
-      console.log('PassKey Vault: Creating passkey for', rpId, 'user:', user?.name);
+      logger.debug('Creating passkey for', rpId, 'user:', user?.name);
 
       const existingResult = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
       const existingPasskeys: any[] = existingResult[PASSKEY_STORAGE_KEY] || [];
       const existingPasskey = existingPasskeys.find((p) => p.rpId === rpId);
 
       if (existingPasskey) {
-        console.log('PassKey Vault: Passkey already exists for', rpId);
+        logger.debug('Passkey already exists for', rpId);
         return {
           success: false,
           error: 'A passkey already exists for this site',
@@ -334,7 +342,7 @@ class BackgroundService {
       });
 
       await chrome.storage.local.set({ [PASSKEY_STORAGE_KEY]: passkeys });
-      console.log('PassKey Vault: Created and stored passkey', credentialIdBase64);
+      logger.debug('Created and stored passkey', credentialIdBase64);
 
       this.logSync('PASSKEY_CREATED', { id: credentialIdBase64, rpId });
       await this.incrementPendingChanges();
@@ -359,7 +367,7 @@ class BackgroundService {
         },
       };
     } catch (error: any) {
-      console.error('PassKey Vault: Error creating passkey:', error);
+      logger.error('Error creating passkey:', error);
       return { success: false, error: error.message };
     }
   }
@@ -370,14 +378,14 @@ class BackgroundService {
       const challenge = options?.challenge;
       const rpId = options?.rpId || (origin ? new URL(origin).hostname : 'localhost');
 
-      console.log('PassKey Vault: Getting passkey for', rpId, 'selectedId:', selectedPasskeyId);
+      logger.debug('Getting passkey for', rpId, 'selectedId:', selectedPasskeyId);
 
       const result = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
       const passkeys: any[] = result[PASSKEY_STORAGE_KEY] || [];
       const matchingPasskeys = passkeys.filter((p) => p.rpId === rpId);
 
       if (matchingPasskeys.length === 0) {
-        console.log('PassKey Vault: No passkeys found for', rpId);
+        logger.debug('No passkeys found for', rpId);
         return {
           success: false,
           error: 'No passkeys found for this site',
@@ -389,14 +397,14 @@ class BackgroundService {
       if (selectedPasskeyId) {
         passkey = matchingPasskeys.find((p) => p.id === selectedPasskeyId);
         if (!passkey) {
-          console.log('PassKey Vault: Selected passkey not found:', selectedPasskeyId);
+          logger.debug('Selected passkey not found:', selectedPasskeyId);
           return { success: false, error: 'Selected passkey not found', name: 'NotAllowedError' };
         }
       } else {
         passkey = matchingPasskeys[0];
       }
 
-      console.log('PassKey Vault: Using passkey', passkey.id, 'for signing');
+      logger.debug('Using passkey', passkey.id, 'for signing');
 
       if (!passkey.privateKey || typeof passkey.privateKey !== 'string') {
         throw new Error('Invalid private key format: ' + typeof passkey.privateKey);
@@ -409,7 +417,7 @@ class BackgroundService {
       try {
         privateKeyBinary = atob(passkey.privateKey);
       } catch (atobError: any) {
-        console.error('PassKey Vault: Failed to decode private key:', atobError);
+        logger.error('Failed to decode private key:', atobError);
         throw new Error('Invalid base64 encoding for private key: ' + atobError.message);
       }
 
@@ -470,7 +478,7 @@ class BackgroundService {
         await chrome.storage.local.set({ [PASSKEY_STORAGE_KEY]: passkeys });
       }
 
-      console.log('PassKey Vault: Signed assertion for', passkey.id);
+      logger.debug('Signed assertion for', passkey.id);
 
       const rawIdBase64 = this.base64urlToBase64(passkey.id);
       const clientDataJSONBase64 = this.arrayBufferToBase64(clientDataJSONBytes.buffer);
@@ -507,7 +515,7 @@ class BackgroundService {
       } else if (typeof error === 'string') {
         errorMessage = error;
       }
-      console.error('PassKey Vault: Error getting passkey:', error);
+      logger.error('Error getting passkey:', error);
       return { success: false, error: errorMessage };
     }
   }
@@ -942,12 +950,12 @@ class BackgroundService {
         }
 
         await chrome.storage.local.set({ [PASSKEY_STORAGE_KEY]: passkeys });
-        console.log('PassKey Vault: Stored passkey', credentialId, 'for', rpId);
+        logger.debug('Stored passkey', credentialId, 'for', rpId);
         return { success: true, message: 'Passkey stored successfully', count: passkeys.length };
       }
       return { success: false, error: 'No credential ID in payload' };
     } catch (error: any) {
-      console.error('PassKey Vault: Error storing passkey:', error);
+      logger.error('Error storing passkey:', error);
       return { success: false, error: error.message };
     }
   }
@@ -965,10 +973,10 @@ class BackgroundService {
       const passkeys: any[] = result[PASSKEY_STORAGE_KEY] || [];
       const matchingPasskeys = passkeys.filter((p) => p.rpId === rpId);
 
-      console.log('PassKey Vault: Found', matchingPasskeys.length, 'passkeys for', rpId);
+      logger.debug('Found', matchingPasskeys.length, 'passkeys for', rpId);
       return { success: true, passkeys: matchingPasskeys, count: matchingPasskeys.length, rpId };
     } catch (error: any) {
-      console.error('PassKey Vault: Error retrieving passkey:', error);
+      logger.error('Error retrieving passkey:', error);
       return { success: false, error: error.message };
     }
   }
@@ -998,7 +1006,7 @@ class BackgroundService {
       const passkeys: any[] = result[PASSKEY_STORAGE_KEY] || [];
       const matchingPasskeys = passkeys.filter((p) => p.rpId === rpId);
 
-      console.log('PassKey Vault: Found', matchingPasskeys.length, 'passkeys for', rpId);
+      logger.debug('Found', matchingPasskeys.length, 'passkeys for', rpId);
       return {
         success: true,
         passkeys: matchingPasskeys.map((p) => ({
@@ -1303,7 +1311,7 @@ class BackgroundService {
         },
       };
     } catch (error: any) {
-      console.error('PassKey Vault: Error getting sync status:', error);
+      logger.error('Error getting sync status:', error);
       return { success: false, error: error.message };
     }
   }
@@ -1447,7 +1455,7 @@ class BackgroundService {
           syncSalt: config.syncSalt || null,
           enabled: config.enabled || false,
         });
-        console.log('PassKey Vault: Migrated sync config to secure storage');
+        logger.info('Migrated sync config to secure storage');
       }
 
       // Migrate existing passkeys to secure storage
@@ -1457,7 +1465,7 @@ class BackgroundService {
         await secureStorage.upsertPasskey(passkey);
       }
       if (passkeys.length > 0) {
-        console.log(`PassKey Vault: Migrated ${passkeys.length} passkeys to secure storage`);
+        logger.info(`Migrated ${passkeys.length} passkeys to secure storage`);
       }
 
       return { success: true, message: 'Master password setup complete' };
@@ -1527,6 +1535,26 @@ class BackgroundService {
       return { success: true, message: 'Master password changed successfully' };
     } catch (error: any) {
       console.error('Failed to change master password:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  private async handleSetDebugLogging(payload: { enabled: boolean }): Promise<any> {
+    try {
+      const { enabled } = payload;
+      await logger.setDebugEnabled(enabled);
+      logger.info(`Debug logging ${enabled ? 'enabled' : 'disabled'}`);
+      return { success: true, enabled };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  private async handleGetDebugLogging(): Promise<any> {
+    try {
+      const enabled = logger.isDebugEnabled();
+      return { success: true, enabled };
+    } catch (error: any) {
       return { success: false, error: error.message };
     }
   }
