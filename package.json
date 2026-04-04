@@ -22,7 +22,8 @@
     "capture": "node scripts/capture-assets.js all",
     "capture:screenshots": "node scripts/capture-assets.js screenshots",
     "capture:video": "node scripts/capture-assets.js video",
-    "capture:cws": "node scripts/capture-assets.js cws"
+    "capture:cws": "node scripts/capture-assets.js cws",
+    "capture:promo": "node scripts/capture-assets.js promo"
   },
   "keywords": [
     "browser-extension",

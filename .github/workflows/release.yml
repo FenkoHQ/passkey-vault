@@ -87,19 +87,48 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download Chrome ZIP artifact
+      - name: Download Chrome dist artifact
         uses: actions/download-artifact@v4
         with:
-          name: passkey-vault-chrome-zip
+          name: passkey-vault-chrome
+          path: dist/
 
-      - name: Upload and publish to Chrome Web Store
-        uses: mnao305/chrome-extension-upload@v4.0.1
-        with:
-          file-path: passkey-vault-chrome.zip
-          extension-id: ${{ secrets.CHROME_EXTENSION_ID }}
-          client-id: ${{ secrets.CHROME_CLIENT_ID }}
-          client-secret: ${{ secrets.CHROME_CLIENT_SECRET }}
-          refresh-token: ${{ secrets.CHROME_REFRESH_TOKEN }}
+      - name: Decode signing key
+        run: echo "${{ secrets.CRX_SIGNING_KEY }}" | base64 -d > /tmp/crx-signing.pem
+
+      - name: Pack signed CRX
+        run: |
+          google-chrome --pack-extension=dist --pack-extension-key=/tmp/crx-signing.pem
+          echo "Packed: $(ls -lh dist.crx)"
+
+      - name: Get OAuth access token
+        id: token
+        run: |
+          TOKEN=$(curl -sf -X POST https://oauth2.googleapis.com/token \
+            -d "client_id=${{ secrets.CHROME_CLIENT_ID }}" \
+            -d "client_secret=${{ secrets.CHROME_CLIENT_SECRET }}" \
+            -d "refresh_token=${{ secrets.CHROME_REFRESH_TOKEN }}" \
+            -d "grant_type=refresh_token" | jq -r .access_token)
+          echo "access_token=$TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Upload signed CRX to Chrome Web Store
+        run: |
+          curl -sf -X PUT \
+            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
+            -H "x-goog-api-version: 2" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @dist.crx \
+            "https://www.googleapis.com/upload/chromewebstore/v1.1/items/${{ secrets.CHROME_EXTENSION_ID }}?uploadType=media" \
+            | jq .
+
+      - name: Publish to Chrome Web Store
+        run: |
+          curl -sf -X POST \
+            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
+            -H "x-goog-api-version: 2" \
+            -H "Content-Length: 0" \
+            "https://www.googleapis.com/chromewebstore/v1.1/items/${{ secrets.CHROME_EXTENSION_ID }}/publish" \
+            | jq .
 
   release:
     name: Create Release

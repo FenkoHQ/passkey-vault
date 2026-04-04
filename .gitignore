@@ -80,6 +80,7 @@ backups/
 *.zip
 *.pem
 key.pem
+crx-signing-key*.pem
 
 # Test files
 test-results/
