@@ -23,6 +23,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify version matches tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          PKG=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "$PKG" ]; then
+            echo "Version mismatch: git tag v${TAG} != package.json ${PKG}"
+            echo "Run: npm run version:bump ${TAG}"
+            exit 1
+          fi
+          echo "Version OK: ${PKG}"
+
       - name: Run tests
         run: npm run test
 
@@ -69,6 +80,26 @@ jobs:
         with:
           name: passkey-vault-firefox-zip
           path: passkey-vault-firefox.zip
+
+  publish-chrome:
+    name: Publish to Chrome Web Store
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Chrome ZIP artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: passkey-vault-chrome-zip
+
+      - name: Upload and publish to Chrome Web Store
+        uses: mnao305/chrome-extension-upload@v4.0.1
+        with:
+          file-path: passkey-vault-chrome.zip
+          extension-id: ${{ secrets.CHROME_EXTENSION_ID }}
+          client-id: ${{ secrets.CHROME_CLIENT_ID }}
+          client-secret: ${{ secrets.CHROME_CLIENT_SECRET }}
+          refresh-token: ${{ secrets.CHROME_REFRESH_TOKEN }}
 
   release:
     name: Create Release

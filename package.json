@@ -1,6 +1,6 @@
 {
   "name": "passkey-vault",
-  "version": "0.2.0",
+  "version": "0.4.1",
   "description": "A browser extension for secure passkey (WebAuthn) storage and management",
   "scripts": {
     "build": "node build-extension.js",
@@ -17,7 +17,8 @@
     "zip": "npm run build && cd dist && zip -r ../passkey-vault-chrome.zip .",
     "zip:firefox": "npm run build:firefox && cd dist-firefox && zip -r ../passkey-vault-firefox.zip .",
     "zip:all": "npm run build:all && cd dist && zip -r ../passkey-vault-chrome.zip . && cd ../dist-firefox && zip -r ../passkey-vault-firefox.zip .",
-    "clean": "rm -rf dist dist-firefox"
+    "clean": "rm -rf dist dist-firefox",
+    "version:bump": "node scripts/bump-version.js"
   },
   "keywords": [
     "browser-extension",
