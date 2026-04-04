@@ -14,6 +14,13 @@ build/
 .beads/
 .npm-cache/
 
+# Playwright capture profiles and output
+.playwright-profile/
+.playwright-profile-video/
+.playwright-profile-cws/
+docs/screenshots/
+docs/video/
+
 # Local GCP credentials
 .gcgo/
 .gcgo-frontdesk/

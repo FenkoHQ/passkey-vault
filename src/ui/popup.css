@@ -125,8 +125,11 @@ h1 svg {
 }
 
 .no-results-icon {
-  font-size: 32px;
   margin-bottom: 8px;
+}
+.no-results-icon svg {
+  width: 32px;
+  height: 32px;
 }
 
 .no-results p {
@@ -177,8 +180,11 @@ main {
 }
 
 .empty-icon {
-  font-size: 48px;
   margin-bottom: 16px;
+}
+.empty-icon svg {
+  width: 48px;
+  height: 48px;
 }
 
 .empty-state h2 {
@@ -645,8 +651,11 @@ html:has(.sync-settings) {
 }
 
 .success-icon {
-  font-size: 32px;
   margin-bottom: 8px;
+}
+.success-icon svg {
+  width: 32px;
+  height: 32px;
 }
 
 .success-message h3 {
@@ -1099,8 +1108,11 @@ html:has(.sync-settings) {
 }
 
 .modal-icon {
-  font-size: 36px;
   margin-bottom: 12px;
+}
+.modal-icon svg {
+  width: 36px;
+  height: 36px;
 }
 
 .modal-title {

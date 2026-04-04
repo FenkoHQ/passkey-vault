@@ -75,8 +75,8 @@
       }
 
       .drop-zone-icon {
-        font-size: 48px;
         margin-bottom: 16px;
+        color: #000000;
       }
 
       .drop-zone h3 {
@@ -272,7 +272,13 @@
 
       <main>
         <div class="drop-zone" id="drop-zone">
-          <div class="drop-zone-icon">[ ]</div>
+          <div class="drop-zone-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>
+              <path d="M14 2v4a2 2 0 0 0 2 2h4"/>
+              <path d="M12 12v6"/><path d="m15 15-3-3-3 3"/>
+            </svg>
+          </div>
           <h3>Drop your backup file here</h3>
           <p>or click to browse</p>
           <input type="file" id="file-input" accept=".json,application/json" />

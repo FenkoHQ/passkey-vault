@@ -14,7 +14,12 @@
 
       <div id="not-synced" class="panel">
         <div class="empty-state">
-          <div class="empty-icon">🔗</div>
+          <div class="empty-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+            </svg>
+          </div>
           <h2>Sync Not Set Up</h2>
           <p>Set up sync to securely share your passkeys across devices.</p>
           <button id="setup-sync-btn" class="btn btn-primary">
@@ -87,16 +92,8 @@
             <div id="devices-list" class="devices-list"></div>
 
             <button id="add-device-btn" class="btn btn-secondary btn-sm">
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <line x1="12" y1="5" x2="12" y2="19"></line>
-                <polyline points="19 12 12 5 5 12"></polyline>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+                <path d="M5 12h14"/><path d="M12 5v14"/>
               </svg>
               Add Another Device
             </button>

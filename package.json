@@ -18,7 +18,11 @@
     "zip:firefox": "npm run build:firefox && cd dist-firefox && zip -r ../passkey-vault-firefox.zip .",
     "zip:all": "npm run build:all && cd dist && zip -r ../passkey-vault-chrome.zip . && cd ../dist-firefox && zip -r ../passkey-vault-firefox.zip .",
     "clean": "rm -rf dist dist-firefox",
-    "version:bump": "node scripts/bump-version.js"
+    "version:bump": "node scripts/bump-version.js",
+    "capture": "node scripts/capture-assets.js all",
+    "capture:screenshots": "node scripts/capture-assets.js screenshots",
+    "capture:video": "node scripts/capture-assets.js video",
+    "capture:cws": "node scripts/capture-assets.js cws"
   },
   "keywords": [
     "browser-extension",

@@ -1,119 +1,131 @@
 # PassKey Vault
 
-A browser extension for secure passkey (WebAuthn) storage and management. Intercepts WebAuthn API calls to manage passkeys internally without showing the browser's native UI. Supports **Chrome** (Manifest V3) and **Firefox** (Manifest V2).
+A browser extension that intercepts WebAuthn API calls and stores passkeys locally, bypassing the browser's native passkey UI. Works on **Chrome** (MV3) and **Firefox** (MV2).
+
+[Install from Chrome Web Store](https://chromewebstore.google.com/detail/passkey-vault/lopekoolgoijpmaidblgfgelbkfkgmod)
+
+---
+
+## Screenshots
+
+<img src="docs/cws/cws-01-vault.png" alt="Your passkeys. Your device. Nobody else." width="640"/>
+
+<img src="docs/cws/cws-02-search.png" alt="Find any passkey instantly." width="640"/>
+
+<img src="docs/cws/cws-03-detail.png" alt="Full control over every credential." width="640"/>
+
+<img src="docs/cws/cws-04-import.png" alt="Back up. Restore. Breathe." width="640"/>
+
+<img src="docs/cws/cws-05-sync.png" alt="Sync across devices. No cloud required." width="640"/>
+
+---
 
 ## Features
 
-- **WebAuthn Interception** - Automatically intercepts passkey creation and authentication
-- **Local Storage** - Passkeys stored securely in browser local storage
-- **Export/Import** - Full backup with encrypted private keys
-- **Cross-Browser** - Works on Chrome and Firefox
-- **Brutalist UI** - Clean, high-contrast interface
+- **WebAuthn interception** — captures `navigator.credentials.create()` and `navigator.credentials.get()` before the browser handles them
+- **Local storage** — passkeys stay in browser local storage, no external server
+- **Backup & import** — export all passkeys (including private keys) as a JSON file, import on another device
+- **Cross-device sync** — optional Nostr-based sync chain using a BIP-39 seed phrase
+- **Emergency access** — standalone recovery page for vault management without the extension popup
+- **Chrome + Firefox** — single codebase, separate manifests
+
+---
 
 ## Installation
 
-### Install from Chrome Web Store
+### Chrome Web Store
 
 [Download PassKey Vault](https://chromewebstore.google.com/detail/passkey-vault/lopekoolgoijpmaidblgfgelbkfkgmod)
 
-### Prerequisites
+### Build from source
 
-- Node.js 18+
-- Chrome 88+ or Firefox 109+
-
-### Build from Source
+Requires Node.js 18+.
 
 ```bash
-# Clone the repository
-git clone https://github.com/YOUR_USERNAME/passkey-vault.git
+git clone https://github.com/FenkoHQ/passkey-vault.git
 cd passkey-vault
-
-# Install dependencies
 npm install
 
-# Build for Chrome
-npm run build
-
-# Build for Firefox
-npm run build:firefox
-
-# Build for both
-npm run build:all
+npm run build          # Chrome
+npm run build:firefox  # Firefox
+npm run build:all      # Both
 ```
 
-### Load in Browser
-
-**Chrome:**
-
+**Load in Chrome:**
 1. Open `chrome://extensions/`
-2. Enable "Developer mode"
-3. Click "Load unpacked"
-4. Select the `dist/` directory
+2. Enable Developer mode
+3. Click "Load unpacked" → select `dist/`
 
-**Firefox:**
-
+**Load in Firefox:**
 1. Open `about:debugging#/runtime/this-firefox`
 2. Click "Load Temporary Add-on..."
 3. Select `dist-firefox/manifest.json`
 
-## Screenshots
+---
 
-![Screenshot 1](https://lh3.googleusercontent.com/dKfp1TeJFxcTcjWDzVWoJNJvl4eDkQS0gM_uOp446x73Ki9EN7HJ9UXkr_1VYr1kMWRdl-2S_Dfv32MygaP-FoMZ5A)
+## How it works
 
-![Screenshot 2](https://lh3.googleusercontent.com/vaVszzxShZYMg9Lv2OTtx6xetvJ4oWnj0fZsLh8XXBbWeV9CDMP6xZlh3EcRtPF31sydsSh5Wx17NrHeQGIFnXNJ9YY)
+1. A content script injects into every page and overrides the native WebAuthn API
+2. On `credentials.create()`, the background script generates an ECDSA P-256 key pair, creates a valid attestation response, and stores the passkey
+3. On `credentials.get()`, it signs the challenge with the stored private key using proper CBOR encoding
+4. The popup reads directly from `chrome.storage.local` — no background message passing for display
 
-## Usage
-
-1. Navigate to any site that uses WebAuthn/passkeys
-2. When prompted to create a passkey, PassKey Vault will intercept and store it
-3. When signing in, PassKey Vault shows a selector if multiple passkeys exist
-4. Click the extension icon to view, export, or delete stored passkeys
-
-## Project Structure
-
-```
-passkey-vault/
-├── src/
-│   ├── background/       # Service worker (Chrome) / Background script (Firefox)
-│   ├── content/          # Content scripts & WebAuthn injection
-│   ├── crypto/           # Encryption utilities
-│   ├── ui/               # Popup, import page, in-page UI
-│   ├── manifest.json     # Chrome MV3 manifest
-│   └── manifest.firefox.json  # Firefox MV2 manifest
-├── dist/                 # Chrome build output
-├── dist-firefox/         # Firefox build output
-├── icon.png              # Extension icon (512x512)
-└── build-extension.js    # Build script
-```
+---
 
 ## Scripts
 
 ```bash
-npm run build          # Build for Chrome
-npm run build:firefox  # Build for Firefox
-npm run build:all      # Build for both browsers
-npm run zip            # Create Chrome distribution ZIP
-npm run zip:firefox    # Create Firefox distribution ZIP
-npm run zip:all        # Create both ZIPs
-npm run clean          # Remove build directories
-npm run typecheck      # Type check without emitting
-npm run lint           # Run ESLint
-npm run test           # Run tests
+npm run build            # Build for Chrome
+npm run build:firefox    # Build for Firefox
+npm run build:all        # Build for both
+npm run zip              # Build Chrome + create ZIP
+npm run zip:firefox      # Build Firefox + create ZIP
+npm run zip:all          # Build both + create both ZIPs
+npm run clean            # Remove dist directories
+npm run test             # Run tests
+npm run lint             # Run ESLint
+npm run typecheck        # TypeScript check
+npm run version:bump     # Sync version across all manifests (run before tagging)
+npm run capture          # Re-generate screenshots and demo video
 ```
 
-## How It Works
+---
 
-1. **Content Script** injects a script that overrides `navigator.credentials.create()` and `navigator.credentials.get()`
-2. **WebAuthn Interception** captures the credential options and forwards to the background script
-3. **Background Script** generates ECDSA P-256 key pairs and creates proper WebAuthn responses
-4. **Storage** persists passkeys in browser's local storage
-5. **Authentication** signs challenges with stored private keys using proper CBOR/attestation encoding
+## Releasing
 
-## Security Notes
+```bash
+npm run version:bump 0.5.0
+git add package.json src/manifest.json src/manifest.firefox.json
+git commit -m "bump to 0.5.0"
+git tag v0.5.0 && git push && git push --tags
+```
 
-- Private keys are stored in browser local storage (not encrypted at rest by default)
-- Export files contain private keys - handle with care
-- This is a development/research tool - use at your own risk
+The CI pipeline builds both extensions, publishes to the Chrome Web Store, and creates a GitHub release with both ZIPs attached.
+
+---
+
+## Project structure
+
+```
+src/
+├── background/         # Service worker / background script
+├── content/            # Content script + WebAuthn injection
+├── crypto/             # BIP-39, ECDSA, AES-GCM, secure storage
+├── sync/               # Nostr-based sync service
+├── ui/                 # popup, import, sync-setup, sync-settings, emergency
+├── manifest.json       # Chrome MV3
+└── manifest.firefox.json
+```
+
+---
+
+## Security
+
+- Private keys are stored unencrypted in `chrome.storage.local`
+- Export files contain private keys — treat them like passwords
+- This is a research/developer tool, not a production credential manager
+
+---
 
 ## License
 

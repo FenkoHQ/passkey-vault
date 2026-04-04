@@ -3,274 +3,305 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Emergency Access</title>
+  <title>Emergency Access — PassKey Vault</title>
   <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
     body {
-      margin: 0;
-      padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #1a1a1a;
-      color: #ffffff;
-      height: 100vh;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 14px;
+      color: #000000;
+      background: #ffffff;
+      min-height: 100vh;
       display: flex;
+      align-items: flex-start;
       justify-content: center;
-      align-items: center;
+      padding: 40px 20px;
     }
 
     .container {
-      background: #2a2a2a;
-      border-radius: 8px;
-      padding: 2rem;
-      width: 90%;
-      max-width: 400px;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      width: 100%;
+      max-width: 480px;
+      border: 3px solid #000000;
+      overflow: hidden;
     }
 
-    .logo {
-      text-align: center;
-      margin-bottom: 2rem;
+    header {
+      background: #000000;
+      color: #fcd34d;
+      padding: 20px 24px;
+      border-bottom: 3px solid #fcd34d;
+      display: flex;
+      align-items: center;
+      gap: 12px;
     }
 
-    .logo h1 {
-      margin: 0;
-      font-size: 1.5rem;
-      color: #4a9eff;
+    header h1 {
+      font-size: 16px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
 
-    .form-group {
-      margin-bottom: 1rem;
-    }
+    main { padding: 24px; background: #ffffff; }
+
+    /* Form elements */
+    .form-group { margin-bottom: 16px; }
 
     label {
       display: block;
-      margin-bottom: 0.5rem;
-      font-weight: 500;
+      margin-bottom: 6px;
+      font-weight: 700;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
 
-    input[type="password"] {
+    input[type="password"],
+    input[type="number"] {
       width: 100%;
-      padding: 0.75rem;
-      border: 1px solid #444;
-      border-radius: 4px;
-      background: #1a1a1a;
-      color: #ffffff;
-      font-size: 1rem;
-      box-sizing: border-box;
-    }
-
-    input[type="password"]:focus {
+      padding: 10px 12px;
+      border: 3px solid #000000;
+      border-radius: 0;
+      background: #ffffff;
+      color: #000000;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 14px;
       outline: none;
-      border-color: #4a9eff;
+      transition: border-color 0.1s;
     }
 
-    .button {
+    input[type="password"]:focus,
+    input[type="number"]:focus { border-color: #fcd34d; }
+
+    input[type="number"] { width: 80px; }
+
+    input[type="checkbox"] { margin-right: 8px; }
+
+    /* Buttons */
+    .btn {
+      display: inline-block;
       width: 100%;
-      padding: 0.75rem;
-      border: none;
-      border-radius: 4px;
-      background: #4a9eff;
-      color: #ffffff;
-      font-size: 1rem;
-      font-weight: 600;
+      padding: 10px 16px;
+      border: 3px solid #000000;
+      border-radius: 0;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
       cursor: pointer;
-      transition: background-color 0.2s;
+      transition: all 0.1s;
     }
 
-    .button:hover {
-      background: #357abd;
-    }
+    .btn + .btn { margin-top: 8px; }
 
-    .button:disabled {
-      background: #666;
-      cursor: not-allowed;
-    }
+    .btn-primary { background: #fcd34d; color: #000000; border-color: #000000; }
+    .btn-primary:hover { background: #000000; color: #fcd34d; }
 
+    .btn-secondary { background: #ffffff; color: #000000; border-color: #000000; }
+    .btn-secondary:hover { background: #f5f5f5; }
+
+    .btn-warning { background: #ffffff; color: #000000; border-color: #000000; }
+    .btn-warning:hover { background: #fcd34d; }
+
+    .btn-danger { background: #000000; color: #ef4444; border-color: #ef4444; }
+    .btn-danger:hover { background: #ef4444; color: #ffffff; }
+
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Feedback */
     .error {
-      color: #ff6b6b;
-      margin-top: 0.5rem;
-      font-size: 0.875rem;
+      margin-top: 8px;
+      padding: 8px 12px;
+      border: 3px solid #ef4444;
+      background: #000000;
+      color: #ef4444;
+      font-size: 13px;
+      font-weight: 700;
     }
 
     .success {
-      color: #51cf66;
-      margin-top: 0.5rem;
-      font-size: 0.875rem;
+      margin-top: 8px;
+      padding: 8px 12px;
+      border: 3px solid #10b981;
+      background: #000000;
+      color: #10b981;
+      font-size: 13px;
+      font-weight: 700;
     }
 
-    .hidden {
-      display: none;
-    }
+    .hidden { display: none; }
 
+    /* Tabs */
     .tabs {
       display: flex;
-      margin-bottom: 1rem;
-      border-bottom: 1px solid #444;
+      border-bottom: 3px solid #000000;
+      margin-bottom: 20px;
     }
 
     .tab {
       flex: 1;
-      padding: 0.75rem;
-      background: none;
+      padding: 10px;
+      background: #ffffff;
       border: none;
-      color: #888;
+      border-right: 3px solid #000000;
+      color: #666666;
       cursor: pointer;
-      font-size: 0.875rem;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 12px;
+      font-weight: 700;
       text-transform: uppercase;
+      transition: all 0.1s;
     }
 
-    .tab.active {
-      color: #4a9eff;
-      border-bottom: 2px solid #4a9eff;
-      margin-bottom: -1px;
+    .tab:last-child { border-right: none; }
+    .tab:hover { background: #f5f5f5; color: #000000; }
+    .tab.active { background: #fcd34d; color: #000000; }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    h3 {
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid #000000;
     }
 
-    .tab-content {
-      display: none;
-    }
-
-    .tab-content.active {
-      display: block;
-    }
-
-    .file-input {
-      display: none;
-    }
-
-    .file-label {
-      display: block;
-      width: 100%;
-      padding: 0.75rem;
-      border: 2px dashed #444;
-      border-radius: 4px;
-      text-align: center;
-      cursor: pointer;
-      transition: border-color 0.2s;
-    }
-
-    .file-label:hover {
-      border-color: #4a9eff;
-    }
-
+    /* Passkey list */
     .passkey-list {
       max-height: 200px;
       overflow-y: auto;
-      border: 1px solid #444;
-      border-radius: 4px;
-      padding: 0.5rem;
-      margin: 1rem 0;
+      border: 3px solid #000000;
+      margin-bottom: 12px;
     }
 
     .passkey-item {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 0.5rem;
-      border-bottom: 1px solid #333;
+      padding: 10px 12px;
+      border-bottom: 2px solid #000000;
+      background: #ffffff;
     }
 
-    .passkey-item:last-child {
-      border-bottom: none;
-    }
+    .passkey-item:last-child { border-bottom: none; }
+    .passkey-item:hover { background: #f5f5f5; }
 
-    .passkey-info {
-      flex: 1;
-    }
-
-    .passkey-name {
-      font-weight: 600;
-    }
-
-    .passkey-rp {
-      font-size: 0.875rem;
-      color: #888;
-    }
+    .passkey-name { font-weight: 700; text-transform: uppercase; font-size: 13px; }
+    .passkey-rp { font-size: 12px; color: #666666; margin-top: 2px; }
 
     .delete-button {
-      background: #ff6b6b;
-      color: #ffffff;
-      border: none;
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
+      background: #000000;
+      color: #ef4444;
+      border: 2px solid #ef4444;
+      padding: 4px 8px;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
       cursor: pointer;
-      font-size: 0.75rem;
     }
+
+    .delete-button:hover { background: #ef4444; color: #ffffff; }
+
+    /* File restore */
+    .file-input { display: none; }
+
+    .file-label {
+      display: block;
+      width: 100%;
+      padding: 12px;
+      border: 3px dashed #000000;
+      text-align: center;
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 12px;
+      text-transform: uppercase;
+      transition: all 0.1s;
+      background: #f5f5f5;
+    }
+
+    .file-label:hover { background: #fcd34d; border-style: solid; }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="logo">
-      <h1>🔐 Emergency Access</h1>
-    </div>
+    <header>
+      <h1>
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+        Emergency Access
+      </h1>
+    </header>
 
-    <div id="login-form">
-      <div class="form-group">
-        <label for="master-password">Master Password</label>
-        <input type="password" id="master-password" placeholder="Enter your master password">
-      </div>
-      <button class="button" id="unlock-button">Unlock</button>
-      <div id="auth-error" class="error hidden"></div>
-    </div>
-
-    <div id="main-interface" class="hidden">
-      <div class="tabs">
-        <button class="tab active" data-tab="passkeys">Passkeys</button>
-        <button class="tab" data-tab="backup">Backup</button>
-        <button class="tab" data-tab="settings">Settings</button>
-      </div>
-
-      <div id="passkeys-tab" class="tab-content active">
-        <h3>Stored Passkeys</h3>
-        <div id="passkey-list" class="passkey-list">
-          <!-- Passkeys will be populated here -->
+    <main>
+      <div id="login-form">
+        <div class="form-group">
+          <label for="master-password">Master Password</label>
+          <input type="password" id="master-password" placeholder="Enter your master password">
         </div>
-        <button class="button" id="refresh-passkeys">Refresh</button>
+        <button class="btn btn-primary" id="unlock-button">Unlock</button>
+        <div id="auth-error" class="error hidden"></div>
       </div>
 
-      <div id="backup-tab" class="tab-content">
-        <h3>Backup & Restore</h3>
-
-        <div class="form-group">
-          <button class="button" id="create-backup">Create Backup</button>
-          <button class="button" id="download-backup" style="margin-top: 0.5rem;">Download Last Backup</button>
+      <div id="main-interface" class="hidden">
+        <div class="tabs">
+          <button class="tab active" data-tab="passkeys">Passkeys</button>
+          <button class="tab" data-tab="backup">Backup</button>
+          <button class="tab" data-tab="settings">Settings</button>
         </div>
 
-        <div class="form-group">
-          <label class="file-label" for="backup-file">
-            Choose Backup File to Restore
-          </label>
-          <input type="file" id="backup-file" class="file-input" accept=".json,.backup">
+        <div id="passkeys-tab" class="tab-content active">
+          <h3>Stored Passkeys</h3>
+          <div id="passkey-list" class="passkey-list">
+            <!-- Passkeys will be populated here -->
+          </div>
+          <button class="btn btn-secondary" id="refresh-passkeys">Refresh</button>
         </div>
 
-        <button class="button" id="restore-backup" style="margin-top: 1rem;">Restore from File</button>
-        <div id="backup-status" class="success hidden"></div>
+        <div id="backup-tab" class="tab-content">
+          <h3>Backup & Restore</h3>
+          <div class="form-group">
+            <button class="btn btn-primary" id="create-backup">Create Backup</button>
+            <button class="btn btn-secondary" id="download-backup">Download Last Backup</button>
+          </div>
+          <div class="form-group">
+            <label class="file-label" for="backup-file">Choose Backup File to Restore</label>
+            <input type="file" id="backup-file" class="file-input" accept=".json,.backup">
+          </div>
+          <button class="btn btn-secondary" id="restore-backup">Restore from File</button>
+          <div id="backup-status" class="success hidden"></div>
+        </div>
+
+        <div id="settings-tab" class="tab-content">
+          <h3>Security Settings</h3>
+          <div class="form-group">
+            <label><input type="checkbox" id="auto-backup"> Enable automatic backups</label>
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" id="biometric-auth"> Enable biometric authentication</label>
+          </div>
+          <div class="form-group">
+            <label for="lock-timeout">Auto-lock timeout (minutes)</label>
+            <input type="number" id="lock-timeout" value="30" min="1" max="1440">
+          </div>
+          <button class="btn btn-secondary" id="save-settings">Save Settings</button>
+          <button class="btn btn-warning" id="change-master-password">Change Master Password</button>
+          <button class="btn btn-danger" id="emergency-wipe">Emergency Wipe</button>
+          <div id="settings-status" class="success hidden"></div>
+        </div>
       </div>
-
-      <div id="settings-tab" class="tab-content">
-        <h3>Security Settings</h3>
-
-        <div class="form-group">
-          <label>
-            <input type="checkbox" id="auto-backup"> Enable automatic backups
-          </label>
-        </div>
-
-        <div class="form-group">
-          <label>
-            <input type="checkbox" id="biometric-auth"> Enable biometric authentication
-          </label>
-        </div>
-
-        <div class="form-group">
-          <label for="lock-timeout">Auto-lock timeout (minutes)</label>
-          <input type="number" id="lock-timeout" value="30" min="1" max="1440">
-        </div>
-
-        <button class="button" id="save-settings">Save Settings</button>
-        <button class="button" id="change-master-password" style="margin-top: 0.5rem; background: #ff9f43;">Change Master Password</button>
-        <button class="button" id="emergency-wipe" style="margin-top: 0.5rem; background: #ff6b6b;">Emergency Wipe</button>
-        <div id="settings-status" class="success hidden"></div>
-      </div>
-    </div>
+    </main>
   </div>
 
   <script src="emergency-ui.js"></script>

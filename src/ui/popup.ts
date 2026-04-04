@@ -57,7 +57,7 @@
     confirmModal.className = 'modal-overlay';
     confirmModal.innerHTML = `
       <div class="modal-content">
-        <div class="modal-icon">⚠️</div>
+        <div class="modal-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg></div>
         <h3 class="modal-title"></h3>
         <p class="modal-message"></p>
         <div class="modal-actions">
@@ -256,7 +256,7 @@
   function showNoResults(query: string): void {
     passkeyListEl.innerHTML = `
       <div class="no-results">
-        <div class="no-results-icon">🔍</div>
+        <div class="no-results-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="m15 8-4 4-2-2"/></svg></div>
         <p>No passkeys found for "${popupEscapeHtml(query)}"</p>
       </div>
     `;
@@ -294,7 +294,7 @@
       console.error('Error loading passkeys:', error);
       loadingEl.innerHTML = `
         <div class="error-state">
-          <div class="error-icon">⚠️</div>
+          <div class="error-icon"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg></div>
           <p>Failed to load passkeys</p>
           <button onclick="location.reload()" class="btn btn-secondary">Retry</button>
         </div>
