@@ -1,44 +1,58 @@
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
   "name": "PassKey Vault",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Secure passkey storage and management",
-
   "permissions": [
     "storage",
-    "activeTab",
+    "activeTab"
+  ],
+  "host_permissions": [
     "https://*/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],
-
   "background": {
-    "scripts": ["background.js"],
-    "persistent": false
+    "scripts": [
+      "background.js"
+    ],
+    "type": "module"
   },
-
   "content_scripts": [
     {
-      "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
-      "js": ["content.js"],
+      "matches": [
+        "https://*/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_start",
       "all_frames": true
     }
   ],
-
-  "web_accessible_resources": ["webauthn-inject.js"],
-
-  "browser_action": {
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "webauthn-inject.js"
+      ],
+      "matches": [
+        "https://*/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ]
+    }
+  ],
+  "action": {
     "default_title": "PassKey Vault",
     "default_popup": "popup.html"
   },
-
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-
   "browser_specific_settings": {
     "gecko": {
       "id": "passkey-vault@example.com",

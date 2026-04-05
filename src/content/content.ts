@@ -16,22 +16,18 @@ interface PasskeyOption {
   createdAt: number;
 }
 
-const _showPasskeySelector = (window as any).showPasskeySelector as (
-  options: PasskeyOption[],
-  rpId: string
-) => Promise<string | null>;
-const _showPasskeyCreatedNotification = (window as any).showPasskeyCreatedNotification as (
-  userName: string,
-  rpId: string
-) => void;
-const _showPasskeyUsedNotification = (window as any).showPasskeyUsedNotification as (
-  userName: string,
-  rpId: string
-) => void;
-const _showErrorNotification = (window as any).showErrorNotification as (
-  title: string,
-  message: string
-) => void;
+interface WindowWithVault extends Window {
+  showPasskeySelector: (options: PasskeyOption[], rpId: string) => Promise<string | null>;
+  showPasskeyCreatedNotification: (userName: string, rpId: string) => void;
+  showPasskeyUsedNotification: (userName: string, rpId: string) => void;
+  showErrorNotification: (title: string, message: string) => void;
+}
+
+const vaultWindow = window as unknown as WindowWithVault;
+const _showPasskeySelector = vaultWindow.showPasskeySelector;
+const _showPasskeyCreatedNotification = vaultWindow.showPasskeyCreatedNotification;
+const _showPasskeyUsedNotification = vaultWindow.showPasskeyUsedNotification;
+const _showErrorNotification = vaultWindow.showErrorNotification;
 
 class ContentScript {
   private isInjected = false;
@@ -104,7 +100,11 @@ class ContentScript {
   /**
    * Handle messages from the page script
    */
-  private async handlePageMessage(message: any): Promise<void> {
+  private async handlePageMessage(message: {
+    type: string;
+    payload: Record<string, unknown>;
+    requestId: string;
+  }): Promise<void> {
     const { type, payload, requestId } = message;
 
     if (type === 'PASSKEY_CREATE_REQUEST') {
@@ -118,17 +118,19 @@ class ContentScript {
         });
 
         if (response.success && response.credential) {
-          // Show success notification
-          const userName =
-            payload.publicKey?.user?.displayName || payload.publicKey?.user?.name || 'User';
+          const pk = payload.publicKey as Record<string, unknown> | undefined;
+          const pkUser = (pk?.user as Record<string, string>) || {};
+          const pkRp = (pk?.rp as Record<string, string>) || {};
+          const userName = pkUser.displayName || pkUser.name || 'User';
           const rpId =
-            payload.publicKey?.rpId ||
-            payload.publicKey?.rp?.id ||
-            new URL(payload.origin).hostname;
+            (pk?.rpId as string) || pkRp.id || new URL(payload.origin as string).hostname;
           _showPasskeyCreatedNotification(userName, rpId);
 
           // Reconstruct a proper PublicKeyCredential object
-          const credential = this.createCredentialFromResponse(response.credential, 'create');
+          const credential = this.createCredentialFromResponse(
+            response.credential as Record<string, unknown>,
+            'create'
+          );
           window.postMessage(
             {
               source: 'PASSKEY_VAULT_CONTENT',
@@ -141,7 +143,10 @@ class ContentScript {
         } else {
           // Show error if it's not a duplicate passkey error
           if (response.name !== 'InvalidStateError') {
-            _showErrorNotification('Passkey Error', response.error || 'Failed to create passkey');
+            _showErrorNotification(
+              'Passkey Error',
+              (response.error as string) || 'Failed to create passkey'
+            );
           }
           window.postMessage(
             {
@@ -153,14 +158,15 @@ class ContentScript {
             '*'
           );
         }
-      } catch (error: any) {
-        _showErrorNotification('Passkey Error', error.message || 'Failed to create passkey');
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : 'Failed to create passkey';
+        _showErrorNotification('Passkey Error', msg);
         window.postMessage(
           {
             source: 'PASSKEY_VAULT_CONTENT',
             type: 'PASSKEY_CREATE_RESPONSE',
             requestId,
-            result: { success: false, error: error.message },
+            result: { success: false, error: msg },
           },
           '*'
         );
@@ -169,7 +175,8 @@ class ContentScript {
       // Sign in with existing passkey - show selection UI
       try {
         // First, get list of available passkeys for this site
-        const rpId = payload.publicKey?.rpId || new URL(payload.origin).hostname;
+        const pk = payload.publicKey as Record<string, unknown> | undefined;
+        const rpId = (pk?.rpId as string) || new URL(payload.origin as string).hostname;
         const listResponse = await this.sendMessage({
           type: 'LIST_PASSKEYS_FOR_RP',
           payload: { rpId },
@@ -177,7 +184,8 @@ class ContentScript {
           timestamp: Date.now(),
         });
 
-        if (!listResponse.success || !listResponse.passkeys || listResponse.passkeys.length === 0) {
+        const passkeys = listResponse.passkeys as Record<string, unknown>[] | undefined;
+        if (!listResponse.success || !passkeys || passkeys.length === 0) {
           // No passkeys found, return error to trigger fallback
           window.postMessage(
             {
@@ -196,14 +204,17 @@ class ContentScript {
         }
 
         // Convert to PasskeyOption format for the selector
-        const passkeyOptions: PasskeyOption[] = listResponse.passkeys.map((pk: any) => ({
-          id: pk.id,
-          credentialId: pk.credentialId || pk.id,
-          userName: pk.user?.name || '',
-          userDisplayName: pk.user?.displayName || pk.user?.name || 'Unknown User',
-          rpId: pk.rpId,
-          createdAt: pk.createdAt,
-        }));
+        const passkeyOptions: PasskeyOption[] = passkeys.map((pk) => {
+          const user = pk.user as Record<string, string> | undefined;
+          return {
+            id: pk.id as string,
+            credentialId: (pk.credentialId || pk.id) as string,
+            userName: user?.name || '',
+            userDisplayName: user?.displayName || user?.name || 'Unknown User',
+            rpId: pk.rpId as string,
+            createdAt: pk.createdAt as number,
+          };
+        });
 
         // Show passkey selector UI
         const selectedId = await _showPasskeySelector(passkeyOptions, rpId);
@@ -244,7 +255,10 @@ class ContentScript {
           _showPasskeyUsedNotification(userName, rpId);
 
           // Reconstruct a proper PublicKeyCredential object
-          const credential = this.createCredentialFromResponse(response.credential, 'get');
+          const credential = this.createCredentialFromResponse(
+            response.credential as Record<string, unknown>,
+            'get'
+          );
           window.postMessage(
             {
               source: 'PASSKEY_VAULT_CONTENT',
@@ -255,7 +269,10 @@ class ContentScript {
             '*'
           );
         } else {
-          _showErrorNotification('Sign In Failed', response.error || 'Failed to use passkey');
+          _showErrorNotification(
+            'Sign In Failed',
+            (response.error as string) || 'Failed to use passkey'
+          );
           window.postMessage(
             {
               source: 'PASSKEY_VAULT_CONTENT',
@@ -266,14 +283,15 @@ class ContentScript {
             '*'
           );
         }
-      } catch (error: any) {
-        _showErrorNotification('Sign In Failed', error.message || 'Failed to use passkey');
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : 'Failed to use passkey';
+        _showErrorNotification('Sign In Failed', msg);
         window.postMessage(
           {
             source: 'PASSKEY_VAULT_CONTENT',
             type: 'PASSKEY_GET_RESPONSE',
             requestId,
-            result: { success: false, error: error.message },
+            result: { success: false, error: msg },
           },
           '*'
         );
@@ -309,9 +327,9 @@ class ContentScript {
    * Handle messages from background script
    */
   private handleBackgroundMessage(
-    message: any,
-    sender: chrome.runtime.MessageSender,
-    sendResponse: (response?: any) => void
+    message: { type: string },
+    _sender: chrome.runtime.MessageSender,
+    _sendResponse: (response?: unknown) => void
   ): void {
     try {
       switch (message.type) {
@@ -439,47 +457,46 @@ class ContentScript {
   /**
    * Send message to background script
    */
-  private async sendMessage(message: any): Promise<any> {
+  private async sendMessage(message: Record<string, unknown>): Promise<Record<string, unknown>> {
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(message, (response) => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
         } else {
-          resolve(response);
+          resolve(response as Record<string, unknown>);
         }
       });
     });
   }
 
-  /**
-   * Create a proper PublicKeyCredential object from the response data
-   */
-  private createCredentialFromResponse(data: any, type: 'create' | 'get'): any {
-    // Create a response object based on type
-    let response;
+  private createCredentialFromResponse(
+    data: Record<string, unknown>,
+    type: 'create' | 'get'
+  ): Record<string, unknown> {
+    const resp = data.response as Record<string, unknown> | undefined;
+    let responseObj;
 
     if (type === 'create') {
-      response = {
-        clientDataJSON: data.response.clientDataJSON,
-        attestationObject: data.response.attestationObject,
+      responseObj = {
+        clientDataJSON: resp?.clientDataJSON,
+        attestationObject: resp?.attestationObject,
       };
     } else {
-      response = {
-        clientDataJSON: data.response.clientDataJSON,
-        authenticatorData: data.response?.authenticatorData,
-        signature: data.response?.signature,
-        userHandle: data.response?.userHandle,
+      responseObj = {
+        clientDataJSON: resp?.clientDataJSON,
+        authenticatorData: resp?.authenticatorData,
+        signature: resp?.signature,
+        userHandle: resp?.userHandle,
       };
     }
 
-    // Return a plain object - the page script will convert it to a proper credential
     return {
       id: data.id,
       rawId: data.rawId,
       type: data.type,
-      response: response,
-      authenticatorAttachment: data?.authenticatorAttachment,
-      clientExtensionResults: data?.clientExtensionResults,
+      response: responseObj,
+      authenticatorAttachment: data.authenticatorAttachment,
+      clientExtensionResults: data.clientExtensionResults,
     };
   }
 

@@ -37,6 +37,14 @@ document.addEventListener('DOMContentLoaded', () => {
   loadSyncConfig();
   setupEventListeners();
   setupTabNavigation();
+
+  // Auto-refresh sync status every 10s while on the status tab
+  autoRefreshInterval = setInterval(() => {
+    const statusTab = document.querySelector('[data-tab="status"].active');
+    if (statusTab) {
+      loadSyncStatus();
+    }
+  }, 10000);
 });
 
 function setupTabNavigation(): void {
@@ -296,6 +304,36 @@ function updateSyncStatusUI(status: SyncStatusResponse): void {
     } else {
       errorEl.style.display = 'none';
     }
+  }
+
+  // Show/hide retry button based on error state
+  let retryBtn = document.getElementById('retry-sync-btn') as HTMLButtonElement | null;
+  if (status.connectionStatus === 'error' || status.pendingChanges > 0) {
+    if (!retryBtn) {
+      retryBtn = document.createElement('button');
+      retryBtn.id = 'retry-sync-btn';
+      retryBtn.className = 'btn btn-primary';
+      retryBtn.style.cssText = 'margin-top: 8px; width: 100%;';
+      retryBtn.textContent = 'Retry Sync';
+      retryBtn.addEventListener('click', async () => {
+        retryBtn!.disabled = true;
+        retryBtn!.textContent = 'Syncing...';
+        await chrome.runtime.sendMessage({ type: 'TRIGGER_SYNC' });
+        setTimeout(() => {
+          loadSyncStatus();
+          if (retryBtn) {
+            retryBtn.disabled = false;
+            retryBtn.textContent = 'Retry Sync';
+          }
+        }, 3000);
+      });
+      const statusSection = connectionEl?.closest('.status-grid') || errorEl?.parentElement;
+      if (statusSection) {
+        statusSection.appendChild(retryBtn);
+      }
+    }
+  } else if (retryBtn) {
+    retryBtn.remove();
   }
 }
 

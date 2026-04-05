@@ -7,6 +7,7 @@ import { pbkdf2 } from '@noble/hashes/pbkdf2';
 import { sha256 } from '@noble/hashes/sha256';
 import { gcm } from '@noble/ciphers/aes';
 import { randomBytes } from '@noble/hashes/utils';
+import { uint8ArrayToBase64, base64ToUint8Array } from '../utils/base64';
 
 const ENCRYPTION_CONFIG = {
   algorithm: 'AES-256-GCM',
@@ -29,20 +30,16 @@ export interface SecureStorageConfig {
   deviceId: string;
   deviceName: string;
   enabled: boolean;
-  // Random salt used for PBKDF2 key derivation in sync (null if not yet set)
   syncSalt: string | null;
 }
 
 export interface EncryptedData {
-  data: string; // Base64 encrypted data
-  iv: string; // Base64 IV
-  salt: string; // Base64 salt
+  data: string;
+  iv: string;
+  salt: string;
   version: string;
 }
 
-/**
- * Derives an encryption key from a master password
- */
 async function deriveKeyFromPassword(password: string, salt: Uint8Array): Promise<Uint8Array> {
   const key = pbkdf2(sha256, new TextEncoder().encode(password), salt, {
     c: ENCRYPTION_CONFIG.iterations,
@@ -51,9 +48,6 @@ async function deriveKeyFromPassword(password: string, salt: Uint8Array): Promis
   return new Uint8Array(key);
 }
 
-/**
- * Encrypts data with a derived key
- */
 function encryptData(data: string, key: Uint8Array): EncryptedData {
   const iv = randomBytes(ENCRYPTION_CONFIG.ivLength);
   const cipher = gcm(key, iv);
@@ -62,14 +56,11 @@ function encryptData(data: string, key: Uint8Array): EncryptedData {
   return {
     data: uint8ArrayToBase64(encrypted),
     iv: uint8ArrayToBase64(iv),
-    salt: '', // Salt is stored separately at the account level
+    salt: '',
     version: '2.0',
   };
 }
 
-/**
- * Decrypts data with a derived key
- */
 function decryptData(encryptedData: EncryptedData, key: Uint8Array): string {
   const iv = base64ToUint8Array(encryptedData.iv);
   const encrypted = base64ToUint8Array(encryptedData.data);
@@ -80,26 +71,6 @@ function decryptData(encryptedData: EncryptedData, key: Uint8Array): string {
   return new TextDecoder().decode(decrypted);
 }
 
-function uint8ArrayToBase64(arr: Uint8Array): string {
-  let binary = '';
-  for (let i = 0; i < arr.length; i++) {
-    binary += String.fromCharCode(arr[i]);
-  }
-  return btoa(binary);
-}
-
-function base64ToUint8Array(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
-
-/**
- * Securely wipes a Uint8Array from memory
- */
 function secureWipe(arr: Uint8Array): void {
   crypto.getRandomValues(arr);
   arr.fill(0);
@@ -267,10 +238,7 @@ export class SecureStorage {
     await chrome.storage.local.remove(STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG);
   }
 
-  /**
-   * Store passkeys securely
-   */
-  async storePasskeys(passkeys: any[]): Promise<void> {
+  async storePasskeys(passkeys: Record<string, unknown>[]): Promise<void> {
     this.ensureUnlocked();
 
     const encrypted = encryptData(JSON.stringify(passkeys), this.encryptionKey!);
@@ -281,10 +249,7 @@ export class SecureStorage {
     this.resetAutoLock();
   }
 
-  /**
-   * Retrieve passkeys
-   */
-  async getPasskeys(): Promise<any[]> {
+  async getPasskeys(): Promise<Record<string, unknown>[]> {
     this.ensureUnlocked();
 
     const result = await chrome.storage.local.get(STORAGE_KEYS.ENCRYPTED_PASSKEYS);
@@ -302,10 +267,7 @@ export class SecureStorage {
     }
   }
 
-  /**
-   * Add or update a single passkey
-   */
-  async upsertPasskey(passkey: any): Promise<void> {
+  async upsertPasskey(passkey: Record<string, unknown>): Promise<void> {
     const passkeys = await this.getPasskeys();
     const index = passkeys.findIndex((p) => p.id === passkey.id);
 
@@ -318,9 +280,6 @@ export class SecureStorage {
     await this.storePasskeys(passkeys);
   }
 
-  /**
-   * Delete a passkey by ID
-   */
   async deletePasskey(passkeyId: string): Promise<boolean> {
     const passkeys = await this.getPasskeys();
     const filtered = passkeys.filter((p) => p.id !== passkeyId && p.credentialId !== passkeyId);
@@ -332,10 +291,7 @@ export class SecureStorage {
     return false;
   }
 
-  /**
-   * Get passkeys for a specific relying party
-   */
-  async getPasskeysForRp(rpId: string): Promise<any[]> {
+  async getPasskeysForRp(rpId: string): Promise<Record<string, unknown>[]> {
     const passkeys = await this.getPasskeys();
     return passkeys.filter((p) => p.rpId === rpId);
   }

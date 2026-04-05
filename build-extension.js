@@ -204,7 +204,7 @@ async function buildForTarget(browserTarget) {
   if (isFirefox) {
     manifest.background.scripts = ['background.js'];
     manifest.content_scripts[0].js = ['content.js'];
-    manifest.web_accessible_resources = ['webauthn-inject.js'];
+    manifest.web_accessible_resources[0].resources = ['webauthn-inject.js'];
   } else {
     manifest.background.service_worker = 'background.js';
     manifest.content_scripts[0].js = ['content.js'];

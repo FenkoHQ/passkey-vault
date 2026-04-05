@@ -39,24 +39,24 @@ class Logger {
   }
 
   // Always log errors
-  error(message: string, ...args: any[]): void {
+  error(message: string, ...args: unknown[]): void {
     console.error(`PassKey Vault: ${message}`, ...args);
   }
 
   // Only log warnings, info, and debug messages if debug mode is enabled
-  warn(message: string, ...args: any[]): void {
+  warn(message: string, ...args: unknown[]): void {
     if (this.debugEnabled) {
       console.warn(`PassKey Vault: ${message}`, ...args);
     }
   }
 
-  info(message: string, ...args: any[]): void {
+  info(message: string, ...args: unknown[]): void {
     if (this.debugEnabled) {
       console.log(`PassKey Vault: ${message}`, ...args);
     }
   }
 
-  debug(message: string, ...args: any[]): void {
+  debug(message: string, ...args: unknown[]): void {
     if (this.debugEnabled) {
       console.debug(`PassKey Vault: ${message}`, ...args);
     }

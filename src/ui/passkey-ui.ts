@@ -495,27 +495,12 @@ function showPasskeyCreatedNotification(userName: string, rpId: string): void {
 /**
  * Show passkey used notification
  */
-function showPasskeyUsedNotification(userName: string, rpId: string): void {
+function showPasskeyUsedNotification(userName: string, _rpId: string): void {
   showToast('Signed In', `Used passkey for ${userName}`, 'success', 3000);
 }
 
-/**
- * Show error notification
- */
 function showErrorNotification(title: string, message: string): void {
   showToast(title, message, 'error', 5000);
-}
-
-/**
- * Get initials from a name
- */
-function getInitials(name: string): string {
-  if (!name) return '?';
-  const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2) {
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-  }
-  return name.substring(0, 2).toUpperCase();
 }
 
 /**
@@ -528,7 +513,8 @@ function escapeHtml(str: string): string {
   return div.innerHTML;
 }
 
-(window as any).showPasskeySelector = showPasskeySelector;
-(window as any).showPasskeyCreatedNotification = showPasskeyCreatedNotification;
-(window as any).showPasskeyUsedNotification = showPasskeyUsedNotification;
-(window as any).showErrorNotification = showErrorNotification;
+const w = window as unknown as Record<string, unknown>;
+w.showPasskeySelector = showPasskeySelector;
+w.showPasskeyCreatedNotification = showPasskeyCreatedNotification;
+w.showPasskeyUsedNotification = showPasskeyUsedNotification;
+w.showErrorNotification = showErrorNotification;

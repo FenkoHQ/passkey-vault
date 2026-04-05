@@ -7,7 +7,50 @@
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <div class="container">
+    <!-- Lock screen shown when master password is set but vault is locked -->
+    <div id="lock-screen" class="container" style="display: none">
+      <header>
+        <h1 style="display: inline-flex; align-items: center; gap: 12px">
+          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <span>Vault Locked</span>
+        </h1>
+      </header>
+      <div style="padding: 16px">
+        <p style="margin: 0 0 12px; font-size: 13px; color: #999">Enter your master password to unlock.</p>
+        <input type="password" id="unlock-password" placeholder="Master password" autocomplete="off"
+          style="width: 100%; padding: 10px; border: 1px solid #333; background: #1a1a1a; color: #fff; border-radius: 4px; font-size: 14px; box-sizing: border-box; margin-bottom: 8px" />
+        <div id="unlock-error" style="color: #ef4444; font-size: 12px; margin-bottom: 8px; display: none"></div>
+        <button id="unlock-btn" class="btn btn-primary" style="width: 100%">Unlock</button>
+      </div>
+    </div>
+
+    <!-- Setup screen shown when no master password exists yet -->
+    <div id="setup-screen" class="container" style="display: none">
+      <header>
+        <h1 style="display: inline-flex; align-items: center; gap: 12px">
+          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <span>Set Up Vault</span>
+        </h1>
+      </header>
+      <div style="padding: 16px">
+        <p style="margin: 0 0 12px; font-size: 13px; color: #999">Create a master password to encrypt your passkeys at rest.</p>
+        <input type="password" id="setup-password" placeholder="Master password (min 8 chars)" autocomplete="off"
+          style="width: 100%; padding: 10px; border: 1px solid #333; background: #1a1a1a; color: #fff; border-radius: 4px; font-size: 14px; box-sizing: border-box; margin-bottom: 8px" />
+        <input type="password" id="setup-password-confirm" placeholder="Confirm password" autocomplete="off"
+          style="width: 100%; padding: 10px; border: 1px solid #333; background: #1a1a1a; color: #fff; border-radius: 4px; font-size: 14px; box-sizing: border-box; margin-bottom: 8px" />
+        <div id="setup-error" style="color: #ef4444; font-size: 12px; margin-bottom: 8px; display: none"></div>
+        <button id="setup-btn" class="btn btn-primary" style="width: 100%; margin-bottom: 8px">Create Password</button>
+        <button id="skip-setup-btn" class="btn btn-secondary" style="width: 100%; font-size: 12px">Skip for now</button>
+      </div>
+    </div>
+
+    <div id="main-container" class="container" style="display: none">
       <header>
         <h1 style="display: inline-flex; align-items: center; gap: 12px">
           <svg
@@ -42,7 +85,10 @@
           <span>PassKey Vault</span>
         </h1>
       </header>
-      <span class="badge" id="passkey-count">0 passkeys</span>
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
+        <span class="badge" id="passkey-count">0 passkeys</span>
+        <span id="sync-status-badge" style="display: none; font-size: 11px; padding: 2px 8px; border-radius: 3px; font-family: monospace"></span>
+      </div>
 
       <div class="search-container">
         <svg

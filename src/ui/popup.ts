@@ -9,6 +9,7 @@
 
   const POPUP_PASSKEY_STORAGE_KEY = 'passkeys';
   const EXPORT_VERSION = '1.0';
+  const SETUP_SKIPPED_KEY = 'master_password_setup_skipped';
 
   // DOM elements
   let loadingEl: HTMLElement;
@@ -19,22 +20,208 @@
   let exportFullBtn: HTMLButtonElement;
   let importBtn: HTMLButtonElement;
   let clearBtn: HTMLButtonElement;
-  let syncSettingsBtn: HTMLButtonElement;
   let confirmModal: HTMLElement;
   let searchInput: HTMLInputElement;
   let searchClearBtn: HTMLButtonElement;
   let debugLoggingToggle: HTMLInputElement;
 
-  let allPasskeys: any[] = [];
+  // Screen elements
+  let lockScreen: HTMLElement;
+  let setupScreen: HTMLElement;
+  let mainContainer: HTMLElement;
+
+  let allPasskeys: Record<string, unknown>[] = [];
 
   // Initialize popup when DOM is loaded
   document.addEventListener('DOMContentLoaded', () => {
+    lockScreen = document.getElementById('lock-screen') as HTMLElement;
+    setupScreen = document.getElementById('setup-screen') as HTMLElement;
+    mainContainer = document.getElementById('main-container') as HTMLElement;
+    checkSecureStorageState();
+  });
+
+  async function checkSecureStorageState(): Promise<void> {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'IS_SECURE_STORAGE_UNLOCKED' });
+      if (!response.success) {
+        showMainScreen();
+        return;
+      }
+
+      if (response.isSetup && !response.isUnlocked) {
+        // Master password exists but vault is locked
+        showLockScreen();
+      } else if (!response.isSetup) {
+        // Check if user previously skipped setup
+        const skipped = await chrome.storage.local.get(SETUP_SKIPPED_KEY);
+        if (skipped[SETUP_SKIPPED_KEY]) {
+          showMainScreen();
+        } else {
+          showSetupScreen();
+        }
+      } else {
+        // Unlocked — show main
+        showMainScreen();
+      }
+    } catch {
+      // Can't reach background — just show main
+      showMainScreen();
+    }
+  }
+
+  function showLockScreen(): void {
+    lockScreen.style.display = 'block';
+    setupScreen.style.display = 'none';
+    mainContainer.style.display = 'none';
+
+    const passwordInput = document.getElementById('unlock-password') as HTMLInputElement;
+    const unlockBtn = document.getElementById('unlock-btn') as HTMLButtonElement;
+    const errorEl = document.getElementById('unlock-error') as HTMLElement;
+
+    passwordInput.focus();
+
+    const doUnlock = async () => {
+      const password = passwordInput.value;
+      if (!password) return;
+
+      unlockBtn.disabled = true;
+      unlockBtn.textContent = 'Unlocking...';
+      errorEl.style.display = 'none';
+
+      const response = await chrome.runtime.sendMessage({
+        type: 'UNLOCK_SECURE_STORAGE',
+        payload: { password },
+      });
+
+      if (response.success) {
+        showMainScreen();
+      } else {
+        errorEl.textContent = 'Wrong password';
+        errorEl.style.display = 'block';
+        passwordInput.value = '';
+        passwordInput.focus();
+      }
+
+      unlockBtn.disabled = false;
+      unlockBtn.textContent = 'Unlock';
+    };
+
+    unlockBtn.onclick = doUnlock;
+    passwordInput.onkeydown = (e) => {
+      if (e.key === 'Enter') doUnlock();
+    };
+  }
+
+  function showSetupScreen(): void {
+    lockScreen.style.display = 'none';
+    setupScreen.style.display = 'block';
+    mainContainer.style.display = 'none';
+
+    const passwordInput = document.getElementById('setup-password') as HTMLInputElement;
+    const confirmInput = document.getElementById('setup-password-confirm') as HTMLInputElement;
+    const setupBtn = document.getElementById('setup-btn') as HTMLButtonElement;
+    const skipBtn = document.getElementById('skip-setup-btn') as HTMLButtonElement;
+    const errorEl = document.getElementById('setup-error') as HTMLElement;
+
+    passwordInput.focus();
+
+    setupBtn.onclick = async () => {
+      const password = passwordInput.value;
+      const confirm = confirmInput.value;
+      errorEl.style.display = 'none';
+
+      if (password.length < 8) {
+        errorEl.textContent = 'Password must be at least 8 characters';
+        errorEl.style.display = 'block';
+        return;
+      }
+      if (password !== confirm) {
+        errorEl.textContent = 'Passwords do not match';
+        errorEl.style.display = 'block';
+        return;
+      }
+
+      setupBtn.disabled = true;
+      setupBtn.textContent = 'Setting up...';
+
+      const response = await chrome.runtime.sendMessage({
+        type: 'SETUP_MASTER_PASSWORD',
+        payload: { password },
+      });
+
+      if (response.success) {
+        showMainScreen();
+      } else {
+        errorEl.textContent = response.error || 'Setup failed';
+        errorEl.style.display = 'block';
+      }
+
+      setupBtn.disabled = false;
+      setupBtn.textContent = 'Create Password';
+    };
+
+    skipBtn.onclick = async () => {
+      await chrome.storage.local.set({ [SETUP_SKIPPED_KEY]: true });
+      showMainScreen();
+    };
+  }
+
+  function showMainScreen(): void {
+    lockScreen.style.display = 'none';
+    setupScreen.style.display = 'none';
+    mainContainer.style.display = 'block';
     initializeElements();
     createConfirmModal();
     loadDebugLoggingState();
     loadPasskeys();
+    loadSyncStatus();
     setupEventListeners();
-  });
+  }
+
+  async function loadSyncStatus(): Promise<void> {
+    const badge = document.getElementById('sync-status-badge') as HTMLElement;
+    if (!badge) return;
+
+    try {
+      const response = await chrome.runtime.sendMessage({ type: 'GET_SYNC_STATUS' });
+      if (!response.success || !response.status?.enabled) {
+        badge.style.display = 'none';
+        return;
+      }
+
+      const status = response.status;
+      badge.style.display = 'inline-block';
+
+      switch (status.connectionStatus) {
+        case 'connected':
+          badge.textContent = 'synced';
+          badge.style.background = '#10b981';
+          badge.style.color = '#fff';
+          break;
+        case 'connecting':
+          badge.textContent = 'syncing...';
+          badge.style.background = '#f59e0b';
+          badge.style.color = '#000';
+          break;
+        case 'error':
+          badge.textContent = 'sync error';
+          badge.style.background = '#ef4444';
+          badge.style.color = '#fff';
+          badge.title = status.lastError || 'Unknown error';
+          break;
+        default:
+          badge.textContent = 'offline';
+          badge.style.background = '#666';
+          badge.style.color = '#fff';
+      }
+
+      if (status.pendingChanges > 0) {
+        badge.textContent += ` (${status.pendingChanges} pending)`;
+      }
+    } catch {
+      badge.style.display = 'none';
+    }
+  }
 
   function initializeElements(): void {
     loadingEl = document.getElementById('loading') as HTMLElement;
@@ -45,7 +232,6 @@
     exportFullBtn = document.getElementById('export-full-btn') as HTMLButtonElement;
     importBtn = document.getElementById('import-btn') as HTMLButtonElement;
     clearBtn = document.getElementById('clear-btn') as HTMLButtonElement;
-    syncSettingsBtn = document.getElementById('sync-settings-btn') as HTMLButtonElement;
     searchInput = document.getElementById('search-input') as HTMLInputElement;
     searchClearBtn = document.getElementById('search-clear') as HTMLButtonElement;
     debugLoggingToggle = document.getElementById('debug-logging-toggle') as HTMLInputElement;
@@ -474,20 +660,15 @@
   }
 
   async function exportPasskeysFull(): Promise<void> {
-    const confirmed = await showConfirmModal(
-      'Export Full Backup?',
-      'This will export ALL passkey data including private keys. Keep this file secure and never share it with anyone!',
-      'Export Full Backup',
-      false
+    const password = await showPasswordPrompt(
+      'Encrypt Backup',
+      'Choose a password to encrypt the backup file. You will need this password to import it later.'
     );
-
-    if (!confirmed) {
-      return;
-    }
+    if (password === null) return;
 
     try {
       const result = await chrome.storage.local.get(POPUP_PASSKEY_STORAGE_KEY);
-      const passkeys: any[] = result[POPUP_PASSKEY_STORAGE_KEY] || [];
+      const passkeys: Record<string, unknown>[] = result[POPUP_PASSKEY_STORAGE_KEY] || [];
 
       if (passkeys.length === 0) {
         showNotification('No passkeys to export', 'error');
@@ -498,7 +679,6 @@
         version: EXPORT_VERSION,
         exportType: 'full',
         exportedAt: new Date().toISOString(),
-        description: 'PassKey Vault FULL backup (contains private keys - KEEP SECURE!)',
         passkeys: passkeys.map((p) => ({
           id: p.id,
           credentialId: p.credentialId,
@@ -515,12 +695,94 @@
         })),
       };
 
-      downloadJson(exportData, `passkeys-FULL-BACKUP-${getDateString()}.json`);
-      showNotification(`Exported ${passkeys.length} passkeys (full backup)`);
+      const plaintext = JSON.stringify(exportData);
+
+      const encResponse = await chrome.runtime.sendMessage({
+        type: 'ENCRYPT_BACKUP',
+        payload: { data: plaintext, password },
+      });
+
+      if (!encResponse.success) {
+        showNotification('Encryption failed: ' + encResponse.error, 'error');
+        return;
+      }
+
+      const encryptedBackup = {
+        encrypted: true,
+        version: EXPORT_VERSION,
+        exportedAt: new Date().toISOString(),
+        passkeyCount: passkeys.length,
+        data: encResponse.encrypted.data,
+        iv: encResponse.encrypted.iv,
+        salt: encResponse.encrypted.salt,
+        algorithm: encResponse.encrypted.algorithm,
+      };
+
+      downloadJson(encryptedBackup, `passkeys-backup-${getDateString()}.json`);
+      showNotification(`Exported ${passkeys.length} passkeys (encrypted)`);
     } catch (error) {
       console.error('Error exporting passkeys:', error);
       showNotification('Failed to export passkeys', 'error');
     }
+  }
+
+  function showPasswordPrompt(title: string, message: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'modal-overlay';
+      overlay.innerHTML = `
+        <div class="modal-content">
+          <h3 class="modal-title">${popupEscapeHtml(title)}</h3>
+          <p class="modal-message">${popupEscapeHtml(message)}</p>
+          <input type="password" id="prompt-password" placeholder="Password (min 8 chars)"
+            style="width: 100%; padding: 8px; border: 1px solid #333; background: #1a1a1a; color: #fff; border-radius: 4px; font-size: 13px; box-sizing: border-box; margin-bottom: 8px" />
+          <input type="password" id="prompt-password-confirm" placeholder="Confirm password"
+            style="width: 100%; padding: 8px; border: 1px solid #333; background: #1a1a1a; color: #fff; border-radius: 4px; font-size: 13px; box-sizing: border-box; margin-bottom: 4px" />
+          <div id="prompt-error" style="color: #ef4444; font-size: 12px; margin-bottom: 8px; display: none"></div>
+          <div class="modal-actions">
+            <button class="btn btn-secondary" id="prompt-cancel">Cancel</button>
+            <button class="btn btn-primary" id="prompt-ok">Encrypt & Export</button>
+          </div>
+        </div>
+      `;
+      overlay.style.display = 'flex';
+      document.body.appendChild(overlay);
+
+      const pwInput = overlay.querySelector('#prompt-password') as HTMLInputElement;
+      const confirmInput = overlay.querySelector('#prompt-password-confirm') as HTMLInputElement;
+      const errorEl = overlay.querySelector('#prompt-error') as HTMLElement;
+      const okBtn = overlay.querySelector('#prompt-ok') as HTMLButtonElement;
+      const cancelBtn = overlay.querySelector('#prompt-cancel') as HTMLButtonElement;
+
+      pwInput.focus();
+
+      const cleanup = (result: string | null) => {
+        overlay.remove();
+        resolve(result);
+      };
+
+      okBtn.addEventListener('click', () => {
+        const pw = pwInput.value;
+        const confirm = confirmInput.value;
+        errorEl.style.display = 'none';
+        if (pw.length < 8) {
+          errorEl.textContent = 'Password must be at least 8 characters';
+          errorEl.style.display = 'block';
+          return;
+        }
+        if (pw !== confirm) {
+          errorEl.textContent = 'Passwords do not match';
+          errorEl.style.display = 'block';
+          return;
+        }
+        cleanup(pw);
+      });
+
+      cancelBtn.addEventListener('click', () => cleanup(null));
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) cleanup(null);
+      });
+    });
   }
 
   function downloadJson(data: any, filename: string): void {
