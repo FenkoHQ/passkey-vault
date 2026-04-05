@@ -87,19 +87,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download Chrome dist artifact
+      - name: Download Chrome ZIP artifact
         uses: actions/download-artifact@v4
         with:
-          name: passkey-vault-chrome
-          path: dist/
-
-      - name: Decode signing key
-        run: echo "${{ secrets.CRX_SIGNING_KEY }}" | base64 -d > /tmp/crx-signing.pem
-
-      - name: Pack signed CRX
-        run: |
-          google-chrome --pack-extension=dist --pack-extension-key=/tmp/crx-signing.pem
-          echo "Packed: $(ls -lh dist.crx)"
+          name: passkey-vault-chrome-zip
 
       - name: Get OAuth access token
         id: token
@@ -111,24 +102,35 @@ jobs:
             -d "grant_type=refresh_token" | jq -r .access_token)
           echo "access_token=$TOKEN" >> $GITHUB_OUTPUT
 
-      - name: Upload signed CRX to Chrome Web Store
+      - name: Upload ZIP to Chrome Web Store
         run: |
-          curl -sf -X PUT \
+          RESPONSE=$(curl -s -X PUT \
             -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
             -H "x-goog-api-version: 2" \
-            -H "Content-Type: application/octet-stream" \
-            --data-binary @dist.crx \
-            "https://www.googleapis.com/upload/chromewebstore/v1.1/items/${{ secrets.CHROME_EXTENSION_ID }}?uploadType=media" \
-            | jq .
+            -H "Content-Type: application/zip" \
+            --data-binary @passkey-vault-chrome.zip \
+            "https://www.googleapis.com/upload/chromewebstore/v1.1/items/${{ secrets.CHROME_EXTENSION_ID }}?uploadType=media")
+          echo "$RESPONSE" | jq .
+          STATE=$(echo "$RESPONSE" | jq -r '.uploadState')
+          if [ "$STATE" != "SUCCESS" ]; then
+            echo "Upload failed with state: $STATE"
+            echo "$RESPONSE" | jq '.itemError // empty'
+            exit 1
+          fi
 
       - name: Publish to Chrome Web Store
         run: |
-          curl -sf -X POST \
+          RESPONSE=$(curl -s -X POST \
             -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
             -H "x-goog-api-version: 2" \
             -H "Content-Length: 0" \
-            "https://www.googleapis.com/chromewebstore/v1.1/items/${{ secrets.CHROME_EXTENSION_ID }}/publish" \
-            | jq .
+            "https://www.googleapis.com/chromewebstore/v1.1/items/${{ secrets.CHROME_EXTENSION_ID }}/publish")
+          echo "$RESPONSE" | jq .
+          STATUS=$(echo "$RESPONSE" | jq -r '.status[0] // empty')
+          if [ "$STATUS" != "OK" ]; then
+            echo "Publish failed with status: $STATUS"
+            exit 1
+          fi
 
   release:
     name: Create Release
