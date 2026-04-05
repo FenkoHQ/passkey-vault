@@ -111,7 +111,7 @@ async function extPage(ctx, extensionId, file) {
 // Screenshot the .container element directly — no dead space, no viewport clipping.
 async function shotElement(page, name) {
   const file = path.join(SCREENSHOTS_DIR, name);
-  const el = page.locator('.container').first();
+  const el = page.locator('.container:visible').first();
   await el.screenshot({ path: file });
   console.log(`  ✅ ${name}`);
 }
