@@ -14,7 +14,7 @@ A browser extension that intercepts WebAuthn API calls and stores passkeys local
 
 <img src="docs/cws/cws-03-detail.png" alt="Full control over every credential." width="640"/>
 
-<img src="docs/cws/cws-04-import.png" alt="Back up. Restore. Breathe." width="640"/>
+<img src="docs/cws/cws-04-settings.png" alt="Developer tools built right in." width="640"/>
 
 <img src="docs/cws/cws-05-sync.png" alt="Sync across devices. No cloud required." width="640"/>
 
@@ -112,7 +112,7 @@ src/
 ├── content/            # Content script + WebAuthn injection
 ├── crypto/             # BIP-39, ECDSA, AES-GCM, secure storage
 ├── sync/               # Nostr-based sync service
-├── ui/                 # popup, import, sync-setup, sync-settings, emergency
+├── ui/                 # popup, options, import, sync-setup, sync-settings, emergency
 ├── manifest.json       # Chrome MV3
 └── manifest.firefox.json
 ```

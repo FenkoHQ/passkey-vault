@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PassKey Vault — Settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="sidebar-header">
+          <svg class="logo" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#F5A623" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <div>
+            <h1>PassKey Vault</h1>
+            <span class="version" id="version"></span>
+          </div>
+        </div>
+        <nav>
+          <button class="nav-item active" data-section="interception">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>
+            </svg>
+            Interception
+          </button>
+          <button class="nav-item" data-section="sync">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+              <path d="M3 3v5h5"/>
+              <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+              <path d="M16 16h5v5"/>
+            </svg>
+            Sync
+          </button>
+          <button class="nav-item" data-section="security">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            Security
+          </button>
+          <button class="nav-item" data-section="developer">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="16 18 22 12 16 6"/>
+              <polyline points="8 6 2 12 8 18"/>
+            </svg>
+            Developer
+          </button>
+        </nav>
+      </aside>
+
+      <main class="content">
+        <!-- Interception Section -->
+        <section id="section-interception" class="section active">
+          <div class="section-header">
+            <h2>WebAuthn Interception</h2>
+            <p class="section-desc">Control which domains PassKey Vault intercepts WebAuthn requests on.</p>
+          </div>
+
+          <div class="card">
+            <h3>Interception Mode</h3>
+            <div class="mode-selector">
+              <label class="mode-option">
+                <input type="radio" name="interception-mode" value="disabled" />
+                <div class="mode-card">
+                  <span class="mode-title">Disabled</span>
+                  <span class="mode-desc">No interception — browser handles WebAuthn natively</span>
+                </div>
+              </label>
+              <label class="mode-option">
+                <input type="radio" name="interception-mode" value="all" checked />
+                <div class="mode-card">
+                  <span class="mode-title">All Sites</span>
+                  <span class="mode-desc">Intercept on every domain (default)</span>
+                </div>
+              </label>
+              <label class="mode-option">
+                <input type="radio" name="interception-mode" value="allowlist" />
+                <div class="mode-card">
+                  <span class="mode-title">Allowlist</span>
+                  <span class="mode-desc">Only intercept on listed domains</span>
+                </div>
+              </label>
+              <label class="mode-option">
+                <input type="radio" name="interception-mode" value="blocklist" />
+                <div class="mode-card">
+                  <span class="mode-title">Blocklist</span>
+                  <span class="mode-desc">Intercept everywhere except listed domains</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div id="domain-list-card" class="card" style="display: none;">
+            <h3 id="domain-list-title">Domains</h3>
+            <div class="domain-input-row">
+              <input type="text" id="domain-input" placeholder="e.g. github.com" spellcheck="false" />
+              <button id="add-domain-btn" class="btn btn-primary btn-sm">Add</button>
+            </div>
+            <div id="domain-list" class="domain-list"></div>
+            <p id="domain-empty" class="empty-hint">No domains added yet.</p>
+          </div>
+        </section>
+
+        <!-- Sync Section -->
+        <section id="section-sync" class="section">
+          <div class="section-header">
+            <h2>Sync Settings</h2>
+            <p class="section-desc">Manage Nostr-based sync across your devices.</p>
+          </div>
+
+          <div id="sync-not-configured" class="card">
+            <div class="empty-state">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+              </svg>
+              <p>Sync is not configured. Set it up from the popup.</p>
+            </div>
+          </div>
+
+          <div id="sync-configured" style="display: none;">
+            <div class="card">
+              <div class="card-row">
+                <h3>Connection</h3>
+                <span id="sync-connection-badge" class="status-badge">--</span>
+              </div>
+              <div class="info-grid">
+                <div class="info-item">
+                  <span class="info-label">Chain ID</span>
+                  <code id="sync-chain-id" class="info-value mono">--</code>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Device Name</span>
+                  <span id="sync-device-name" class="info-value">--</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Local Passkeys</span>
+                  <span id="sync-local-count" class="info-value">--</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Synced Passkeys</span>
+                  <span id="sync-synced-count" class="info-value">--</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Pending Changes</span>
+                  <span id="sync-pending" class="info-value">--</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Last Sync</span>
+                  <span id="sync-last" class="info-value">--</span>
+                </div>
+              </div>
+              <div class="card-actions">
+                <button id="sync-now-btn" class="btn btn-secondary btn-sm">Sync Now</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <h3>Devices</h3>
+              <div id="sync-devices-list" class="devices-list"></div>
+            </div>
+
+            <div class="card">
+              <h3>Relay Servers</h3>
+              <p class="card-hint">Nostr relays used for sync. Changes take effect on next connection.</p>
+              <div id="relay-list" class="relay-list"></div>
+              <div class="domain-input-row">
+                <input type="text" id="relay-input" placeholder="wss://relay.example.com" spellcheck="false" />
+                <button id="add-relay-btn" class="btn btn-primary btn-sm">Add</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Security Section -->
+        <section id="section-security" class="section">
+          <div class="section-header">
+            <h2>Security</h2>
+            <p class="section-desc">Encryption and access control settings.</p>
+          </div>
+
+          <div class="card">
+            <h3>Master Password</h3>
+            <div class="card-row">
+              <span class="info-label">Status</span>
+              <span id="master-pw-status" class="status-badge">Checking...</span>
+            </div>
+            <div class="card-actions">
+              <button id="lock-now-btn" class="btn btn-secondary btn-sm">Lock Now</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Auto-Lock Timeout</h3>
+            <p class="card-hint">Lock the vault after this period of inactivity.</p>
+            <div class="timeout-selector">
+              <select id="auto-lock-timeout">
+                <option value="5">5 minutes</option>
+                <option value="15">15 minutes</option>
+                <option value="30" selected>30 minutes</option>
+                <option value="60">1 hour</option>
+                <option value="120">2 hours</option>
+                <option value="0">Never</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <!-- Developer Section -->
+        <section id="section-developer" class="section">
+          <div class="section-header">
+            <h2>Developer Tools</h2>
+            <p class="section-desc">Debugging, inspection, and diagnostic tools.</p>
+          </div>
+
+          <div class="card">
+            <div class="card-row">
+              <h3>Console Logging</h3>
+              <label class="toggle">
+                <input type="checkbox" id="debug-toggle" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <p class="card-hint">Log WebAuthn operations and sync events to the browser console.</p>
+          </div>
+
+          <div class="card">
+            <h3>Storage Inspector</h3>
+            <p class="card-hint">Raw contents of chrome.storage.local.</p>
+            <div class="card-actions">
+              <button id="refresh-storage-btn" class="btn btn-secondary btn-sm">Refresh</button>
+              <span id="storage-total" class="info-value mono"></span>
+            </div>
+            <div id="storage-inspector" class="storage-inspector">
+              <p class="empty-hint">Click Refresh to load.</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Sync Protocol Log</h3>
+            <p class="card-hint">Recent Nostr relay events and sync operations.</p>
+            <div class="card-actions">
+              <button id="refresh-sync-log-btn" class="btn btn-secondary btn-sm">Refresh</button>
+              <button id="clear-sync-log-btn" class="btn btn-ghost btn-sm">Clear</button>
+            </div>
+            <div id="sync-log" class="log-viewer">
+              <p class="empty-hint">Click Refresh to load.</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>WebAuthn Event Log</h3>
+            <p class="card-hint">Recent credential create/get operations.</p>
+            <div class="card-actions">
+              <button id="refresh-webauthn-log-btn" class="btn btn-secondary btn-sm">Refresh</button>
+              <button id="clear-webauthn-log-btn" class="btn btn-ghost btn-sm">Clear</button>
+            </div>
+            <div id="webauthn-log" class="log-viewer">
+              <p class="empty-hint">Click Refresh to load.</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Extension Info</h3>
+            <div class="info-grid" id="extension-info">
+              <div class="info-item">
+                <span class="info-label">Version</span>
+                <span id="ext-version" class="info-value mono">--</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">Manifest</span>
+                <span id="ext-manifest-version" class="info-value mono">--</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">ID</span>
+                <code id="ext-id" class="info-value mono">--</code>
+              </div>
+              <div class="info-item">
+                <span class="info-label">Permissions</span>
+                <span id="ext-permissions" class="info-value mono">--</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card danger">
+            <h3>Danger Zone</h3>
+            <div class="danger-actions">
+              <div class="danger-row">
+                <div>
+                  <span class="danger-title">Export All Data</span>
+                  <span class="danger-desc">Download everything as JSON (passkeys, settings, sync config).</span>
+                </div>
+                <button id="export-all-btn" class="btn btn-secondary btn-sm">Export</button>
+              </div>
+              <div class="danger-row">
+                <div>
+                  <span class="danger-title">Import Data</span>
+                  <span class="danger-desc">Restore from a previously exported JSON file.</span>
+                </div>
+                <button id="import-all-btn" class="btn btn-secondary btn-sm">Import</button>
+                <input type="file" id="import-file-input" accept=".json" style="display: none;" />
+              </div>
+              <div class="danger-row">
+                <div>
+                  <span class="danger-title">Clear All Passkeys</span>
+                  <span class="danger-desc">Delete all stored passkeys. Sync config is kept.</span>
+                </div>
+                <button id="clear-passkeys-btn" class="btn btn-destructive btn-sm">Clear</button>
+              </div>
+              <div class="danger-row">
+                <div>
+                  <span class="danger-title">Factory Reset</span>
+                  <span class="danger-desc">Wipe everything — passkeys, settings, sync, master password.</span>
+                </div>
+                <button id="factory-reset-btn" class="btn btn-destructive btn-sm">Reset</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="options.js"></script>
+  </body>
+</html>

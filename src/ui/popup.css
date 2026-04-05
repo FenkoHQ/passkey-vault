@@ -61,6 +61,21 @@ h1 svg {
   text-transform: uppercase;
 }
 
+.icon-btn {
+  background: none;
+  border: none;
+  color: #fcd34d;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+
+.icon-btn:hover {
+  opacity: 1;
+}
+
 /* Search bar */
 .search-container {
   position: relative;

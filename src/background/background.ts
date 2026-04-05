@@ -144,6 +144,12 @@ class BackgroundService {
       this.setupMessageHandlers();
       this.setupLifecycleHandlers();
       await this.initializeSyncService();
+      // Restore auto-lock timeout from storage
+      const stored = await chrome.storage.local.get('auto_lock_timeout');
+      if (stored.auto_lock_timeout != null) {
+        const ms = stored.auto_lock_timeout === 0 ? 0 : stored.auto_lock_timeout * 60 * 1000;
+        secureStorage.setAutoLockTimeout(ms);
+      }
       this.isInitialized = true;
       logger.info('Background service initialized successfully');
     } catch (error) {
@@ -266,6 +272,12 @@ class BackgroundService {
         return this.handleSetDebugLogging(payload as { enabled: boolean });
       case 'GET_DEBUG_LOGGING':
         return this.handleGetDebugLogging();
+      case 'SET_AUTO_LOCK_TIMEOUT':
+        return this.handleSetAutoLockTimeout(payload as { minutes: number });
+      case 'GET_WEBAUTHN_LOG':
+        return this.handleGetWebAuthnLog();
+      case 'CLEAR_WEBAUTHN_LOG':
+        return this.handleClearWebAuthnLog();
       default:
         throw new Error(`Unknown message type: ${type}`);
     }
@@ -392,6 +404,11 @@ class BackgroundService {
       await this.savePasskeys(passkeys);
       logger.debug('Created and stored passkey', credentialIdBase64);
 
+      this.logWebAuthn('CREATE', 'info', `Created passkey for ${rpId}`, {
+        rpId,
+        credentialId: credentialIdBase64,
+        user: (user?.name as string) || '',
+      });
       this.logSync('PASSKEY_CREATED', { id: credentialIdBase64, rpId });
       await this.incrementPendingChanges();
       this.triggerSync();
@@ -544,6 +561,12 @@ class BackgroundService {
           ? base64urlToBase64(passkey.user.id)
           : null
         : null;
+
+      this.logWebAuthn('GET', 'info', `Signed assertion for ${rpId}`, {
+        rpId,
+        credentialId: passkey.id,
+        user: passkey.user?.name || '',
+      });
 
       return {
         success: true,
@@ -968,6 +991,24 @@ class BackgroundService {
     console.log(`[SYNC ${timestamp}] ${action}`, details || '');
   }
 
+  private async logWebAuthn(
+    action: string,
+    level: 'info' | 'warn' | 'error',
+    message: string,
+    data?: unknown
+  ): Promise<void> {
+    try {
+      const result = await chrome.storage.local.get('webauthn_log');
+      const logs: Array<Record<string, unknown>> = result.webauthn_log || [];
+      logs.push({ timestamp: Date.now(), level, category: action, message, data });
+      // Keep last 200 entries
+      if (logs.length > 200) logs.splice(0, logs.length - 200);
+      await chrome.storage.local.set({ webauthn_log: logs });
+    } catch {
+      // Don't let logging errors break operations
+    }
+  }
+
   private async handleTriggerSync(): Promise<unknown> {
     await this.triggerSync();
     return { success: true };
@@ -1222,6 +1263,38 @@ class BackgroundService {
     try {
       const enabled = logger.isDebugEnabled();
       return { success: true, enabled };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  }
+  private async handleSetAutoLockTimeout(payload: { minutes: number }): Promise<unknown> {
+    try {
+      const ms = payload.minutes === 0 ? 0 : payload.minutes * 60 * 1000;
+      secureStorage.setAutoLockTimeout(ms);
+      await chrome.storage.local.set({ auto_lock_timeout: payload.minutes });
+      logger.info(`Auto-lock timeout set to ${payload.minutes} minutes`);
+      return { success: true, minutes: payload.minutes };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  }
+
+  private async handleGetWebAuthnLog(): Promise<unknown> {
+    try {
+      const result = await chrome.storage.local.get('webauthn_log');
+      return { success: true, logs: result.webauthn_log || [] };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  }
+
+  private async handleClearWebAuthnLog(): Promise<unknown> {
+    try {
+      await chrome.storage.local.set({ webauthn_log: [] });
+      return { success: true };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };

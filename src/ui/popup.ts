@@ -18,12 +18,9 @@
   let passkeyCountEl: HTMLElement;
   let refreshBtn: HTMLButtonElement;
   let exportFullBtn: HTMLButtonElement;
-  let importBtn: HTMLButtonElement;
-  let clearBtn: HTMLButtonElement;
   let confirmModal: HTMLElement;
   let searchInput: HTMLInputElement;
   let searchClearBtn: HTMLButtonElement;
-  let debugLoggingToggle: HTMLInputElement;
 
   // Screen elements
   let lockScreen: HTMLElement;
@@ -37,6 +34,14 @@
     lockScreen = document.getElementById('lock-screen') as HTMLElement;
     setupScreen = document.getElementById('setup-screen') as HTMLElement;
     mainContainer = document.getElementById('main-container') as HTMLElement;
+
+    const optionsBtn = document.getElementById('options-btn');
+    if (optionsBtn) {
+      optionsBtn.addEventListener('click', () => {
+        chrome.runtime.openOptionsPage();
+      });
+    }
+
     checkSecureStorageState();
   });
 
@@ -172,7 +177,6 @@
     mainContainer.style.display = 'block';
     initializeElements();
     createConfirmModal();
-    loadDebugLoggingState();
     loadPasskeys();
     loadSyncStatus();
     setupEventListeners();
@@ -230,11 +234,8 @@
     passkeyCountEl = document.getElementById('passkey-count') as HTMLElement;
     refreshBtn = document.getElementById('refresh-btn') as HTMLButtonElement;
     exportFullBtn = document.getElementById('export-full-btn') as HTMLButtonElement;
-    importBtn = document.getElementById('import-btn') as HTMLButtonElement;
-    clearBtn = document.getElementById('clear-btn') as HTMLButtonElement;
     searchInput = document.getElementById('search-input') as HTMLInputElement;
     searchClearBtn = document.getElementById('search-clear') as HTMLButtonElement;
-    debugLoggingToggle = document.getElementById('debug-logging-toggle') as HTMLInputElement;
   }
 
   function createConfirmModal(): void {
@@ -312,13 +313,6 @@
   function setupEventListeners(): void {
     refreshBtn.addEventListener('click', loadPasskeys);
     exportFullBtn.addEventListener('click', exportPasskeysFull);
-    importBtn.addEventListener('click', openImportPage);
-    clearBtn.addEventListener('click', clearAllPasskeys);
-
-    const syncSettingsBtn = document.getElementById('sync-settings-btn') as HTMLButtonElement;
-    if (syncSettingsBtn) {
-      syncSettingsBtn.addEventListener('click', openSyncSettings);
-    }
 
     searchInput.addEventListener('input', handleSearch);
     searchClearBtn.addEventListener('click', clearSearch);
@@ -327,43 +321,6 @@
     if (importEmptyBtn) {
       importEmptyBtn.addEventListener('click', openImportPage);
     }
-
-    debugLoggingToggle.addEventListener('change', handleDebugLoggingToggle);
-  }
-
-  async function loadDebugLoggingState(): Promise<void> {
-    try {
-      const response = await chrome.runtime.sendMessage({ type: 'GET_DEBUG_LOGGING' });
-      if (response.success) {
-        debugLoggingToggle.checked = response.enabled;
-      }
-    } catch (error) {
-      console.error('Failed to load debug logging state:', error);
-    }
-  }
-
-  async function handleDebugLoggingToggle(): Promise<void> {
-    const enabled = debugLoggingToggle.checked;
-    try {
-      const response = await chrome.runtime.sendMessage({
-        type: 'SET_DEBUG_LOGGING',
-        payload: { enabled },
-      });
-      if (response.success) {
-        showNotification(`Debug logging ${enabled ? 'enabled' : 'disabled'}`);
-      } else {
-        showNotification('Failed to toggle debug logging', 'error');
-        debugLoggingToggle.checked = !enabled; // Revert
-      }
-    } catch (error) {
-      console.error('Failed to toggle debug logging:', error);
-      showNotification('Failed to toggle debug logging', 'error');
-      debugLoggingToggle.checked = !enabled; // Revert
-    }
-  }
-
-  function openSyncSettings(): void {
-    window.open(chrome.runtime.getURL('sync-settings.html'));
   }
 
   function handleSearch(): void {

@@ -188,6 +188,13 @@ async function buildForTarget(browserTarget) {
       outfile: `${distDir}/sync-settings.js`,
     });
     console.log('  ✅ sync-settings.js');
+
+    await esbuild.build({
+      ...commonOptions,
+      entryPoints: ['src/ui/options.ts'],
+      outfile: `${distDir}/options.js`,
+    });
+    console.log('  ✅ options.js');
   } catch (error) {
     console.error('❌ Build failed:', error.message);
     process.exit(1);
@@ -329,6 +336,16 @@ async function buildForTarget(browserTarget) {
   if (fs.existsSync('src/ui/sync-settings.html')) {
     fs.copyFileSync('src/ui/sync-settings.html', `${distDir}/sync-settings.html`);
     console.log('  ✅ sync-settings.html');
+  }
+
+  if (fs.existsSync('src/ui/options.html')) {
+    fs.copyFileSync('src/ui/options.html', `${distDir}/options.html`);
+    console.log('  ✅ options.html');
+  }
+
+  if (fs.existsSync('src/ui/options.css')) {
+    fs.copyFileSync('src/ui/options.css', `${distDir}/options.css`);
+    console.log('  ✅ options.css');
   }
 
   let totalSize = 0;
