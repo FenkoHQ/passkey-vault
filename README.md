@@ -8,15 +8,15 @@ A browser extension that intercepts WebAuthn API calls and stores passkeys local
 
 ## Screenshots
 
-<img src="docs/cws/cws-01-vault.png" alt="Your passkeys. Your device. Nobody else." width="640"/>
+<img src="docs/readme/cws-01-vault.png" alt="Your passkeys. Your device. Nobody else." width="640"/>
 
-<img src="docs/cws/cws-02-search.png" alt="Find any passkey instantly." width="640"/>
+<img src="docs/readme/cws-02-search.png" alt="Find any passkey instantly." width="640"/>
 
-<img src="docs/cws/cws-03-detail.png" alt="Full control over every credential." width="640"/>
+<img src="docs/readme/cws-03-detail.png" alt="Full control over every credential." width="640"/>
 
-<img src="docs/cws/cws-04-settings.png" alt="Developer tools built right in." width="640"/>
+<img src="docs/readme/cws-04-settings.png" alt="Developer tools built right in." width="640"/>
 
-<img src="docs/cws/cws-05-sync.png" alt="Sync across devices. No cloud required." width="640"/>
+<img src="docs/readme/cws-05-sync.png" alt="Sync across devices. No cloud required." width="640"/>
 
 ---
 
