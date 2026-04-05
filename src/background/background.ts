@@ -133,9 +133,7 @@ class BackgroundService {
     await chrome.storage.local.set({ [PASSKEY_STORAGE_KEY]: passkeys });
     // Also write encrypted copy if secure storage is available
     if (this.useSecureStorage) {
-      await secureStorage.storePasskeys(
-        passkeys as unknown as Record<string, unknown>[]
-      );
+      await secureStorage.storePasskeys(passkeys as unknown as Record<string, unknown>[]);
     }
   }
 
@@ -1178,10 +1176,7 @@ class BackgroundService {
 
   // ==================== BACKUP ENCRYPTION ====================
 
-  private async handleEncryptBackup(payload: {
-    data: string;
-    password: string;
-  }): Promise<unknown> {
+  private async handleEncryptBackup(payload: { data: string; password: string }): Promise<unknown> {
     try {
       const { data, password } = payload;
       if (!password || password.length < 8) {
