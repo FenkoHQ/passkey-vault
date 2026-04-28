@@ -3,7 +3,6 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
-const zlib = require('zlib');
 const esbuild = require('esbuild');
 
 const args = process.argv.slice(2);
@@ -226,85 +225,18 @@ async function buildForTarget(browserTarget) {
 
   console.log('🎨 Processing icons...');
 
-  const sourceIcon = 'icon.png';
+  const sourceIconsDir = path.join('src', 'icons');
   const iconSizes = [16, 48, 128];
 
-  if (fs.existsSync(sourceIcon)) {
-    try {
-      for (const size of iconSizes) {
-        const outputPath = path.join(iconsDir, `icon${size}.png`);
-        execSync(`convert "${sourceIcon}" -resize ${size}x${size} "${outputPath}"`, {
-          stdio: 'pipe',
-        });
-      }
-      console.log('  ✅ Resized icons from icon.png');
-    } catch (error) {
-      console.warn('  ⚠️  ImageMagick not available, generating placeholder icons');
-      generatePlaceholderIcons(iconsDir, iconSizes);
+  for (const size of iconSizes) {
+    const sourcePath = path.join(sourceIconsDir, `icon${size}.png`);
+    const outputPath = path.join(iconsDir, `icon${size}.png`);
+    if (!fs.existsSync(sourcePath)) {
+      throw new Error(`Missing required icon asset: ${sourcePath}`);
     }
-  } else {
-    console.warn('  ⚠️  icon.png not found, generating placeholder icons');
-    generatePlaceholderIcons(iconsDir, iconSizes);
+    fs.copyFileSync(sourcePath, outputPath);
   }
-
-  function generatePlaceholderIcons(dir, sizes) {
-    for (const size of sizes) {
-      const png = createMinimalPNG(size, 74, 144, 217);
-      fs.writeFileSync(path.join(dir, `icon${size}.png`), png);
-    }
-  }
-
-  function createMinimalPNG(size, r, g, b) {
-    const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-
-    const ihdr = Buffer.alloc(25);
-    ihdr.writeUInt32BE(13, 0);
-    ihdr.write('IHDR', 4);
-    ihdr.writeUInt32BE(size, 8);
-    ihdr.writeUInt32BE(size, 12);
-    ihdr.writeUInt8(8, 16);
-    ihdr.writeUInt8(2, 17);
-    ihdr.writeUInt8(0, 18);
-    ihdr.writeUInt8(0, 19);
-    ihdr.writeUInt8(0, 20);
-    ihdr.writeUInt32BE(zlib.crc32(ihdr.subarray(4, 21)), 21);
-
-    const rawData = Buffer.alloc(size * (1 + size * 3));
-    for (let y = 0; y < size; y++) {
-      rawData[y * (1 + size * 3)] = 0;
-      for (let x = 0; x < size; x++) {
-        const offset = y * (1 + size * 3) + 1 + x * 3;
-        const cx = size / 2,
-          cy = size / 2;
-        const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
-        if (dist < size * 0.4) {
-          rawData[offset] = 255;
-          rawData[offset + 1] = 255;
-          rawData[offset + 2] = 255;
-        } else {
-          rawData[offset] = r;
-          rawData[offset + 1] = g;
-          rawData[offset + 2] = b;
-        }
-      }
-    }
-
-    const compressed = zlib.deflateSync(rawData);
-    const idat = Buffer.alloc(compressed.length + 12);
-    idat.writeUInt32BE(compressed.length, 0);
-    idat.write('IDAT', 4);
-    compressed.copy(idat, 8);
-    idat.writeUInt32BE(
-      zlib.crc32(Buffer.concat([Buffer.from('IDAT'), compressed])),
-      compressed.length + 8
-    );
-
-    const iend = Buffer.from([
-      0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
-    ]);
-
-    return Buffer.concat([signature, ihdr, idat, iend]);
-  }
+  console.log('  ✅ Copied checked-in icons from src/icons');
 
   console.log('📄 Copying static assets...');
 
