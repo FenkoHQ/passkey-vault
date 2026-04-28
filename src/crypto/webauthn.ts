@@ -5,45 +5,6 @@
  * without using the native browser API.
  */
 
-// Helper to convert ArrayBuffer to Base64URL
-function arrayBufferToBase64URL(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-}
-
-// Helper to convert Base64URL to ArrayBuffer
-function base64URLToArrayBuffer(base64url: string): ArrayBuffer {
-  const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
-  const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
-  const binary = atob(padded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
-}
-
-// Helper to convert Base64 to ArrayBuffer
-function base64ToArrayBuffer(base64: string): ArrayBuffer {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
-}
-
-// Generate a random credential ID
-function generateCredentialId(): Uint8Array {
-  const array = new Uint8Array(16);
-  crypto.getRandomValues(array);
-  return array;
-}
-
 // Generate a new ES256 key pair for the passkey
 export async function generatePasskeyKeyPair(): Promise<CryptoKeyPair> {
   return await crypto.subtle.generateKey(
@@ -90,6 +51,8 @@ export async function createAttestation(
   publicKey: CryptoKey,
   user: { id: string; name: string; displayName: string }
 ): Promise<{ attestationObject: ArrayBuffer; clientDataJSON: ArrayBuffer }> {
+  void user;
+
   // Create clientDataJSON
   const clientData = {
     type: 'webauthn.create',
@@ -106,12 +69,7 @@ export async function createAttestation(
   const coseKey = createCOSEKey(publicKeySpki);
 
   // Create attestation object (using "none" attestation for simplicity)
-  const attestationObject = createAttestationObject(
-    credentialId,
-    coseKey,
-    clientDataJSON,
-    await crypto.subtle.exportKey('spki', publicKey)
-  );
+  const attestationObject = createAttestationObject(credentialId, coseKey);
 
   return {
     attestationObject,
@@ -121,10 +79,6 @@ export async function createAttestation(
 
 // Create a simplified COSE key from SPKI
 function createCOSEKey(spki: ArrayBuffer): Uint8Array {
-  // Parse SPKI and create COSE key format
-  // This is a simplified version - a real implementation would properly parse DER
-  const spkiBytes = new Uint8Array(spki);
-
   // COSE Key map format: CBOR encoded
   // For ES256: kty=2 (EC), alg=-7 (ES256), crv=1 (P-256), x=public key x, y=public key y
   // This is a placeholder - proper implementation needs CBOR encoding
@@ -132,12 +86,7 @@ function createCOSEKey(spki: ArrayBuffer): Uint8Array {
 }
 
 // Create attestation object in CBOR format
-function createAttestationObject(
-  credentialId: Uint8Array,
-  coseKey: Uint8Array,
-  clientDataJSON: Uint8Array,
-  spki: ArrayBuffer
-): ArrayBuffer {
+function createAttestationObject(credentialId: Uint8Array, coseKey: Uint8Array): ArrayBuffer {
   // For "none" attestation, we create a simple structure
   // Format: { fmt: "none", authData: <authenticator data>, attStmt: {} }
 

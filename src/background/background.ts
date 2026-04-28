@@ -186,18 +186,18 @@ class BackgroundService {
 
   private setupMessageHandlers(): void {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      this.handleMessage(message, sender, sendResponse);
+      void sender;
+      this.handleMessage(message, sendResponse);
       return true;
     });
   }
 
   private async handleMessage(
     message: ExtensionMessage,
-    _sender: chrome.runtime.MessageSender,
     sendResponse: (response?: unknown) => void
   ): Promise<void> {
     try {
-      const response = await this.routeMessage(message, _sender);
+      const response = await this.routeMessage(message);
       sendResponse(response);
     } catch (error: unknown) {
       const message_str = error instanceof Error ? error.message : String(error);
@@ -206,19 +206,16 @@ class BackgroundService {
     }
   }
 
-  private async routeMessage(
-    message: ExtensionMessage,
-    sender: chrome.runtime.MessageSender
-  ): Promise<unknown> {
+  private async routeMessage(message: ExtensionMessage): Promise<unknown> {
     const { type, payload } = message;
 
     switch (type) {
       case 'CREATE_PASSKEY':
-        return this.handleCreatePasskey(payload || {}, sender);
+        return this.handleCreatePasskey(payload || {});
       case 'GET_PASSKEY':
-        return this.handleGetPasskey(payload || {}, sender);
+        return this.handleGetPasskey(payload || {});
       case 'STORE_PASSKEY':
-        return this.handleStorePasskey(payload || {}, sender);
+        return this.handleStorePasskey(payload || {});
       case 'RETRIEVE_PASSKEY':
         return this.handleRetrievePasskey(payload || {});
       case 'LIST_PASSKEYS':
@@ -302,10 +299,7 @@ class BackgroundService {
 
   // ==================== PASSKEY OPERATIONS ====================
 
-  private async handleCreatePasskey(
-    payload: MessagePayload,
-    _sender: chrome.runtime.MessageSender
-  ): Promise<unknown> {
+  private async handleCreatePasskey(payload: MessagePayload): Promise<unknown> {
     try {
       const options = payload.publicKey as Record<string, unknown> | undefined;
       const origin = payload.origin as string | undefined;
@@ -438,10 +432,7 @@ class BackgroundService {
     }
   }
 
-  private async handleGetPasskey(
-    payload: MessagePayload,
-    _sender: chrome.runtime.MessageSender
-  ): Promise<unknown> {
+  private async handleGetPasskey(payload: MessagePayload): Promise<unknown> {
     try {
       const options = payload.publicKey as Record<string, unknown> | undefined;
       const origin = payload.origin as string | undefined;
@@ -598,10 +589,7 @@ class BackgroundService {
     }
   }
 
-  private async handleStorePasskey(
-    payload: MessagePayload,
-    _sender: chrome.runtime.MessageSender
-  ): Promise<unknown> {
+  private async handleStorePasskey(payload: MessagePayload): Promise<unknown> {
     try {
       const publicKey = payload.publicKey as Record<string, string> | undefined;
       const origin = payload.origin as string;
@@ -1302,4 +1290,4 @@ class BackgroundService {
   }
 }
 
-const backgroundService = new BackgroundService();
+new BackgroundService();

@@ -495,7 +495,8 @@ function showPasskeyCreatedNotification(userName: string, rpId: string): void {
 /**
  * Show passkey used notification
  */
-function showPasskeyUsedNotification(userName: string, _rpId: string): void {
+function showPasskeyUsedNotification(userName: string, rpId: string): void {
+  void rpId;
   showToast('Signed In', `Used passkey for ${userName}`, 'success', 3000);
 }
 

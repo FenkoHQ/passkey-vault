@@ -8,21 +8,56 @@
 (function () {
   'use strict';
 
+  type BufferInput =
+    | string
+    | ArrayBuffer
+    | ArrayBufferView
+    | { type: 'Buffer'; data: number[] }
+    | null
+    | undefined;
+
+  interface PendingRequest {
+    resolve: (value: Credential | null) => void;
+    reject: (reason?: unknown) => void;
+    timeoutId: number;
+  }
+
+  interface PrfResults {
+    first?: BufferInput;
+    second?: BufferInput;
+  }
+
+  interface SerializedClientExtensionResults {
+    prf?: {
+      results?: PrfResults;
+    };
+  }
+
+  interface NormalizedClientExtensionResults {
+    credProps: { rk: boolean };
+    prf?: {
+      results: {
+        first?: ArrayBuffer;
+        second?: ArrayBuffer;
+      };
+    };
+  }
+
   // Debug mode controlled by page context (silent by default)
   const DEBUG = false;
 
   // Store pending requests
-  const pendingRequests = new Map();
+  const pendingRequests = new Map<string, PendingRequest>();
 
   // Listen for responses from content script
   window.addEventListener('message', (event) => {
     if (event.source !== window) return;
 
     if (event.data?.source === 'PASSKEY_VAULT_CONTENT') {
-      const { type, requestId, result } = event.data;
+      const { requestId, result } = event.data;
 
       if (pendingRequests.has(requestId)) {
-        const { resolve, reject, timeoutId } = pendingRequests.get(requestId);
+        const { resolve, reject, timeoutId } = pendingRequests.get(requestId)!;
         pendingRequests.delete(requestId);
         if (timeoutId) {
           clearTimeout(timeoutId);
@@ -104,7 +139,7 @@
     const nativeGet = navigator.credentials.get?.bind(navigator.credentials);
 
     // Override create: fully intercept and handle passkey creation internally
-    navigator.credentials.create = async function (options: any) {
+    navigator.credentials.create = async function (options?: CredentialCreationOptions) {
       if (DEBUG) console.log('PassKey Vault: Intercepted create request', options);
 
       // Only intercept publicKey (WebAuthn) requests
@@ -140,7 +175,7 @@
             challenge: serializeBufferSource(publicKey.challenge),
             pubKeyCredParams: publicKey.pubKeyCredParams,
             timeout: publicKey.timeout,
-            excludeCredentials: publicKey.excludeCredentials?.map((cred: any) => ({
+            excludeCredentials: publicKey.excludeCredentials?.map((cred) => ({
               id: serializeBufferSource(cred.id),
               type: cred.type,
               transports: cred.transports,
@@ -168,7 +203,7 @@
     };
 
     // Override get: try extension-managed passkeys, fall back to native WebAuthn on failure.
-    navigator.credentials.get = async function (options: any) {
+    navigator.credentials.get = async function (options?: CredentialRequestOptions) {
       if (DEBUG) console.log('PassKey Vault: Intercepted get request', options);
 
       // Only intercept publicKey (WebAuthn) requests
@@ -198,7 +233,7 @@
               rpId: publicKey.rpId || window.location.hostname,
               challenge: serializeBufferSource(publicKey.challenge),
               timeout: publicKey.timeout,
-              allowCredentials: publicKey.allowCredentials?.map((cred: any) => ({
+              allowCredentials: publicKey.allowCredentials?.map((cred) => ({
                 id: serializeBufferSource(cred.id),
                 type: cred.type,
                 transports: cred.transports,
@@ -222,10 +257,11 @@
             '*'
           );
         });
-      } catch (e: any) {
+      } catch (e: unknown) {
         // Check if this is a "no passkeys found" error - this is expected and should silently fall back
+        const errorMessage = e instanceof Error ? e.message : String(e);
         const isNoPasskeysError =
-          e?.message?.includes('No passkeys found') || e?.message?.includes('not found');
+          errorMessage.includes('No passkeys found') || errorMessage.includes('not found');
 
         if (DEBUG) {
           if (isNoPasskeysError) {
@@ -233,7 +269,7 @@
           } else {
             console.warn(
               'PassKey Vault: Extension get failed, falling back to native WebAuthn',
-              e?.message || e
+              errorMessage
             );
           }
         }
@@ -253,13 +289,15 @@
   /**
    * Serialize a BufferSource (ArrayBuffer, TypedArray, DataView) to base64url string
    */
-  function normalizeClientExtensionResults(results: any): any {
-    const base: any = { credProps: { rk: true } };
+  function normalizeClientExtensionResults(
+    results: SerializedClientExtensionResults | null | undefined
+  ): NormalizedClientExtensionResults {
+    const base: NormalizedClientExtensionResults = { credProps: { rk: true } };
     if (!results?.prf?.results) {
       return base;
     }
 
-    const prfResults: any = {};
+    const prfResults: { first?: ArrayBuffer; second?: ArrayBuffer } = {};
     if (results.prf.results.first) {
       prfResults.first = base64ToArrayBuffer(results.prf.results.first);
     }
@@ -277,7 +315,7 @@
   /**
    * Serialize a BufferSource (ArrayBuffer, TypedArray, DataView) to base64url string
    */
-  function serializeBufferSource(value: any): string | null {
+  function serializeBufferSource(value: BufferInput): string | null {
     if (value == null) {
       return null;
     }
@@ -309,7 +347,7 @@
   /**
    * Convert base64 or base64url string to ArrayBuffer
    */
-  function base64ToArrayBuffer(base64url: any): ArrayBuffer {
+  function base64ToArrayBuffer(base64url: BufferInput): ArrayBuffer {
     // If already an ArrayBuffer, return it
     if (base64url instanceof ArrayBuffer) {
       return base64url;
@@ -322,7 +360,11 @@
     if (ArrayBuffer.isView(base64url)) {
       return base64url.buffer as ArrayBuffer;
     }
-    if (base64url?.type === 'Buffer' && Array.isArray(base64url.data)) {
+    if (
+      typeof base64url === 'object' &&
+      base64url?.type === 'Buffer' &&
+      Array.isArray(base64url.data)
+    ) {
       return new Uint8Array(base64url.data).buffer;
     }
     if (base64url == null) {

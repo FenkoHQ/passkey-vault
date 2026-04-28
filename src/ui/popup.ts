@@ -7,6 +7,24 @@
 (function () {
   'use strict';
 
+  interface PopupPasskey {
+    id: string;
+    credentialId?: string;
+    type?: string;
+    rpId?: string;
+    origin?: string;
+    user?: {
+      name?: string;
+      displayName?: string;
+      [key: string]: unknown;
+    };
+    publicKey?: unknown;
+    createdAt?: number | string;
+    counter?: number;
+    lastUsed?: number | string;
+    [key: string]: unknown;
+  }
+
   const POPUP_PASSKEY_STORAGE_KEY = 'passkeys';
   const EXPORT_VERSION = '1.0';
   const SETUP_SKIPPED_KEY = 'master_password_setup_skipped';
@@ -27,7 +45,7 @@
   let setupScreen: HTMLElement;
   let mainContainer: HTMLElement;
 
-  let allPasskeys: Record<string, unknown>[] = [];
+  let allPasskeys: PopupPasskey[] = [];
 
   // Initialize popup when DOM is loaded
   document.addEventListener('DOMContentLoaded', () => {
@@ -349,7 +367,18 @@
     searchInput.focus();
   }
 
-  function filterAndSortPasskeys(passkeys: any[], query: string): any[] {
+  function getCreatedAtTimestamp(passkey: PopupPasskey): number {
+    if (typeof passkey.createdAt === 'number') {
+      return passkey.createdAt;
+    }
+    if (typeof passkey.createdAt === 'string') {
+      const timestamp = Date.parse(passkey.createdAt);
+      return Number.isNaN(timestamp) ? 0 : timestamp;
+    }
+    return 0;
+  }
+
+  function filterAndSortPasskeys(passkeys: PopupPasskey[], query: string): PopupPasskey[] {
     const hasAtSymbol = query.includes('@');
 
     const scored = passkeys
@@ -384,13 +413,13 @@
 
         return { passkey, score };
       })
-      .filter((item): item is { passkey: any; score: number } => item !== null);
+      .filter((item): item is { passkey: PopupPasskey; score: number } => item !== null);
 
     scored.sort((a, b) => {
       if (b.score !== a.score) {
         return b.score - a.score;
       }
-      return (b.passkey.createdAt || 0) - (a.passkey.createdAt || 0);
+      return getCreatedAtTimestamp(b.passkey) - getCreatedAtTimestamp(a.passkey);
     });
 
     return scored.map((item) => item.passkey);
@@ -420,7 +449,7 @@
       searchClearBtn.style.display = 'none';
 
       const result = await chrome.storage.local.get(POPUP_PASSKEY_STORAGE_KEY);
-      const passkeys: any[] = result[POPUP_PASSKEY_STORAGE_KEY] || [];
+      const passkeys = (result[POPUP_PASSKEY_STORAGE_KEY] || []) as PopupPasskey[];
 
       allPasskeys = passkeys;
 
@@ -445,10 +474,12 @@
     }
   }
 
-  function renderPasskeys(passkeys: any[]): void {
+  function renderPasskeys(passkeys: PopupPasskey[]): void {
     passkeyListEl.innerHTML = '';
 
-    const sortedPasskeys = [...passkeys].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const sortedPasskeys = [...passkeys].sort(
+      (a, b) => getCreatedAtTimestamp(b) - getCreatedAtTimestamp(a)
+    );
 
     sortedPasskeys.forEach((passkey) => {
       const item = createPasskeyItem(passkey);
@@ -458,7 +489,7 @@
     passkeyListEl.style.display = 'flex';
   }
 
-  function createPasskeyItem(passkey: any): HTMLElement {
+  function createPasskeyItem(passkey: PopupPasskey): HTMLElement {
     const div = document.createElement('div');
     div.className = 'passkey-item';
 
@@ -528,7 +559,10 @@
     return div;
   }
 
-  async function copyPasskeyToClipboard(passkey: any, btn: HTMLButtonElement): Promise<void> {
+  async function copyPasskeyToClipboard(
+    passkey: PopupPasskey,
+    btn: HTMLButtonElement
+  ): Promise<void> {
     const debugData = {
       id: passkey.id,
       credentialId: passkey.credentialId,
@@ -566,7 +600,7 @@
 
     try {
       const result = await chrome.storage.local.get(POPUP_PASSKEY_STORAGE_KEY);
-      const passkeys: any[] = result[POPUP_PASSKEY_STORAGE_KEY] || [];
+      const passkeys = (result[POPUP_PASSKEY_STORAGE_KEY] || []) as PopupPasskey[];
 
       const filtered = passkeys.filter((p) => p.id !== credentialId);
 
@@ -585,37 +619,6 @@
     }
   }
 
-  async function clearAllPasskeys(): Promise<void> {
-    const result = await chrome.storage.local.get(POPUP_PASSKEY_STORAGE_KEY);
-    const passkeys: any[] = result[POPUP_PASSKEY_STORAGE_KEY] || [];
-    const passkeyCount = passkeys.length;
-
-    if (passkeyCount === 0) {
-      showNotification('No passkeys to clear', 'error');
-      return;
-    }
-
-    const confirmed = await showConfirmModal(
-      `Delete All ${passkeyCount} Passkeys?`,
-      'This will permanently remove all your passkeys. You will lose access to any accounts that only have passkey authentication.',
-      'Delete All',
-      true
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      await chrome.storage.local.set({ [POPUP_PASSKEY_STORAGE_KEY]: [] });
-      showNotification('All passkeys cleared');
-      await loadPasskeys();
-    } catch (error) {
-      console.error('Error clearing passkeys:', error);
-      showNotification('Failed to clear passkeys', 'error');
-    }
-  }
-
   async function exportPasskeysFull(): Promise<void> {
     const password = await showPasswordPrompt(
       'Encrypt Backup',
@@ -625,7 +628,7 @@
 
     try {
       const result = await chrome.storage.local.get(POPUP_PASSKEY_STORAGE_KEY);
-      const passkeys: Record<string, unknown>[] = result[POPUP_PASSKEY_STORAGE_KEY] || [];
+      const passkeys = (result[POPUP_PASSKEY_STORAGE_KEY] || []) as PopupPasskey[];
 
       if (passkeys.length === 0) {
         showNotification('No passkeys to export', 'error');
@@ -742,7 +745,7 @@
     });
   }
 
-  function downloadJson(data: any, filename: string): void {
+  function downloadJson(data: unknown, filename: string): void {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

@@ -317,8 +317,8 @@ class ContentScript {
    */
   private setupBackgroundCommunication(): void {
     // Listen for messages from background script
-    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      this.handleBackgroundMessage(message, sender, sendResponse);
+    chrome.runtime.onMessage.addListener((message) => {
+      this.handleBackgroundMessage(message);
       return true;
     });
   }
@@ -326,11 +326,7 @@ class ContentScript {
   /**
    * Handle messages from background script
    */
-  private handleBackgroundMessage(
-    message: { type: string },
-    _sender: chrome.runtime.MessageSender,
-    _sendResponse: (response?: unknown) => void
-  ): void {
+  private handleBackgroundMessage(message: { type: string }): void {
     try {
       switch (message.type) {
         case 'UI_ACTIVATION':
@@ -523,4 +519,4 @@ class ContentScript {
 }
 
 // Initialize the content script
-const contentScript = new ContentScript();
+new ContentScript();

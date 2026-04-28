@@ -1,4 +1,4 @@
-import { SyncDevice, SyncChain } from '../types';
+import { SyncDevice } from '../types';
 
 const STORAGE_KEY = 'sync_config';
 
@@ -28,7 +28,22 @@ interface DebugLogEntry {
   level: 'info' | 'warn' | 'error' | 'debug';
   category: string;
   message: string;
-  data?: any;
+  data?: unknown;
+}
+
+interface SyncDebugInfo {
+  chainId?: string;
+  deviceId?: string;
+  deviceName?: string;
+  seedHashPrefix?: string;
+  isConnected?: boolean;
+  currentRelay?: string;
+  currentRelayIndex?: number;
+  wsReadyState?: number;
+  subId?: string;
+  hasEncryptionKey?: boolean;
+  hasSigningKey?: boolean;
+  logsCount?: number;
 }
 
 let autoRefreshInterval: ReturnType<typeof setInterval> | null = null;
@@ -493,7 +508,7 @@ async function loadDebugInfo(): Promise<void> {
   }
 }
 
-function formatDebugInfo(info: any): string {
+function formatDebugInfo(info: SyncDebugInfo): string {
   const wsStateMap: Record<number, string> = {
     0: 'CONNECTING',
     1: 'OPEN',

@@ -7,11 +7,28 @@
 (function () {
   'use strict';
 
+  interface ImportPasskey {
+    id: string;
+    rpId?: string;
+    privateKey?: string;
+    user?: {
+      name?: string;
+      displayName?: string;
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  }
+
+  interface PlaintextBackup {
+    passkeys?: ImportPasskey[];
+    [key: string]: unknown;
+  }
+
   const IMPORT_PASSKEY_STORAGE_KEY = 'passkeys';
 
   // State
-  let parsedData: any = null;
-  let newPasskeys: any[] = [];
+  let parsedData: PlaintextBackup | null = null;
+  let newPasskeys: ImportPasskey[] = [];
   let existingIds: Set<string> = new Set();
 
   // DOM elements
@@ -198,7 +215,7 @@
       return;
     }
 
-    const hasPrivateKeys = parsedData.passkeys.some((p: any) => p.privateKey);
+    const hasPrivateKeys = parsedData.passkeys.some((p) => p.privateKey);
 
     if (!hasPrivateKeys) {
       showStatus(
@@ -208,7 +225,7 @@
       return;
     }
 
-    const validPasskeys = parsedData.passkeys.filter((p: any) => {
+    const validPasskeys = parsedData.passkeys.filter((p) => {
       return p.id && p.rpId && p.privateKey;
     });
 
@@ -218,11 +235,11 @@
     }
 
     const result = await chrome.storage.local.get(IMPORT_PASSKEY_STORAGE_KEY);
-    const existingPasskeys: any[] = result[IMPORT_PASSKEY_STORAGE_KEY] || [];
+    const existingPasskeys = (result[IMPORT_PASSKEY_STORAGE_KEY] || []) as ImportPasskey[];
     existingIds = new Set(existingPasskeys.map((p) => p.id));
 
-    newPasskeys = validPasskeys.filter((p: any) => !existingIds.has(p.id));
-    const duplicates = validPasskeys.filter((p: any) => existingIds.has(p.id));
+    newPasskeys = validPasskeys.filter((p) => !existingIds.has(p.id));
+    const duplicates = validPasskeys.filter((p) => existingIds.has(p.id));
 
     showPreview(validPasskeys, duplicates);
 
@@ -240,7 +257,7 @@
     actionsEl.classList.remove('hidden');
   }
 
-  function showPreview(allPasskeys: any[], duplicates: any[]): void {
+  function showPreview(allPasskeys: ImportPasskey[], duplicates: ImportPasskey[]): void {
     previewListEl.innerHTML = '';
 
     allPasskeys.forEach((pk) => {
@@ -271,7 +288,7 @@
     try {
       // Get existing passkeys
       const result = await chrome.storage.local.get(IMPORT_PASSKEY_STORAGE_KEY);
-      const existingPasskeys: any[] = result[IMPORT_PASSKEY_STORAGE_KEY] || [];
+      const existingPasskeys = (result[IMPORT_PASSKEY_STORAGE_KEY] || []) as ImportPasskey[];
 
       // Merge
       const mergedPasskeys = [...existingPasskeys, ...newPasskeys];

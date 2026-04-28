@@ -2229,6 +2229,13 @@ export async function verifyAccessToken(token: string, publicKey: Uint8Array): P
       return false;
     }
 
+    const expectedPublicKeyHex = Array.from(publicKey)
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('');
+    if (publicKeyHex !== expectedPublicKeyHex) {
+      return false;
+    }
+
     const matches = signatureHex.match(/.{1,2}/g);
     const signature = new Uint8Array(matches ? matches.map((byte) => parseInt(byte, 16)) : []);
 

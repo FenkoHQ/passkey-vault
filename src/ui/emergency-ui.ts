@@ -11,6 +11,12 @@ interface EmergencyUIState {
   currentTab: 'passkeys' | 'backup' | 'settings';
 }
 
+type EmergencyTab = EmergencyUIState['currentTab'];
+
+function isEmergencyTab(value: string | null): value is EmergencyTab {
+  return value === 'passkeys' || value === 'backup' || value === 'settings';
+}
+
 class EmergencyUIController {
   private state: EmergencyUIState = {
     isVisible: false,
@@ -356,6 +362,9 @@ class EmergencyUIController {
     tabs.forEach((tab) => {
       tab.addEventListener('click', () => {
         const tabName = tab.getAttribute('data-tab');
+        if (!isEmergencyTab(tabName)) {
+          return;
+        }
         if (!tabName) return;
 
         // Update active tab
@@ -372,7 +381,7 @@ class EmergencyUIController {
           activeContent.classList.remove('passext-hidden');
         }
 
-        this.state.currentTab = tabName as any;
+        this.state.currentTab = tabName;
       });
     });
   }
