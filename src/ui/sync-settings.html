@@ -6,22 +6,32 @@
     <title>Sync Settings - PassKey Vault</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
-  <body>
+  <body data-i18n-title="syncSettingsTitle">
     <div class="container sync-settings">
       <header>
-        <h1>Sync Settings</h1>
+        <h1 data-i18n="syncSettingsHeader">Sync Settings</h1>
       </header>
 
       <div id="not-synced" class="panel">
         <div class="empty-state">
           <div class="empty-icon">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
             </svg>
           </div>
-          <h2>Sync Not Set Up</h2>
-          <p>Set up sync to securely share your passkeys across devices.</p>
+          <h2 data-i18n="syncNotSetUp">Sync Not Set Up</h2>
+          <p data-i18n="syncNotSetUpDesc">
+            Set up sync to securely share your passkeys across devices.
+          </p>
           <button id="setup-sync-btn" class="btn btn-primary">
             <svg
               width="16"
@@ -34,105 +44,143 @@
               <line x1="12" y1="5" x2="12" y2="19"></line>
               <polyline points="19 12 12 5 5 12"></polyline>
             </svg>
-            Set Up Sync
+            <span data-i18n="syncSetUpSync">Set Up Sync</span>
           </button>
         </div>
       </div>
 
       <div id="synced-panel" class="panel" style="display: none">
         <div class="sync-status">
-          <div class="status-badge active">Sync Active</div>
+          <div class="status-badge active" data-i18n="syncActive">Sync Active</div>
           <div class="chain-info">
-            <span>Chain ID: <code id="chain-id"></code></span>
+            <span
+              ><span data-i18n="optionsChainId">Chain ID</span>: <code id="chain-id"></code
+            ></span>
           </div>
         </div>
 
         <!-- Tab Navigation -->
         <div class="tab-nav">
-          <button class="tab-btn active" data-tab="status">Status</button>
-          <button class="tab-btn" data-tab="devices">Devices</button>
-          <button class="tab-btn" data-tab="debug">Debug</button>
+          <button class="tab-btn active" data-tab="status" data-i18n="syncStatusTab">Status</button>
+          <button class="tab-btn" data-tab="devices" data-i18n="syncDevicesTab">Devices</button>
+          <button class="tab-btn" data-tab="debug" data-i18n="syncDebugTab">Debug</button>
         </div>
 
         <!-- Status Tab -->
         <div id="tab-status" class="tab-content active">
           <section class="sync-overview">
-            <h2>Sync Status</h2>
+            <h2 data-i18n="syncStatusTitle">Sync Status</h2>
             <div class="status-grid">
               <div class="status-item">
-                <div class="status-label">Connection</div>
+                <div class="status-label" data-i18n="syncConnection">Connection</div>
                 <div id="connection-status" class="status-value">--</div>
               </div>
               <div class="status-item">
-                <div class="status-label">Local Passkeys</div>
+                <div class="status-label" data-i18n="syncLocalPasskeys">Local Passkeys</div>
                 <div id="local-count" class="status-value">--</div>
               </div>
               <div class="status-item">
-                <div class="status-label">Synced Passkeys</div>
+                <div class="status-label" data-i18n="syncSyncedPasskeys">Synced Passkeys</div>
                 <div id="synced-count" class="status-value">--</div>
               </div>
               <div class="status-item">
-                <div class="status-label">Pending Changes</div>
+                <div class="status-label" data-i18n="syncPendingChanges">Pending Changes</div>
                 <div id="pending-changes" class="status-value">--</div>
               </div>
               <div class="status-item">
-                <div class="status-label">Last Sync</div>
+                <div class="status-label" data-i18n="syncLastSync">Last Sync</div>
                 <div id="last-sync" class="status-value">--</div>
               </div>
             </div>
             <div id="sync-error" class="error-box" style="display: none"></div>
-            <button id="manual-sync-btn" class="btn btn-secondary btn-sm">Sync Now</button>
+            <button
+              id="manual-sync-btn"
+              class="btn btn-secondary btn-sm"
+              data-i18n="optionsSyncNow"
+            >
+              Sync Now
+            </button>
           </section>
         </div>
 
         <!-- Devices Tab -->
         <div id="tab-devices" class="tab-content">
           <section>
-            <h2>Devices in Sync Chain</h2>
+            <h2 data-i18n="syncDevicesInChain">Devices in Sync Chain</h2>
             <div id="devices-list" class="devices-list"></div>
 
             <button id="add-device-btn" class="btn btn-secondary btn-sm">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
-                <path d="M5 12h14"/><path d="M12 5v14"/>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path d="M5 12h14" />
+                <path d="M12 5v14" />
               </svg>
-              Add Another Device
+              <span data-i18n="syncAddDevice">Add Another Device</span>
             </button>
           </section>
 
           <section class="danger-zone">
-            <h2>Danger Zone</h2>
+            <h2 data-i18n="optionsDangerZone">Danger Zone</h2>
             <div class="warning-box">
-              <strong>Leaving this sync chain</strong> will remove this device from the chain. Make
-              sure you have access to at least one other device before leaving.
+              <strong data-i18n="syncLeavingTitle">Leaving this sync chain</strong>
+              <span data-i18n="syncLeavingDesc"
+                >will remove this device from the chain. Make sure you have access to at least one
+                other device before leaving.</span
+              >
             </div>
 
-            <button id="leave-chain-btn" class="btn btn-danger btn-full">Leave Sync Chain</button>
+            <button id="leave-chain-btn" class="btn btn-danger btn-full" data-i18n="syncLeaveChain">
+              Leave Sync Chain
+            </button>
           </section>
         </div>
 
         <!-- Debug Tab -->
         <div id="tab-debug" class="tab-content">
           <section>
-            <h2>Connection Debug Info</h2>
+            <h2 data-i18n="syncConnectionDebug">Connection Debug Info</h2>
             <div id="debug-info" class="debug-panel">
-              <pre>Loading...</pre>
+              <pre data-i18n="commonLoading">Loading...</pre>
             </div>
 
             <div class="debug-actions">
-              <button id="refresh-debug-btn" class="btn btn-secondary btn-sm">Refresh</button>
-              <button id="clear-logs-btn" class="btn btn-secondary btn-sm">Clear Logs</button>
+              <button
+                id="refresh-debug-btn"
+                class="btn btn-secondary btn-sm"
+                data-i18n="commonRefresh"
+              >
+                Refresh
+              </button>
+              <button
+                id="clear-logs-btn"
+                class="btn btn-secondary btn-sm"
+                data-i18n="syncClearLogs"
+              >
+                Clear Logs
+              </button>
             </div>
 
-            <h2>Sync Logs</h2>
+            <h2 data-i18n="syncLogs">Sync Logs</h2>
             <div id="debug-logs" class="debug-logs">
-              <pre>Loading...</pre>
+              <pre data-i18n="commonLoading">Loading...</pre>
             </div>
           </section>
         </div>
       </div>
 
       <footer>
-        <button id="back-btn" class="btn btn-secondary">← Back to Passkeys</button>
+        <button id="back-btn" class="btn btn-secondary" data-i18n="commonBackToPasskeys">
+          ← Back to Passkeys
+        </button>
       </footer>
     </div>
 

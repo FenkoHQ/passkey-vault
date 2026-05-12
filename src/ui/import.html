@@ -5,92 +5,165 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Import Passkeys - PassKey Vault</title>
     <style>
-      * {
+      :root {
+        --bg: #ffffff;
+        --bg-elev: #f6f8fa;
+        --bg-elev-2: #eef1f4;
+        --text: #1f2328;
+        --text-muted: #59636e;
+        --text-subtle: #818b98;
+        --text-on-accent: #ffffff;
+        --border: #d1d9e0;
+        --border-soft: #e6eaee;
+        --accent: #d4920a;
+        --accent-hover: #b87d08;
+        --accent-soft: #fef7e6;
+        --accent-ring: rgba(212, 146, 10, 0.22);
+        --success: #1a7f37;
+        --success-soft: #dcfce6;
+        --warning: #b45309;
+        --warning-soft: #fef3c7;
+        --danger: #cf222e;
+        --danger-soft: #ffe4e6;
+        --shadow-sm: 0 2px 6px rgba(13, 17, 23, 0.06), 0 1px 2px rgba(13, 17, 23, 0.04);
+        --shadow-md: 0 8px 24px rgba(13, 17, 23, 0.08), 0 2px 4px rgba(13, 17, 23, 0.04);
+        --radius-sm: 6px;
+        --radius-md: 8px;
+        --radius-lg: 12px;
+        --radius-xl: 16px;
+        --radius-pill: 999px;
+        --font-sans:
+          -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
+        --font-mono: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+      }
+
+      html[data-theme='dark'] {
+        --bg: #0d1117;
+        --bg-elev: #161b22;
+        --bg-elev-2: #21262d;
+        --text: #e6edf3;
+        --text-muted: #9198a1;
+        --text-subtle: #6e7681;
+        --text-on-accent: #0d1117;
+        --border: #30363d;
+        --border-soft: #21262d;
+        --accent: #f5a623;
+        --accent-hover: #ffba42;
+        --accent-soft: rgba(245, 166, 35, 0.12);
+        --accent-ring: rgba(245, 166, 35, 0.28);
+        --success: #3fb950;
+        --success-soft: rgba(63, 185, 80, 0.12);
+        --warning: #e3a008;
+        --warning-soft: rgba(227, 160, 8, 0.12);
+        --danger: #f85149;
+        --danger-soft: rgba(248, 81, 73, 0.12);
+        --shadow-sm: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+        --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.4);
+      }
+
+      *,
+      *::before,
+      *::after {
         box-sizing: border-box;
+      }
+
+      html,
+      body {
         margin: 0;
         padding: 0;
+        background: var(--bg-elev);
+        color: var(--text);
+        font-family: var(--font-sans);
+        font-size: 14px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
       }
 
       body {
-        font-family: 'Courier New', Courier, monospace;
-        font-size: 14px;
-        color: #000000;
-        background: #ffffff;
         min-height: 100vh;
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 20px;
+        padding: 32px 20px;
       }
 
       .container {
-        background: #ffffff;
-        border-radius: 0;
-        border: 3px solid #000000;
-        max-width: 500px;
         width: 100%;
+        max-width: 560px;
+        background: var(--bg);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-md);
         overflow: hidden;
       }
 
       header {
-        background: #000000;
-        color: #fcd34d;
-        padding: 24px;
+        padding: 28px 28px 20px;
         text-align: center;
-        border-bottom: 3px solid #fcd34d;
+        border-bottom: 1px solid var(--border-soft);
       }
 
       header h1 {
-        font-size: 24px;
-        font-weight: 700;
-        margin-bottom: 8px;
-        text-transform: uppercase;
-        letter-spacing: 1px;
+        font-size: 22px;
+        font-weight: 600;
+        margin: 0 0 6px;
+        letter-spacing: -0.01em;
+        color: var(--text);
       }
 
       header p {
-        opacity: 0.9;
-        font-size: 14px;
+        margin: 0;
+        font-size: 13px;
+        color: var(--text-muted);
       }
 
       main {
         padding: 24px;
-        background: #ffffff;
       }
 
       .drop-zone {
-        border: 3px dashed #000000;
-        border-radius: 0;
-        padding: 40px 20px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        padding: 36px 24px;
+        background: var(--bg-elev);
+        border: 2px dashed var(--border);
+        border-radius: var(--radius-lg);
         text-align: center;
         cursor: pointer;
-        transition: all 0.1s;
-        background: #f5f5f5;
+        transition:
+          background 0.15s,
+          border-color 0.15s;
       }
 
       .drop-zone:hover,
       .drop-zone.drag-over {
-        border-style: solid;
-        background: #fcd34d;
+        background: var(--accent-soft);
+        border-color: var(--accent);
       }
 
       .drop-zone-icon {
-        margin-bottom: 16px;
-        color: #000000;
+        color: var(--accent);
+        margin-bottom: 4px;
+      }
+
+      .drop-zone-icon svg {
+        width: 40px;
+        height: 40px;
       }
 
       .drop-zone h3 {
-        font-size: 16px;
-        font-weight: 700;
-        margin-bottom: 8px;
-        color: #000000;
-        text-transform: uppercase;
+        font-size: 15px;
+        font-weight: 600;
+        margin: 0;
+        color: var(--text);
       }
 
       .drop-zone p {
-        color: #333333;
         font-size: 13px;
-        margin-bottom: 16px;
+        color: var(--text-muted);
+        margin: 0;
       }
 
       .drop-zone input[type='file'] {
@@ -98,71 +171,90 @@
       }
 
       .btn {
-        padding: 10px 20px;
-        border: 3px solid #000000;
-        border-radius: 0;
-        font-size: 14px;
-        font-weight: 700;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 9px 16px;
+        border: 1px solid transparent;
+        border-radius: var(--radius-md);
+        background: var(--bg-elev);
+        color: var(--text);
+        font-size: 13px;
+        font-weight: 500;
         cursor: pointer;
-        transition: all 0.1s;
-        text-transform: uppercase;
-        font-family: 'Courier New', Courier, monospace;
+        font-family: inherit;
+        transition:
+          background 0.15s,
+          border-color 0.15s,
+          color 0.15s,
+          box-shadow 0.15s;
+      }
+
+      .btn:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px var(--accent-ring);
       }
 
       .btn-primary {
-        background: #fcd34d;
-        color: #000000;
-        border-color: #000000;
+        background: var(--accent);
+        color: var(--text-on-accent);
+        border-color: var(--accent);
       }
 
       .btn-primary:hover {
-        background: #000000;
-        color: #fcd34d;
+        background: var(--accent-hover);
+        border-color: var(--accent-hover);
       }
 
       .btn-secondary {
-        background: #ffffff;
-        color: #000000;
-        border-color: #000000;
+        background: var(--bg);
+        color: var(--text);
+        border-color: var(--border);
       }
 
       .btn-secondary:hover {
-        background: #f5f5f5;
+        background: var(--bg-elev);
+        border-color: var(--accent);
       }
 
       .status {
-        margin-top: 20px;
-        padding: 16px;
-        border-radius: 0;
-        border: 3px solid #000000;
+        padding: 12px 14px;
+        border-radius: var(--radius-md);
+        font-size: 13px;
+        margin-top: 16px;
         display: none;
-        font-weight: 700;
       }
 
-      .status.success {
-        background: #000000;
-        color: #10b981;
-        border-color: #10b981;
-        display: block;
-      }
-
-      .status.error {
-        background: #000000;
-        color: #ef4444;
-        border-color: #ef4444;
+      .status.visible {
         display: block;
       }
 
       .status.info {
-        background: #000000;
-        color: #fcd34d;
-        border-color: #fcd34d;
-        display: block;
+        background: var(--accent-soft);
+        color: var(--accent);
+        border: 1px solid var(--accent);
+      }
+
+      .status.success {
+        background: var(--success-soft);
+        color: var(--success);
+        border: 1px solid var(--success);
+      }
+
+      .status.error {
+        background: var(--danger-soft);
+        color: var(--danger);
+        border: 1px solid var(--danger);
       }
 
       .preview {
-        margin-top: 20px;
         display: none;
+        margin-top: 18px;
+        padding: 16px;
+        background: var(--bg-elev);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius-lg);
       }
 
       .preview.visible {
@@ -170,73 +262,71 @@
       }
 
       .preview h4 {
-        font-size: 14px;
-        font-weight: 700;
-        margin-bottom: 12px;
-        color: #000000;
+        font-size: 12.5px;
+        font-weight: 500;
+        margin: 0 0 10px;
+        color: var(--text-muted);
         text-transform: uppercase;
+        letter-spacing: 0.04em;
       }
 
       .preview-list {
-        max-height: 200px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-height: 280px;
         overflow-y: auto;
-        border: 3px solid #000000;
-        border-radius: 0;
       }
 
       .preview-item {
-        padding: 12px 16px;
-        border-bottom: 2px solid #000000;
         display: flex;
-        justify-content: space-between;
         align-items: center;
-        background: #ffffff;
-      }
-
-      .preview-item:last-child {
-        border-bottom: none;
-      }
-
-      .preview-item:hover {
-        background: #f5f5f5;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 12px;
+        background: var(--bg);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius-md);
       }
 
       .preview-item-site {
-        font-weight: 700;
-        text-transform: uppercase;
+        font-weight: 600;
+        font-size: 13px;
+        color: var(--text);
       }
 
       .preview-item-user {
         font-size: 12px;
-        color: #333333;
+        color: var(--text-muted);
+        margin-top: 2px;
       }
 
       .preview-item-status {
-        font-size: 12px;
-        font-weight: 700;
+        font-size: 10.5px;
+        font-weight: 600;
         padding: 2px 8px;
-        border-radius: 0;
-        border: 2px solid #000000;
+        border-radius: var(--radius-pill);
         text-transform: uppercase;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+        flex-shrink: 0;
       }
 
       .preview-item-status.new {
-        background: #000000;
-        color: #10b981;
-        border-color: #10b981;
+        background: var(--success-soft);
+        color: var(--success);
       }
 
       .preview-item-status.duplicate {
-        background: #000000;
-        color: #fcd34d;
-        border-color: #fcd34d;
+        background: var(--bg-elev-2);
+        color: var(--text-muted);
       }
 
       .actions {
-        margin-top: 20px;
         display: flex;
-        gap: 12px;
+        gap: 8px;
         justify-content: flex-end;
+        margin-top: 18px;
       }
 
       .actions.hidden {
@@ -245,61 +335,79 @@
 
       footer {
         padding: 16px 24px;
-        background: #000000;
-        border-top: 3px solid #fcd34d;
         text-align: center;
+        border-top: 1px solid var(--border-soft);
+        background: var(--bg-elev);
       }
 
       footer a {
-        color: #fcd34d;
+        color: var(--text-muted);
+        font-size: 12px;
         text-decoration: none;
-        font-size: 13px;
-        font-weight: 700;
-        text-transform: uppercase;
       }
 
       footer a:hover {
+        color: var(--accent);
         text-decoration: underline;
+      }
+
+      .hidden {
+        display: none !important;
       }
     </style>
   </head>
-  <body>
+  <body data-i18n-title="importTitle">
     <div class="container">
       <header>
-        <h1>Import Passkeys</h1>
-        <p>Import passkeys from a backup file</p>
+        <h1 data-i18n="importHeader">Import Passkeys</h1>
+        <p data-i18n="importHeaderDesc">Import passkeys from a backup file</p>
       </header>
 
       <main>
         <div class="drop-zone" id="drop-zone">
           <div class="drop-zone-icon">
-            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>
-              <path d="M14 2v4a2 2 0 0 0 2 2h4"/>
-              <path d="M12 12v6"/><path d="m15 15-3-3-3 3"/>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="48"
+              height="48"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.75"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+              <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+              <path d="M12 12v6" />
+              <path d="m15 15-3-3-3 3" />
             </svg>
           </div>
-          <h3>Drop your backup file here</h3>
-          <p>or click to browse</p>
+          <h3 data-i18n="importDropHere">Drop your backup file here</h3>
+          <p data-i18n="importOrBrowse">or click to browse</p>
           <input type="file" id="file-input" accept=".json,application/json" />
-          <button class="btn btn-primary" id="choose-file-btn">Choose File</button>
+          <button class="btn btn-primary" id="choose-file-btn" data-i18n="importChooseFile">
+            Choose File
+          </button>
         </div>
 
         <div class="status" id="status"></div>
 
         <div class="preview" id="preview">
-          <h4>Passkeys to import:</h4>
+          <h4 data-i18n="importPreviewTitle">Passkeys to import:</h4>
           <div class="preview-list" id="preview-list"></div>
         </div>
 
         <div class="actions hidden" id="actions">
-          <button class="btn btn-secondary" id="cancel-btn">Cancel</button>
-          <button class="btn btn-primary" id="import-btn">Import Passkeys</button>
+          <button class="btn btn-secondary" id="cancel-btn" data-i18n="commonCancel">Cancel</button>
+          <button class="btn btn-primary" id="import-btn" data-i18n="importButton">
+            Import Passkeys
+          </button>
         </div>
       </main>
 
       <footer>
-        <a href="#" id="close-link">Close this tab</a>
+        <a href="#" id="close-link" data-i18n="importCloseTab">Close this tab</a>
       </footer>
     </div>
 

@@ -4,6 +4,9 @@
  * Displays and manages stored passkeys with full export/import support
  */
 
+import { formatCount, initAndLocalize, t } from '../i18n';
+import { initTheme } from '../theme';
+
 (function () {
   'use strict';
 
@@ -48,7 +51,8 @@
   let allPasskeys: PopupPasskey[] = [];
 
   // Initialize popup when DOM is loaded
-  document.addEventListener('DOMContentLoaded', () => {
+  document.addEventListener('DOMContentLoaded', async () => {
+    await Promise.all([initAndLocalize(), initTheme()]);
     lockScreen = document.getElementById('lock-screen') as HTMLElement;
     setupScreen = document.getElementById('setup-screen') as HTMLElement;
     mainContainer = document.getElementById('main-container') as HTMLElement;
@@ -108,7 +112,7 @@
       if (!password) return;
 
       unlockBtn.disabled = true;
-      unlockBtn.textContent = 'Unlocking...';
+      unlockBtn.textContent = t('popupUnlocking');
       errorEl.style.display = 'none';
 
       const response = await chrome.runtime.sendMessage({
@@ -119,14 +123,14 @@
       if (response.success) {
         showMainScreen();
       } else {
-        errorEl.textContent = 'Wrong password';
+        errorEl.textContent = t('popupWrongPassword');
         errorEl.style.display = 'block';
         passwordInput.value = '';
         passwordInput.focus();
       }
 
       unlockBtn.disabled = false;
-      unlockBtn.textContent = 'Unlock';
+      unlockBtn.textContent = t('popupUnlock');
     };
 
     unlockBtn.onclick = doUnlock;
@@ -154,18 +158,18 @@
       errorEl.style.display = 'none';
 
       if (password.length < 8) {
-        errorEl.textContent = 'Password must be at least 8 characters';
+        errorEl.textContent = t('popupPasswordMin');
         errorEl.style.display = 'block';
         return;
       }
       if (password !== confirm) {
-        errorEl.textContent = 'Passwords do not match';
+        errorEl.textContent = t('popupPasswordsNoMatch');
         errorEl.style.display = 'block';
         return;
       }
 
       setupBtn.disabled = true;
-      setupBtn.textContent = 'Setting up...';
+      setupBtn.textContent = t('popupSettingUp');
 
       const response = await chrome.runtime.sendMessage({
         type: 'SETUP_MASTER_PASSWORD',
@@ -175,12 +179,12 @@
       if (response.success) {
         showMainScreen();
       } else {
-        errorEl.textContent = response.error || 'Setup failed';
+        errorEl.textContent = response.error || t('popupSetupFailed');
         errorEl.style.display = 'block';
       }
 
       setupBtn.disabled = false;
-      setupBtn.textContent = 'Create Password';
+      setupBtn.textContent = t('popupCreatePassword');
     };
 
     skipBtn.onclick = async () => {
@@ -216,29 +220,29 @@
 
       switch (status.connectionStatus) {
         case 'connected':
-          badge.textContent = 'synced';
+          badge.textContent = t('popupSyncSynced');
           badge.style.background = '#10b981';
           badge.style.color = '#fff';
           break;
         case 'connecting':
-          badge.textContent = 'syncing...';
+          badge.textContent = t('popupSyncing');
           badge.style.background = '#f59e0b';
           badge.style.color = '#000';
           break;
         case 'error':
-          badge.textContent = 'sync error';
+          badge.textContent = t('popupSyncError');
           badge.style.background = '#ef4444';
           badge.style.color = '#fff';
-          badge.title = status.lastError || 'Unknown error';
+          badge.title = status.lastError || t('commonUnknown');
           break;
         default:
-          badge.textContent = 'offline';
+          badge.textContent = t('popupSyncOffline');
           badge.style.background = '#666';
           badge.style.color = '#fff';
       }
 
       if (status.pendingChanges > 0) {
-        badge.textContent += ` (${status.pendingChanges} pending)`;
+        badge.textContent += ` (${t('popupSyncPending', { count: status.pendingChanges })})`;
       }
     } catch {
       badge.style.display = 'none';
@@ -266,8 +270,8 @@
         <h3 class="modal-title"></h3>
         <p class="modal-message"></p>
         <div class="modal-actions">
-          <button class="btn btn-secondary modal-cancel">Cancel</button>
-          <button class="btn btn-danger modal-confirm">Confirm</button>
+          <button class="btn btn-secondary modal-cancel">${t('commonCancel')}</button>
+          <button class="btn btn-danger modal-confirm">${t('commonConfirm')}</button>
         </div>
       </div>
     `;
@@ -285,7 +289,7 @@
   function showConfirmModal(
     title: string,
     message: string,
-    confirmText: string = 'Confirm',
+    confirmText: string = t('commonConfirm'),
     isDanger: boolean = true
   ): Promise<boolean> {
     return new Promise((resolve) => {
@@ -429,7 +433,7 @@
     passkeyListEl.innerHTML = `
       <div class="no-results">
         <div class="no-results-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="m15 8-4 4-2-2"/></svg></div>
-        <p>No passkeys found for "${popupEscapeHtml(query)}"</p>
+        <p>${popupEscapeHtml(t('popupNoResults', { query }))}</p>
       </div>
     `;
     passkeyListEl.style.display = 'flex';
@@ -455,7 +459,7 @@
 
       loadingEl.style.display = 'none';
 
-      passkeyCountEl.textContent = `${passkeys.length} passkey${passkeys.length !== 1 ? 's' : ''}`;
+      passkeyCountEl.textContent = formatCount('popupPasskeyCount', passkeys.length);
 
       if (passkeys.length === 0) {
         emptyStateEl.style.display = 'block';
@@ -467,8 +471,8 @@
       loadingEl.innerHTML = `
         <div class="error-state">
           <div class="error-icon"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg></div>
-          <p>Failed to load passkeys</p>
-          <button onclick="location.reload()" class="btn btn-secondary">Retry</button>
+          <p>${t('popupFailedLoad')}</p>
+          <button onclick="location.reload()" class="btn btn-secondary">${t('commonRetry')}</button>
         </div>
       `;
     }
@@ -498,38 +502,38 @@
       ? createdAt.toLocaleDateString() +
         ' ' +
         createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      : 'Unknown';
+      : t('commonUnknown');
 
-    const credentialIdShort = passkey.id ? passkey.id.substring(0, 20) + '...' : 'Unknown';
+    const credentialIdShort = passkey.id ? passkey.id.substring(0, 20) + '...' : t('commonUnknown');
 
     div.innerHTML = `
       <div class="passkey-header">
         <div class="passkey-info">
-          <div class="passkey-rp">${popupEscapeHtml(passkey.rpId || 'Unknown Site')}</div>
+          <div class="passkey-rp">${popupEscapeHtml(passkey.rpId || t('commonUnknownSite'))}</div>
           ${passkey.user?.name ? `<div class="passkey-username">${popupEscapeHtml(passkey.user.name)}</div>` : ''}
         </div>
         <div class="passkey-actions">
-          <button class="copy-btn" title="Copy to clipboard">
+          <button class="copy-btn" title="${popupEscapeHtml(t('popupCopyClipboard'))}">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="9" y="9" width="13" height="13" rx="2"></rect>
               <rect x="3" y="3" width="13" height="13" rx="2"></rect>
             </svg>
           </button>
-          <button class="expand-btn" title="Details">
+          <button class="expand-btn" title="${popupEscapeHtml(t('popupDetails'))}">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="6 9 12 15 18 9"></polyline>
             </svg>
           </button>
-          <button class="delete-btn" data-id="${popupEscapeHtml(passkey.id)}">Del</button>
+          <button class="delete-btn" data-id="${popupEscapeHtml(passkey.id)}">${t('popupDel')}</button>
         </div>
       </div>
       <div class="passkey-details">
         <div class="passkey-detail-row">
-          <span class="label">Added:</span>
+          <span class="label">${t('popupAdded')}</span>
           <span class="value">${popupEscapeHtml(dateStr)}</span>
         </div>
         <div class="passkey-detail-row">
-          <span class="label">Key ID:</span>
+          <span class="label">${t('popupKeyId')}</span>
           <span class="value">${popupEscapeHtml(credentialIdShort)}</span>
         </div>
       </div>
@@ -553,7 +557,7 @@
     const deleteBtn = div.querySelector('.delete-btn') as HTMLButtonElement;
     deleteBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      deletePasskey(passkey.id, passkey.rpId || 'this site');
+      deletePasskey(passkey.id, passkey.rpId || t('commonUnknownSite'));
     });
 
     return div;
@@ -582,15 +586,15 @@
       setTimeout(() => btn.classList.remove('copied'), 1500);
     } catch (error) {
       console.error('Failed to copy to clipboard:', error);
-      showNotification('Failed to copy', 'error');
+      showNotification(t('popupFailedCopy'), 'error');
     }
   }
 
   async function deletePasskey(credentialId: string, siteName: string): Promise<void> {
     const confirmed = await showConfirmModal(
-      'Delete Passkey?',
-      `You will no longer be able to sign in to ${siteName} using this passkey.`,
-      'Delete',
+      t('popupDeletePasskeyTitle'),
+      t('popupDeletePasskeyMessage', { site: siteName }),
+      t('commonDelete'),
       true
     );
 
@@ -607,22 +611,22 @@
       if (filtered.length < passkeys.length) {
         await chrome.storage.local.set({ [POPUP_PASSKEY_STORAGE_KEY]: filtered });
 
-        showNotification('Passkey deleted successfully');
+        showNotification(t('popupPasskeyDeleted'));
 
         await loadPasskeys();
       } else {
-        showNotification('Passkey not found', 'error');
+        showNotification(t('popupPasskeyNotFound'), 'error');
       }
     } catch (error) {
       console.error('Error deleting passkey:', error);
-      showNotification('Failed to delete passkey', 'error');
+      showNotification(t('popupFailedDelete'), 'error');
     }
   }
 
   async function exportPasskeysFull(): Promise<void> {
     const password = await showPasswordPrompt(
-      'Encrypt Backup',
-      'Choose a password to encrypt the backup file. You will need this password to import it later.'
+      t('popupEncryptBackup'),
+      t('popupEncryptBackupMessage')
     );
     if (password === null) return;
 
@@ -631,7 +635,7 @@
       const passkeys = (result[POPUP_PASSKEY_STORAGE_KEY] || []) as PopupPasskey[];
 
       if (passkeys.length === 0) {
-        showNotification('No passkeys to export', 'error');
+        showNotification(t('popupNoPasskeysExport'), 'error');
         return;
       }
 
@@ -663,7 +667,7 @@
       });
 
       if (!encResponse.success) {
-        showNotification('Encryption failed: ' + encResponse.error, 'error');
+        showNotification(t('popupEncryptionFailed', { error: encResponse.error }), 'error');
         return;
       }
 
@@ -679,10 +683,10 @@
       };
 
       downloadJson(encryptedBackup, `passkeys-backup-${getDateString()}.json`);
-      showNotification(`Exported ${passkeys.length} passkeys (encrypted)`);
+      showNotification(t('popupExportedPasskeys', { count: passkeys.length }));
     } catch (error) {
       console.error('Error exporting passkeys:', error);
-      showNotification('Failed to export passkeys', 'error');
+      showNotification(t('popupFailedExport'), 'error');
     }
   }
 
@@ -694,14 +698,14 @@
         <div class="modal-content">
           <h3 class="modal-title">${popupEscapeHtml(title)}</h3>
           <p class="modal-message">${popupEscapeHtml(message)}</p>
-          <input type="password" id="prompt-password" placeholder="Password (min 8 chars)"
+          <input type="password" id="prompt-password" placeholder="${popupEscapeHtml(t('popupPromptPasswordPlaceholder'))}"
             style="width: 100%; padding: 8px; border: 1px solid #333; background: #1a1a1a; color: #fff; border-radius: 4px; font-size: 13px; box-sizing: border-box; margin-bottom: 8px" />
-          <input type="password" id="prompt-password-confirm" placeholder="Confirm password"
+          <input type="password" id="prompt-password-confirm" placeholder="${popupEscapeHtml(t('popupConfirmPasswordPlaceholder'))}"
             style="width: 100%; padding: 8px; border: 1px solid #333; background: #1a1a1a; color: #fff; border-radius: 4px; font-size: 13px; box-sizing: border-box; margin-bottom: 4px" />
           <div id="prompt-error" style="color: #ef4444; font-size: 12px; margin-bottom: 8px; display: none"></div>
           <div class="modal-actions">
-            <button class="btn btn-secondary" id="prompt-cancel">Cancel</button>
-            <button class="btn btn-primary" id="prompt-ok">Encrypt & Export</button>
+            <button class="btn btn-secondary" id="prompt-cancel">${t('commonCancel')}</button>
+            <button class="btn btn-primary" id="prompt-ok">${t('popupEncryptAndExport')}</button>
           </div>
         </div>
       `;
@@ -726,12 +730,12 @@
         const confirm = confirmInput.value;
         errorEl.style.display = 'none';
         if (pw.length < 8) {
-          errorEl.textContent = 'Password must be at least 8 characters';
+          errorEl.textContent = t('popupPasswordMin');
           errorEl.style.display = 'block';
           return;
         }
         if (pw !== confirm) {
-          errorEl.textContent = 'Passwords do not match';
+          errorEl.textContent = t('popupPasswordsNoMatch');
           errorEl.style.display = 'block';
           return;
         }

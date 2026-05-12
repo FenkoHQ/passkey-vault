@@ -81,6 +81,7 @@ backups/
 *.pem
 key.pem
 crx-signing-key*.pem
+scripts/remind.sh
 
 # Test files
 test-results/

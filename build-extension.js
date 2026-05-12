@@ -240,6 +240,12 @@ async function buildForTarget(browserTarget) {
 
   console.log('📄 Copying static assets...');
 
+  const localesSourceDir = path.join('src', '_locales');
+  if (fs.existsSync(localesSourceDir)) {
+    fs.cpSync(localesSourceDir, path.join(distDir, '_locales'), { recursive: true });
+    console.log('  ✅ _locales');
+  }
+
   if (fs.existsSync('src/ui/emergency.html')) {
     fs.copyFileSync('src/ui/emergency.html', `${distDir}/emergency.html`);
     console.log('  ✅ emergency.html');
@@ -290,6 +296,16 @@ async function buildForTarget(browserTarget) {
   fs.readdirSync(iconsDir).forEach((file) => {
     totalSize += fs.statSync(path.join(iconsDir, file)).size;
   });
+
+  const localesDir = path.join(distDir, '_locales');
+  if (fs.existsSync(localesDir)) {
+    for (const locale of fs.readdirSync(localesDir)) {
+      const messagesPath = path.join(localesDir, locale, 'messages.json');
+      if (fs.existsSync(messagesPath)) {
+        totalSize += fs.statSync(messagesPath).size;
+      }
+    }
+  }
 
   console.log(`\n🎉 ${browserTarget.toUpperCase()} Build Complete!`);
   console.log(`📦 Extension: ${manifest.name} v${versionName}`);

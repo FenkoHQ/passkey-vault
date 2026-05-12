@@ -5,6 +5,7 @@
  * and communicate with the background script.
  */
 
+import { initI18n, t } from '../i18n';
 import { logger } from '../utils/logger';
 
 interface PasskeyOption {
@@ -43,6 +44,8 @@ class ContentScript {
    */
   private async initialize(): Promise<void> {
     try {
+      await initI18n();
+
       // Initialize logger first
       await logger.init();
 
@@ -121,7 +124,7 @@ class ContentScript {
           const pk = payload.publicKey as Record<string, unknown> | undefined;
           const pkUser = (pk?.user as Record<string, string>) || {};
           const pkRp = (pk?.rp as Record<string, string>) || {};
-          const userName = pkUser.displayName || pkUser.name || 'User';
+          const userName = pkUser.displayName || pkUser.name || t('commonUnknownUser');
           const rpId =
             (pk?.rpId as string) || pkRp.id || new URL(payload.origin as string).hostname;
           _showPasskeyCreatedNotification(userName, rpId);
@@ -144,8 +147,8 @@ class ContentScript {
           // Show error if it's not a duplicate passkey error
           if (response.name !== 'InvalidStateError') {
             _showErrorNotification(
-              'Passkey Error',
-              (response.error as string) || 'Failed to create passkey'
+              t('pagePasskeyError'),
+              (response.error as string) || t('pagePasskeyError')
             );
           }
           window.postMessage(
@@ -159,8 +162,8 @@ class ContentScript {
           );
         }
       } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : 'Failed to create passkey';
-        _showErrorNotification('Passkey Error', msg);
+        const msg = error instanceof Error ? error.message : t('pagePasskeyError');
+        _showErrorNotification(t('pagePasskeyError'), msg);
         window.postMessage(
           {
             source: 'PASSKEY_VAULT_CONTENT',
@@ -194,7 +197,7 @@ class ContentScript {
               requestId,
               result: {
                 success: false,
-                error: 'No passkeys found for this site',
+                error: t('pageNoPasskeysSite'),
                 name: 'NotAllowedError',
               },
             },
@@ -210,7 +213,7 @@ class ContentScript {
             id: pk.id as string,
             credentialId: (pk.credentialId || pk.id) as string,
             userName: user?.name || '',
-            userDisplayName: user?.displayName || user?.name || 'Unknown User',
+            userDisplayName: user?.displayName || user?.name || t('commonUnknownUser'),
             rpId: pk.rpId as string,
             createdAt: pk.createdAt as number,
           };
@@ -228,7 +231,7 @@ class ContentScript {
               requestId,
               result: {
                 success: false,
-                error: 'User cancelled the operation',
+                error: t('commonCancel'),
                 name: 'NotAllowedError',
               },
             },
@@ -251,7 +254,8 @@ class ContentScript {
         if (response.success && response.credential) {
           // Show success notification
           const selectedPasskey = passkeyOptions.find((pk) => pk.id === selectedId);
-          const userName = selectedPasskey?.userDisplayName || selectedPasskey?.userName || 'User';
+          const userName =
+            selectedPasskey?.userDisplayName || selectedPasskey?.userName || t('commonUnknownUser');
           _showPasskeyUsedNotification(userName, rpId);
 
           // Reconstruct a proper PublicKeyCredential object
@@ -270,8 +274,8 @@ class ContentScript {
           );
         } else {
           _showErrorNotification(
-            'Sign In Failed',
-            (response.error as string) || 'Failed to use passkey'
+            t('pageSignInFailed'),
+            (response.error as string) || t('pageSignInFailed')
           );
           window.postMessage(
             {
@@ -284,8 +288,8 @@ class ContentScript {
           );
         }
       } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : 'Failed to use passkey';
-        _showErrorNotification('Sign In Failed', msg);
+        const msg = error instanceof Error ? error.message : t('pageSignInFailed');
+        _showErrorNotification(t('pageSignInFailed'), msg);
         window.postMessage(
           {
             source: 'PASSKEY_VAULT_CONTENT',
@@ -413,31 +417,32 @@ class ContentScript {
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      background: #2a2a2a;
-      color: white;
+      background: #0D1117;
+      color: #E6EDF3;
       padding: 20px;
-      border-radius: 8px;
+      border: 1px solid rgba(245,166,35,0.35);
+      border-radius: 16px;
       z-index: 999999;
       box-shadow: 0 4px 20px rgba(0,0,0,0.5);
       font-family: Arial, sans-serif;
     `;
 
     modal.innerHTML = `
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#4a9eff" stroke-width="2">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#F5A623" stroke-width="2">
         <rect x="3" y="11" width="18" height="11" rx="2"></rect>
         <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
       </svg>
-      <h3>PassKey Vault</h3>
-      <p>Emergency access activated</p>
+      <h3>${t('appName')}</h3>
+      <p>${t('emergencyActivated')}</p>
       <button onclick="this.parentElement.remove()" style="
-        background: #4a9eff;
-        color: white;
+        background: #D4920A;
+        color: #ffffff;
         border: none;
         padding: 8px 16px;
-        border-radius: 4px;
+        border-radius: 10px;
         cursor: pointer;
         margin-top: 10px;
-      ">Close</button>
+      ">${t('commonClose')}</button>
     `;
 
     document.body.appendChild(modal);

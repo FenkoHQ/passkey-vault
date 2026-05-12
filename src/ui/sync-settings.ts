@@ -1,4 +1,6 @@
 import { SyncDevice } from '../types';
+import { initAndLocalize, t } from '../i18n';
+import { initTheme } from '../theme';
 
 const STORAGE_KEY = 'sync_config';
 
@@ -48,7 +50,8 @@ interface SyncDebugInfo {
 
 let autoRefreshInterval: ReturnType<typeof setInterval> | null = null;
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  await Promise.all([initAndLocalize(), initTheme()]);
   loadSyncConfig();
   setupEventListeners();
   setupTabNavigation();
@@ -157,14 +160,7 @@ function setupEventListeners(): void {
 }
 
 async function confirmLeaveChain(): Promise<void> {
-  const confirmed = confirm(
-    'Are you sure you want to leave this sync chain?\n\n' +
-      'This will:\n' +
-      '• Remove this device from the sync chain\n' +
-      '• Delete all synced passkeys from this device\n' +
-      '• NOT affect passkeys on other devices in the chain\n\n' +
-      'Make sure you have access to another device before continuing.'
-  );
+  const confirmed = confirm(t('syncLeaveConfirm'));
 
   if (!confirmed) return;
 
@@ -174,13 +170,13 @@ async function confirmLeaveChain(): Promise<void> {
     });
 
     if (result.success) {
-      alert('You have left the sync chain.');
+      alert(t('syncLeft'));
       window.location.reload();
     } else {
-      alert(`Failed to leave sync chain: ${result.error}`);
+      alert(t('syncLeaveFailed', { error: result.error }));
     }
   } catch (error) {
-    alert(`Error leaving sync chain: ${error}`);
+    alert(t('syncLeaveError', { error: String(error) }));
   }
 }
 
@@ -188,7 +184,7 @@ async function triggerManualSync(): Promise<void> {
   const btn = document.getElementById('manual-sync-btn') as HTMLButtonElement;
   if (btn) {
     btn.disabled = true;
-    btn.textContent = 'Syncing...';
+    btn.textContent = t('popupSyncing');
   }
 
   try {
@@ -200,7 +196,7 @@ async function triggerManualSync(): Promise<void> {
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.textContent = 'Sync Now';
+      btn.textContent = t('optionsSyncNow');
     }
   }
 }
@@ -253,7 +249,7 @@ function showSynced(config: SyncConfig): void {
   }
 
   if (devicesListEl) {
-    devicesListEl.innerHTML = '<p>Loading devices...</p>';
+    devicesListEl.innerHTML = `<p>${t('syncLoadingDevices')}</p>`;
     loadDevicesList();
   }
 
@@ -309,7 +305,7 @@ function updateSyncStatusUI(status: SyncStatusResponse): void {
   if (lastSyncEl) {
     lastSyncEl.textContent = status.lastSyncSuccess
       ? formatLastSeen(status.lastSyncSuccess)
-      : 'Never';
+      : t('commonNever');
   }
 
   if (errorEl) {
@@ -329,16 +325,16 @@ function updateSyncStatusUI(status: SyncStatusResponse): void {
       retryBtn.id = 'retry-sync-btn';
       retryBtn.className = 'btn btn-primary';
       retryBtn.style.cssText = 'margin-top: 8px; width: 100%;';
-      retryBtn.textContent = 'Retry Sync';
+      retryBtn.textContent = t('syncRetry');
       retryBtn.addEventListener('click', async () => {
         retryBtn!.disabled = true;
-        retryBtn!.textContent = 'Syncing...';
+        retryBtn!.textContent = t('popupSyncing');
         await chrome.runtime.sendMessage({ type: 'TRIGGER_SYNC' });
         setTimeout(() => {
           loadSyncStatus();
           if (retryBtn) {
             retryBtn.disabled = false;
-            retryBtn.textContent = 'Retry Sync';
+            retryBtn.textContent = t('syncRetry');
           }
         }, 3000);
       });
@@ -354,10 +350,10 @@ function updateSyncStatusUI(status: SyncStatusResponse): void {
 
 function formatConnectionStatus(status: string): string {
   const statusMap: Record<string, string> = {
-    disconnected: 'Disconnected',
-    connecting: 'Connecting...',
-    connected: 'Connected',
-    error: 'Error',
+    disconnected: t('syncDisconnected'),
+    connecting: t('syncConnecting'),
+    connected: t('syncConnected'),
+    error: t('syncError'),
   };
   return statusMap[status] || status;
 }
@@ -373,14 +369,14 @@ async function loadDevicesList(): Promise<void> {
     } else {
       const devicesListEl = document.getElementById('devices-list');
       if (devicesListEl) {
-        devicesListEl.innerHTML = '<p>Failed to load devices.</p>';
+        devicesListEl.innerHTML = `<p>${t('syncFailedDevices')}</p>`;
       }
     }
   } catch (error) {
     console.error('Failed to load devices:', error);
     const devicesListEl = document.getElementById('devices-list');
     if (devicesListEl) {
-      devicesListEl.innerHTML = '<p>Failed to load devices.</p>';
+      devicesListEl.innerHTML = `<p>${t('syncFailedDevices')}</p>`;
     }
   }
 }
@@ -391,7 +387,7 @@ function renderDevicesList(devices: SyncDevice[]): void {
   if (!devicesListEl) return;
 
   if (devices.length === 0) {
-    devicesListEl.innerHTML = '<p>No devices in sync chain.</p>';
+    devicesListEl.innerHTML = `<p>${t('syncNoDevicesChain')}</p>`;
     return;
   }
 
@@ -413,7 +409,7 @@ function createDeviceCard(device: SyncDevice): string {
           <div class="device-name">${escapeHtml(device.name)}</div>
           <div class="device-meta">
             <span class="device-type">${escapeHtml(device.deviceType)}</span>
-            <span class="${badgeClass}">${isThisDevice ? 'This Device' : 'Other'}</span>
+            <span class="${badgeClass}">${isThisDevice ? t('optionsThisDevice') : t('syncOther')}</span>
           </div>
         </div>
         ${
@@ -432,7 +428,7 @@ function createDeviceCard(device: SyncDevice): string {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
             <circle cx="12" cy="12" r="6"></circle>
           </svg>
-          <span>Active</span>
+          <span>${t('syncActiveStatus')}</span>
         </div>
         <div class="device-time">${lastSeenText}</div>
       </div>
@@ -456,7 +452,7 @@ function getDeviceTypeIcon(deviceType: string): string {
 }
 
 function formatLastSeen(timestamp: number): string {
-  if (!timestamp) return 'Unknown';
+  if (!timestamp) return t('commonUnknown');
 
   const now = Date.now();
   const diff = now - timestamp;
@@ -465,10 +461,10 @@ function formatLastSeen(timestamp: number): string {
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
 
-  if (seconds < 60) return 'Just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  return `${days}d ago`;
+  if (seconds < 60) return t('syncJustNow');
+  if (minutes < 60) return t('timeMinutesAgo', { count: minutes });
+  if (hours < 24) return t('timeHoursAgo', { count: hours });
+  return t('timeDaysAgo', { count: days });
 }
 
 function escapeHtml(text: string): string {
@@ -488,7 +484,7 @@ async function loadDebugInfo(): Promise<void> {
       if (infoResult.success) {
         debugInfoEl.innerHTML = `<pre>${formatDebugInfo(infoResult.debugInfo)}</pre>`;
       } else {
-        debugInfoEl.innerHTML = `<pre class="error">Error: ${infoResult.error}</pre>`;
+        debugInfoEl.innerHTML = `<pre class="error">${t('syncError')}: ${infoResult.error}</pre>`;
       }
     }
 
@@ -498,12 +494,12 @@ async function loadDebugInfo(): Promise<void> {
       if (logsResult.success) {
         debugLogsEl.innerHTML = formatDebugLogs(logsResult.logs);
       } else {
-        debugLogsEl.innerHTML = `<pre class="error">Error: ${logsResult.error}</pre>`;
+        debugLogsEl.innerHTML = `<pre class="error">${t('syncError')}: ${logsResult.error}</pre>`;
       }
     }
   } catch (error) {
     if (debugInfoEl) {
-      debugInfoEl.innerHTML = `<pre class="error">Failed to load debug info: ${error}</pre>`;
+      debugInfoEl.innerHTML = `<pre class="error">${t('syncConnectionDebug')}: ${error}</pre>`;
     }
   }
 }
@@ -539,7 +535,7 @@ function formatDebugInfo(info: SyncDebugInfo): string {
 
 function formatDebugLogs(logs: DebugLogEntry[]): string {
   if (!logs || logs.length === 0) {
-    return '<pre class="empty">No logs yet. Try clicking "Sync Now" to generate activity.</pre>';
+    return `<pre class="empty">${t('syncNoLogsYet')}</pre>`;
   }
 
   const logLines = logs

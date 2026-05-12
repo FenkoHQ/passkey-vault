@@ -1,309 +1,464 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Emergency Access — PassKey Vault</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Emergency Access — PassKey Vault</title>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --bg-elev: #f6f8fa;
+        --bg-elev-2: #eef1f4;
+        --text: #1f2328;
+        --text-muted: #59636e;
+        --text-subtle: #818b98;
+        --text-on-accent: #ffffff;
+        --border: #d1d9e0;
+        --border-soft: #e6eaee;
+        --accent: #d4920a;
+        --accent-hover: #b87d08;
+        --accent-soft: #fef7e6;
+        --accent-ring: rgba(212, 146, 10, 0.22);
+        --success: #1a7f37;
+        --success-soft: #dcfce6;
+        --warning: #b45309;
+        --warning-soft: #fef3c7;
+        --danger: #cf222e;
+        --danger-soft: #ffe4e6;
+        --shadow-sm: 0 2px 6px rgba(13, 17, 23, 0.06), 0 1px 2px rgba(13, 17, 23, 0.04);
+        --shadow-md: 0 8px 24px rgba(13, 17, 23, 0.08), 0 2px 4px rgba(13, 17, 23, 0.04);
+        --radius-sm: 6px;
+        --radius-md: 8px;
+        --radius-lg: 12px;
+        --radius-xl: 16px;
+        --radius-pill: 999px;
+        --font-sans:
+          -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui, sans-serif;
+        --font-mono: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+      }
 
-    body {
-      font-family: 'Courier New', Courier, monospace;
-      font-size: 14px;
-      color: #000000;
-      background: #ffffff;
-      min-height: 100vh;
-      display: flex;
-      align-items: flex-start;
-      justify-content: center;
-      padding: 40px 20px;
-    }
+      html[data-theme='dark'] {
+        --bg: #0d1117;
+        --bg-elev: #161b22;
+        --bg-elev-2: #21262d;
+        --text: #e6edf3;
+        --text-muted: #9198a1;
+        --text-subtle: #6e7681;
+        --text-on-accent: #0d1117;
+        --border: #30363d;
+        --border-soft: #21262d;
+        --accent: #f5a623;
+        --accent-hover: #ffba42;
+        --accent-soft: rgba(245, 166, 35, 0.12);
+        --accent-ring: rgba(245, 166, 35, 0.28);
+        --success: #3fb950;
+        --success-soft: rgba(63, 185, 80, 0.12);
+        --warning: #e3a008;
+        --warning-soft: rgba(227, 160, 8, 0.12);
+        --danger: #f85149;
+        --danger-soft: rgba(248, 81, 73, 0.12);
+        --shadow-sm: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+        --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.4);
+      }
 
-    .container {
-      width: 100%;
-      max-width: 480px;
-      border: 3px solid #000000;
-      overflow: hidden;
-    }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
 
-    header {
-      background: #000000;
-      color: #fcd34d;
-      padding: 20px 24px;
-      border-bottom: 3px solid #fcd34d;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg-elev);
+        color: var(--text);
+        font-family: var(--font-sans);
+        font-size: 14px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+      }
 
-    header h1 {
-      font-size: 16px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
+      body {
+        min-height: 100vh;
+        display: flex;
+        align-items: flex-start;
+        justify-content: center;
+        padding: 48px 20px;
+      }
 
-    main { padding: 24px; background: #ffffff; }
+      .container {
+        width: 100%;
+        max-width: 520px;
+        background: var(--bg);
+        border: 1px solid var(--border-soft);
+        border-radius: var(--radius-xl);
+        box-shadow: var(--shadow-md);
+        overflow: hidden;
+      }
 
-    /* Form elements */
-    .form-group { margin-bottom: 16px; }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--border-soft);
+      }
 
-    label {
-      display: block;
-      margin-bottom: 6px;
-      font-weight: 700;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
+      header h1 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--text);
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+      }
 
-    input[type="password"],
-    input[type="number"] {
-      width: 100%;
-      padding: 10px 12px;
-      border: 3px solid #000000;
-      border-radius: 0;
-      background: #ffffff;
-      color: #000000;
-      font-family: 'Courier New', Courier, monospace;
-      font-size: 14px;
-      outline: none;
-      transition: border-color 0.1s;
-    }
+      header h1 svg {
+        width: 22px;
+        height: 22px;
+        color: var(--accent);
+      }
 
-    input[type="password"]:focus,
-    input[type="number"]:focus { border-color: #fcd34d; }
+      main {
+        padding: 24px;
+      }
 
-    input[type="number"] { width: 80px; }
+      h3 {
+        font-size: 14px;
+        font-weight: 600;
+        margin: 0 0 12px;
+        color: var(--text);
+      }
 
-    input[type="checkbox"] { margin-right: 8px; }
+      .form-group {
+        margin-bottom: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
 
-    /* Buttons */
-    .btn {
-      display: inline-block;
-      width: 100%;
-      padding: 10px 16px;
-      border: 3px solid #000000;
-      border-radius: 0;
-      font-family: 'Courier New', Courier, monospace;
-      font-size: 13px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      cursor: pointer;
-      transition: all 0.1s;
-    }
+      .form-group label {
+        font-size: 12.5px;
+        color: var(--text);
+        font-weight: 500;
+      }
 
-    .btn + .btn { margin-top: 8px; }
+      input[type='text'],
+      input[type='password'],
+      input[type='number'],
+      input[type='file'] {
+        width: 100%;
+        padding: 9px 12px;
+        background: var(--bg);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        font-size: 13px;
+        font-family: inherit;
+        outline: none;
+        transition:
+          border-color 0.15s,
+          box-shadow 0.15s;
+      }
 
-    .btn-primary { background: #fcd34d; color: #000000; border-color: #000000; }
-    .btn-primary:hover { background: #000000; color: #fcd34d; }
+      input::placeholder {
+        color: var(--text-subtle);
+      }
 
-    .btn-secondary { background: #ffffff; color: #000000; border-color: #000000; }
-    .btn-secondary:hover { background: #f5f5f5; }
+      input:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-ring);
+      }
 
-    .btn-warning { background: #ffffff; color: #000000; border-color: #000000; }
-    .btn-warning:hover { background: #fcd34d; }
+      input[type='checkbox'] {
+        accent-color: var(--accent);
+        margin-right: 6px;
+      }
 
-    .btn-danger { background: #000000; color: #ef4444; border-color: #ef4444; }
-    .btn-danger:hover { background: #ef4444; color: #ffffff; }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 9px 14px;
+        border: 1px solid transparent;
+        border-radius: var(--radius-md);
+        background: var(--bg-elev);
+        color: var(--text);
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        font-family: inherit;
+        transition:
+          background 0.15s,
+          border-color 0.15s,
+          color 0.15s,
+          box-shadow 0.15s;
+        margin: 4px 6px 4px 0;
+      }
 
-    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+      .btn:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 3px var(--accent-ring);
+      }
 
-    /* Feedback */
-    .error {
-      margin-top: 8px;
-      padding: 8px 12px;
-      border: 3px solid #ef4444;
-      background: #000000;
-      color: #ef4444;
-      font-size: 13px;
-      font-weight: 700;
-    }
+      .btn-primary {
+        background: var(--accent);
+        color: var(--text-on-accent);
+        border-color: var(--accent);
+      }
 
-    .success {
-      margin-top: 8px;
-      padding: 8px 12px;
-      border: 3px solid #10b981;
-      background: #000000;
-      color: #10b981;
-      font-size: 13px;
-      font-weight: 700;
-    }
+      .btn-primary:hover {
+        background: var(--accent-hover);
+        border-color: var(--accent-hover);
+      }
 
-    .hidden { display: none; }
+      .btn-secondary {
+        background: var(--bg);
+        color: var(--text);
+        border-color: var(--border);
+      }
 
-    /* Tabs */
-    .tabs {
-      display: flex;
-      border-bottom: 3px solid #000000;
-      margin-bottom: 20px;
-    }
+      .btn-secondary:hover {
+        background: var(--bg-elev);
+        border-color: var(--accent);
+      }
 
-    .tab {
-      flex: 1;
-      padding: 10px;
-      background: #ffffff;
-      border: none;
-      border-right: 3px solid #000000;
-      color: #666666;
-      cursor: pointer;
-      font-family: 'Courier New', Courier, monospace;
-      font-size: 12px;
-      font-weight: 700;
-      text-transform: uppercase;
-      transition: all 0.1s;
-    }
+      .btn-warning {
+        background: var(--warning-soft);
+        color: var(--warning);
+        border-color: var(--warning);
+      }
 
-    .tab:last-child { border-right: none; }
-    .tab:hover { background: #f5f5f5; color: #000000; }
-    .tab.active { background: #fcd34d; color: #000000; }
+      .btn-danger {
+        background: var(--danger);
+        color: #ffffff;
+        border-color: var(--danger);
+      }
 
-    .tab-content { display: none; }
-    .tab-content.active { display: block; }
+      .btn-danger:hover {
+        filter: brightness(1.05);
+      }
 
-    h3 {
-      font-size: 13px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 12px;
-      padding-bottom: 8px;
-      border-bottom: 2px solid #000000;
-    }
+      .tabs {
+        display: flex;
+        gap: 4px;
+        padding: 4px;
+        background: var(--bg-elev);
+        border-radius: var(--radius-md);
+        margin-bottom: 16px;
+      }
 
-    /* Passkey list */
-    .passkey-list {
-      max-height: 200px;
-      overflow-y: auto;
-      border: 3px solid #000000;
-      margin-bottom: 12px;
-    }
+      .tab {
+        flex: 1;
+        padding: 8px 12px;
+        border: 0;
+        border-radius: var(--radius-sm);
+        background: transparent;
+        color: var(--text-muted);
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        font-family: inherit;
+        transition:
+          background 0.15s,
+          color 0.15s;
+      }
 
-    .passkey-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 10px 12px;
-      border-bottom: 2px solid #000000;
-      background: #ffffff;
-    }
+      .tab:hover {
+        color: var(--text);
+      }
 
-    .passkey-item:last-child { border-bottom: none; }
-    .passkey-item:hover { background: #f5f5f5; }
+      .tab.active {
+        background: var(--bg);
+        color: var(--accent);
+        box-shadow: var(--shadow-sm);
+      }
 
-    .passkey-name { font-weight: 700; text-transform: uppercase; font-size: 13px; }
-    .passkey-rp { font-size: 12px; color: #666666; margin-top: 2px; }
+      .tab-content {
+        display: none;
+      }
 
-    .delete-button {
-      background: #000000;
-      color: #ef4444;
-      border: 2px solid #ef4444;
-      padding: 4px 8px;
-      font-family: 'Courier New', Courier, monospace;
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      cursor: pointer;
-    }
+      .tab-content.active {
+        display: block;
+      }
 
-    .delete-button:hover { background: #ef4444; color: #ffffff; }
+      .passkey-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-bottom: 12px;
+      }
 
-    /* File restore */
-    .file-input { display: none; }
+      .passkey-list:empty::after {
+        content: 'No passkeys to display.';
+        display: block;
+        padding: 24px;
+        text-align: center;
+        color: var(--text-subtle);
+        background: var(--bg-elev);
+        border-radius: var(--radius-md);
+        font-size: 13px;
+      }
 
-    .file-label {
-      display: block;
-      width: 100%;
-      padding: 12px;
-      border: 3px dashed #000000;
-      text-align: center;
-      cursor: pointer;
-      font-weight: 700;
-      font-size: 12px;
-      text-transform: uppercase;
-      transition: all 0.1s;
-      background: #f5f5f5;
-    }
+      .file-label {
+        display: block;
+        margin-bottom: 4px;
+      }
 
-    .file-label:hover { background: #fcd34d; border-style: solid; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <header>
-      <h1>
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
-          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-        </svg>
-        Emergency Access
-      </h1>
-    </header>
+      .file-input {
+        cursor: pointer;
+      }
 
-    <main>
-      <div id="login-form">
-        <div class="form-group">
-          <label for="master-password">Master Password</label>
-          <input type="password" id="master-password" placeholder="Enter your master password">
-        </div>
-        <button class="btn btn-primary" id="unlock-button">Unlock</button>
-        <div id="auth-error" class="error hidden"></div>
-      </div>
+      .error,
+      .success {
+        padding: 10px 12px;
+        border-radius: var(--radius-md);
+        font-size: 12.5px;
+        margin-top: 10px;
+      }
 
-      <div id="main-interface" class="hidden">
-        <div class="tabs">
-          <button class="tab active" data-tab="passkeys">Passkeys</button>
-          <button class="tab" data-tab="backup">Backup</button>
-          <button class="tab" data-tab="settings">Settings</button>
-        </div>
+      .error {
+        background: var(--danger-soft);
+        color: var(--danger);
+        border: 1px solid var(--danger);
+      }
 
-        <div id="passkeys-tab" class="tab-content active">
-          <h3>Stored Passkeys</h3>
-          <div id="passkey-list" class="passkey-list">
-            <!-- Passkeys will be populated here -->
-          </div>
-          <button class="btn btn-secondary" id="refresh-passkeys">Refresh</button>
-        </div>
+      .success {
+        background: var(--success-soft);
+        color: var(--success);
+        border: 1px solid var(--success);
+      }
 
-        <div id="backup-tab" class="tab-content">
-          <h3>Backup & Restore</h3>
+      .hidden {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body data-i18n-title="emergencyTitle">
+    <div class="container">
+      <header>
+        <h1>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+          <span data-i18n="emergencyAccess">Emergency Access</span>
+        </h1>
+      </header>
+
+      <main>
+        <div id="login-form">
           <div class="form-group">
-            <button class="btn btn-primary" id="create-backup">Create Backup</button>
-            <button class="btn btn-secondary" id="download-backup">Download Last Backup</button>
+            <label for="master-password" data-i18n="emergencyMasterPassword">Master Password</label>
+            <input
+              type="password"
+              id="master-password"
+              placeholder="Enter your master password"
+              data-i18n-placeholder="emergencyPasswordPlaceholder"
+            />
           </div>
-          <div class="form-group">
-            <label class="file-label" for="backup-file">Choose Backup File to Restore</label>
-            <input type="file" id="backup-file" class="file-input" accept=".json,.backup">
-          </div>
-          <button class="btn btn-secondary" id="restore-backup">Restore from File</button>
-          <div id="backup-status" class="success hidden"></div>
+          <button class="btn btn-primary" id="unlock-button" data-i18n="popupUnlock">Unlock</button>
+          <div id="auth-error" class="error hidden"></div>
         </div>
 
-        <div id="settings-tab" class="tab-content">
-          <h3>Security Settings</h3>
-          <div class="form-group">
-            <label><input type="checkbox" id="auto-backup"> Enable automatic backups</label>
+        <div id="main-interface" class="hidden">
+          <div class="tabs">
+            <button class="tab active" data-tab="passkeys" data-i18n="emergencyPasskeys">
+              Passkeys
+            </button>
+            <button class="tab" data-tab="backup" data-i18n="emergencyBackup">Backup</button>
+            <button class="tab" data-tab="settings" data-i18n="emergencySettings">Settings</button>
           </div>
-          <div class="form-group">
-            <label><input type="checkbox" id="biometric-auth"> Enable biometric authentication</label>
-          </div>
-          <div class="form-group">
-            <label for="lock-timeout">Auto-lock timeout (minutes)</label>
-            <input type="number" id="lock-timeout" value="30" min="1" max="1440">
-          </div>
-          <button class="btn btn-secondary" id="save-settings">Save Settings</button>
-          <button class="btn btn-warning" id="change-master-password">Change Master Password</button>
-          <button class="btn btn-danger" id="emergency-wipe">Emergency Wipe</button>
-          <div id="settings-status" class="success hidden"></div>
-        </div>
-      </div>
-    </main>
-  </div>
 
-  <script src="emergency-ui.js"></script>
-</body>
+          <div id="passkeys-tab" class="tab-content active">
+            <h3 data-i18n="emergencyStoredPasskeys">Stored Passkeys</h3>
+            <div id="passkey-list" class="passkey-list">
+              <!-- Passkeys will be populated here -->
+            </div>
+            <button class="btn btn-secondary" id="refresh-passkeys" data-i18n="commonRefresh">
+              Refresh
+            </button>
+          </div>
+
+          <div id="backup-tab" class="tab-content">
+            <h3 data-i18n="emergencyBackupRestore">Backup & Restore</h3>
+            <div class="form-group">
+              <button class="btn btn-primary" id="create-backup" data-i18n="emergencyCreateBackup">
+                Create Backup
+              </button>
+              <button
+                class="btn btn-secondary"
+                id="download-backup"
+                data-i18n="emergencyDownloadBackup"
+              >
+                Download Last Backup
+              </button>
+            </div>
+            <div class="form-group">
+              <label class="file-label" for="backup-file" data-i18n="emergencyChooseBackup"
+                >Choose Backup File to Restore</label
+              >
+              <input type="file" id="backup-file" class="file-input" accept=".json,.backup" />
+            </div>
+            <button class="btn btn-secondary" id="restore-backup" data-i18n="emergencyRestore">
+              Restore from File
+            </button>
+            <div id="backup-status" class="success hidden"></div>
+          </div>
+
+          <div id="settings-tab" class="tab-content">
+            <h3 data-i18n="emergencySecuritySettings">Security Settings</h3>
+            <div class="form-group">
+              <label
+                ><input type="checkbox" id="auto-backup" />
+                <span data-i18n="emergencyAutoBackup">Enable automatic backups</span></label
+              >
+            </div>
+            <div class="form-group">
+              <label
+                ><input type="checkbox" id="biometric-auth" />
+                <span data-i18n="emergencyBiometric">Enable biometric authentication</span></label
+              >
+            </div>
+            <div class="form-group">
+              <label for="lock-timeout" data-i18n="emergencyLockTimeout"
+                >Auto-lock timeout (minutes)</label
+              >
+              <input type="number" id="lock-timeout" value="30" min="1" max="1440" />
+            </div>
+            <button class="btn btn-secondary" id="save-settings" data-i18n="emergencySaveSettings">
+              Save Settings
+            </button>
+            <button
+              class="btn btn-warning"
+              id="change-master-password"
+              data-i18n="emergencyChangeMaster"
+            >
+              Change Master Password
+            </button>
+            <button class="btn btn-danger" id="emergency-wipe" data-i18n="emergencyWipe">
+              Emergency Wipe
+            </button>
+            <div id="settings-status" class="success hidden"></div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <script src="emergency-ui.js"></script>
+  </body>
 </html>

@@ -1,3 +1,8 @@
+import { initI18n, t } from '../i18n';
+import { initTheme } from '../theme';
+
+void Promise.all([initI18n(), initTheme()]);
+
 /**
  * PassKey Vault In-Page UI Components
  *
@@ -303,6 +308,174 @@ const UI_STYLES = `
     font-size: 13px;
     text-transform: uppercase;
   }
+
+  /* Fenko visual refresh */
+  .pkv-toast,
+  .pkv-card,
+  .pkv-passkey-item,
+  .pkv-empty-state,
+  .pkv-btn,
+  .pkv-passkey-check {
+    border-radius: 14px;
+  }
+
+  .pkv-toast {
+    background: #0D1117;
+    border-color: #D4920A;
+    color: #F5A623;
+    box-shadow: 0 18px 48px rgba(13, 17, 23, 0.18);
+  }
+
+  .pkv-toast-success {
+    background: #DAFBE1;
+    border-color: rgba(26, 127, 55, 0.28);
+    color: #1A7F37;
+  }
+
+  .pkv-toast-error {
+    background: #FFEBE9;
+    border-color: rgba(207, 34, 46, 0.28);
+    color: #CF222E;
+  }
+
+  .pkv-card {
+    background: #FFFFFF;
+    border: 1px solid #D1D9E0;
+    box-shadow: 0 24px 60px rgba(13, 17, 23, 0.18);
+  }
+
+  .pkv-card-header {
+    background: #F6F8FA;
+    color: #1F2328;
+    border-bottom-color: #E8ECEF;
+  }
+
+  .pkv-card-title,
+  .pkv-passkey-name,
+  .pkv-empty-text {
+    color: #1F2328;
+  }
+
+  .pkv-card-subtitle,
+  .pkv-passkey-detail {
+    color: #59636E;
+  }
+
+  .pkv-card-body {
+    background: #FFFFFF;
+  }
+
+  .pkv-card-footer {
+    background: #F6F8FA;
+    border-top-color: #E8ECEF;
+  }
+
+  .pkv-passkey-item {
+    border: 1px solid #D1D9E0;
+    background: #FFFFFF;
+  }
+
+  .pkv-passkey-item:hover,
+  .pkv-passkey-item.pkv-selected {
+    background: #FEF7E6;
+    border-color: rgba(212, 146, 10, 0.45);
+  }
+
+  .pkv-passkey-avatar,
+  .pkv-passkey-item.pkv-selected .pkv-passkey-check {
+    background: #0D1117;
+    border-color: #0D1117;
+    color: #F5A623;
+  }
+
+  .pkv-passkey-check {
+    border: 1px solid #D1D9E0;
+  }
+
+  .pkv-passkey-check-icon {
+    color: #F5A623;
+  }
+
+  .pkv-btn {
+    border: 1px solid #D1D9E0;
+  }
+
+  .pkv-btn-primary {
+    background: #D4920A;
+    color: #FFFFFF;
+    border-color: #D4920A;
+  }
+
+  .pkv-btn-primary:hover {
+    background: #B87D08;
+    color: #FFFFFF;
+  }
+
+  .pkv-btn-secondary {
+    background: #FFFFFF;
+    color: #1F2328;
+    border-color: #D1D9E0;
+  }
+
+  .pkv-btn-secondary:hover {
+    background: #F0F2F4;
+  }
+
+  .pkv-empty-state {
+    border: 1px solid #D1D9E0;
+    background: #F6F8FA;
+  }
+
+  html[data-theme='dark'] .pkv-toast,
+  html[data-theme='dark'] .pkv-card {
+    background: #161B22;
+    border-color: #30363D;
+    color: #E6EDF3;
+  }
+
+  html[data-theme='dark'] .pkv-card-header,
+  html[data-theme='dark'] .pkv-card-footer,
+  html[data-theme='dark'] .pkv-empty-state {
+    background: #0D1117;
+    border-color: #30363D;
+  }
+
+  html[data-theme='dark'] .pkv-card-title,
+  html[data-theme='dark'] .pkv-passkey-name,
+  html[data-theme='dark'] .pkv-empty-text {
+    color: #E6EDF3;
+  }
+
+  html[data-theme='dark'] .pkv-card-subtitle,
+  html[data-theme='dark'] .pkv-passkey-detail {
+    color: #8D96A0;
+  }
+
+  html[data-theme='dark'] .pkv-card-body,
+  html[data-theme='dark'] .pkv-passkey-item,
+  html[data-theme='dark'] .pkv-btn-secondary {
+    background: #161B22;
+    color: #E6EDF3;
+    border-color: #30363D;
+  }
+
+  html[data-theme='dark'] .pkv-passkey-item:hover,
+  html[data-theme='dark'] .pkv-passkey-item.pkv-selected,
+  html[data-theme='dark'] .pkv-btn-secondary:hover {
+    background: #21262D;
+    border-color: rgba(245, 166, 35, 0.45);
+  }
+
+  html[data-theme='dark'] .pkv-btn-primary {
+    background: #F5A623;
+    color: #0D1117;
+    border-color: #F5A623;
+  }
+
+  html[data-theme='dark'] .pkv-btn-primary:hover {
+    background: #FFBA42;
+    color: #0D1117;
+  }
 `;
 
 /**
@@ -404,7 +577,7 @@ function showPasskeySelector(passkeys: PasskeyOption[], rpId: string): Promise<s
                  </svg>
                </div>
                <div class="pkv-passkey-info">
-                 <div class="pkv-passkey-name">${escapeHtml(pk.userDisplayName || pk.userName || 'Unknown User')}</div>
+                 <div class="pkv-passkey-name">${escapeHtml(pk.userDisplayName || pk.userName || t('commonUnknownUser'))}</div>
                  <div class="pkv-passkey-detail">${escapeHtml(pk.userName || pk.id.substring(0, 16) + '...')}</div>
                </div>
                <div class="pkv-passkey-check">
@@ -417,7 +590,7 @@ function showPasskeySelector(passkeys: PasskeyOption[], rpId: string): Promise<s
         </div>`
         : `<div class="pkv-empty-state">
           <div class="pkv-empty-icon">&#128275;</div>
-          <div class="pkv-empty-text">No passkeys found for this site</div>
+          <div class="pkv-empty-text">${escapeHtml(t('pageNoPasskeysSite'))}</div>
         </div>`;
 
     container.innerHTML = `
@@ -425,8 +598,8 @@ function showPasskeySelector(passkeys: PasskeyOption[], rpId: string): Promise<s
          <div class="pkv-card-header">
            <div class="pkv-card-header-content">
               <div>
-                <span class="pkv-card-title">Choose a Passkey</span>
-                <div class="pkv-card-subtitle">Sign in to ${escapeHtml(rpId)}</div>
+                <span class="pkv-card-title">${escapeHtml(t('pageChoosePasskey'))}</span>
+                <div class="pkv-card-subtitle">${escapeHtml(t('pageSignInTo', { rp: rpId }))}</div>
               </div>
            </div>
          </div>
@@ -434,9 +607,9 @@ function showPasskeySelector(passkeys: PasskeyOption[], rpId: string): Promise<s
            ${passkeyListHtml}
          </div>
          <div class="pkv-card-footer">
-           <button class="pkv-btn pkv-btn-secondary" id="pkv-cancel">Cancel</button>
+           <button class="pkv-btn pkv-btn-secondary" id="pkv-cancel">${escapeHtml(t('commonCancel'))}</button>
            <button class="pkv-btn pkv-btn-primary" id="pkv-continue" ${passkeys.length === 0 ? 'disabled' : ''}>
-             Continue
+             ${escapeHtml(t('pageContinue'))}
            </button>
          </div>
        </div>
@@ -489,7 +662,12 @@ function showPasskeySelector(passkeys: PasskeyOption[], rpId: string): Promise<s
  * Show passkey creation success notification
  */
 function showPasskeyCreatedNotification(userName: string, rpId: string): void {
-  showToast('Passkey Created', `Saved passkey for ${userName} on ${rpId}`, 'success', 4000);
+  showToast(
+    t('pagePasskeyCreated'),
+    t('pagePasskeyCreatedMsg', { user: userName, rp: rpId }),
+    'success',
+    4000
+  );
 }
 
 /**
@@ -497,7 +675,7 @@ function showPasskeyCreatedNotification(userName: string, rpId: string): void {
  */
 function showPasskeyUsedNotification(userName: string, rpId: string): void {
   void rpId;
-  showToast('Signed In', `Used passkey for ${userName}`, 'success', 3000);
+  showToast(t('pageSignedIn'), t('pageSignedInMsg', { user: userName }), 'success', 3000);
 }
 
 function showErrorNotification(title: string, message: string): void {

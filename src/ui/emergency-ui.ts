@@ -1,3 +1,6 @@
+import { initAndLocalize, t } from '../i18n';
+import { initTheme } from '../theme';
+
 /**
  * Emergency UI Controller for PassKey Vault
  *
@@ -34,6 +37,7 @@ class EmergencyUIController {
    * Initialize the emergency UI
    */
   private async initialize(): Promise<void> {
+    await Promise.all([initAndLocalize(), initTheme()]);
     console.log('PassKey Vault: Emergency UI initializing');
 
     // Wait for DOM to be ready
@@ -79,59 +83,59 @@ class EmergencyUIController {
             <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
           </svg>
 
-            <h2>PassKey Vault - Emergency Access</h2>
+            <h2>${t('appName')} - ${t('emergencyAccess')}</h2>
             <button class="passext-close" id="passext-close-btn">&times;</button>
           </div>
 
           <div class="passext-content">
             <div id="passext-login" class="passext-panel">
-              <h3>Authentication Required</h3>
+              <h3>${t('emergencyAuthRequired')}</h3>
               <form id="passext-login-form">
-                <label for="passext-master-password">Master Password</label>
+                <label for="passext-master-password">${t('emergencyMasterPassword')}</label>
                 <input type="password" id="passext-master-password" required>
-                <button type="submit" id="passext-unlock-btn">Unlock</button>
+                <button type="submit" id="passext-unlock-btn">${t('popupUnlock')}</button>
                 <div id="passext-auth-error" class="passext-error"></div>
               </form>
             </div>
 
             <div id="passext-main" class="passext-panel passext-hidden">
               <div class="passext-tabs">
-                <button class="passext-tab active" data-tab="passkeys">Passkeys</button>
-                <button class="passext-tab" data-tab="backup">Backup</button>
-                <button class="passext-tab" data-tab="settings">Settings</button>
+                <button class="passext-tab active" data-tab="passkeys">${t('emergencyPasskeys')}</button>
+                <button class="passext-tab" data-tab="backup">${t('emergencyBackup')}</button>
+                <button class="passext-tab" data-tab="settings">${t('emergencySettings')}</button>
               </div>
 
               <div id="passext-passkeys" class="passext-tab-content">
-                <h3>Stored Passkeys</h3>
+                <h3>${t('emergencyStoredPasskeys')}</h3>
                 <div id="passext-passkey-list" class="passext-list"></div>
-                <button id="passext-refresh-btn">Refresh</button>
+                <button id="passext-refresh-btn">${t('commonRefresh')}</button>
               </div>
 
               <div id="passext-backup" class="passext-tab-content passext-hidden">
-                <h3>Backup & Restore</h3>
+                <h3>${t('emergencyBackupRestore')}</h3>
                 <div class="passext-backup-actions">
-                  <button id="passext-create-backup-btn">Create Backup</button>
-                  <button id="passext-download-backup-btn">Download Backup</button>
+                  <button id="passext-create-backup-btn">${t('emergencyCreateBackup')}</button>
+                  <button id="passext-download-backup-btn">${t('emergencyDownloadBackup')}</button>
                   <input type="file" id="passext-backup-file" accept=".json,.backup">
-                  <button id="passext-restore-backup-btn">Restore from File</button>
+                  <button id="passext-restore-backup-btn">${t('emergencyRestore')}</button>
                 </div>
                 <div id="passext-backup-status"></div>
               </div>
 
               <div id="passext-settings" class="passext-tab-content passext-hidden">
-                <h3>Security Settings</h3>
+                <h3>${t('emergencySecuritySettings')}</h3>
                 <form id="passext-settings-form">
                   <label>
-                    <input type="checkbox" id="passext-auto-backup"> Enable automatic backups
+                    <input type="checkbox" id="passext-auto-backup"> ${t('emergencyAutoBackup')}
                   </label>
                   <label>
-                    <input type="checkbox" id="passext-biometric"> Enable biometric authentication
+                    <input type="checkbox" id="passext-biometric"> ${t('emergencyBiometric')}
                   </label>
-                  <label for="passext-lock-timeout">Auto-lock timeout (minutes)</label>
+                  <label for="passext-lock-timeout">${t('emergencyLockTimeout')}</label>
                   <input type="number" id="passext-lock-timeout" value="30" min="1" max="1440">
-                  <button type="submit" id="passext-save-settings-btn">Save Settings</button>
-                  <button type="button" id="passext-change-password-btn">Change Master Password</button>
-                  <button type="button" id="passext-emergency-wipe-btn" class="passext-danger">Emergency Wipe</button>
+                  <button type="submit" id="passext-save-settings-btn">${t('emergencySaveSettings')}</button>
+                  <button type="button" id="passext-change-password-btn">${t('emergencyChangeMaster')}</button>
+                  <button type="button" id="passext-emergency-wipe-btn" class="passext-danger">${t('emergencyWipe')}</button>
                 </form>
                 <div id="passext-settings-status"></div>
               </div>
@@ -180,8 +184,9 @@ class EmergencyUIController {
       }
 
       .passext-modal {
-        background: #2a2a2a;
-        border-radius: 8px;
+        background: #0D1117;
+        border: 1px solid rgba(245, 166, 35, 0.35);
+        border-radius: 18px;
         width: 90%;
         max-width: 500px;
         max-height: 80vh;
@@ -194,12 +199,12 @@ class EmergencyUIController {
         justify-content: space-between;
         align-items: center;
         padding: 1rem;
-        border-bottom: 1px solid #444;
+        border-bottom: 1px solid rgba(209, 217, 224, 0.16);
       }
 
       .passext-header h2 {
         margin: 0;
-        color: #4a9eff;
+        color: #F5A623;
       }
 
       .passext-close {
@@ -231,7 +236,7 @@ class EmergencyUIController {
 
       .passext-tabs {
         display: flex;
-        border-bottom: 1px solid #444;
+        border-bottom: 1px solid rgba(209, 217, 224, 0.16);
         margin-bottom: 1rem;
       }
 
@@ -246,8 +251,8 @@ class EmergencyUIController {
       }
 
       .passext-tab.active {
-        color: #4a9eff;
-        border-bottom-color: #4a9eff;
+        color: #F5A623;
+        border-bottom-color: #F5A623;
       }
 
       .passext-tab-content {
@@ -272,9 +277,9 @@ class EmergencyUIController {
       input[type="number"] {
         width: 100%;
         padding: 0.5rem;
-        border: 1px solid #444;
-        border-radius: 4px;
-        background: #1a1a1a;
+        border: 1px solid #30363D;
+        border-radius: 10px;
+        background: #161B22;
         color: #fff;
         box-sizing: border-box;
       }
@@ -284,11 +289,11 @@ class EmergencyUIController {
       }
 
       button {
-        background: #4a9eff;
+        background: #D4920A;
         color: #fff;
         border: none;
         padding: 0.5rem 1rem;
-        border-radius: 4px;
+        border-radius: 10px;
         cursor: pointer;
         margin-right: 0.5rem;
         margin-bottom: 0.5rem;
@@ -299,7 +304,7 @@ class EmergencyUIController {
       }
 
       button.passext-danger {
-        background: #ff6b6b;
+        background: #CF222E;
       }
 
       button.passext-danger:hover {
@@ -307,13 +312,13 @@ class EmergencyUIController {
       }
 
       .passext-error {
-        color: #ff6b6b;
+        color: #F85149;
         margin-top: 0.5rem;
         font-size: 0.875rem;
       }
 
       .passext-success {
-        color: #51cf66;
+        color: #3FB950;
         margin-top: 0.5rem;
         font-size: 0.875rem;
       }
@@ -321,8 +326,8 @@ class EmergencyUIController {
       .passext-list {
         max-height: 200px;
         overflow-y: auto;
-        border: 1px solid #444;
-        border-radius: 4px;
+        border: 1px solid #30363D;
+        border-radius: 12px;
         padding: 0.5rem;
         margin: 1rem 0;
       }
@@ -340,7 +345,7 @@ class EmergencyUIController {
       }
 
       h3 {
-        color: #4a9eff;
+        color: #F5A623;
         margin-top: 0;
       }
     `;
@@ -508,7 +513,7 @@ class EmergencyUIController {
       if (errorDiv) errorDiv.textContent = '';
     } else {
       if (errorDiv) {
-        errorDiv.textContent = 'Invalid master password';
+        errorDiv.textContent = t('emergencyInvalidPassword');
       }
     }
   }
@@ -521,7 +526,7 @@ class EmergencyUIController {
 
     const statusDiv = this.container.querySelector('#passext-settings-status') as HTMLElement;
     if (statusDiv) {
-      statusDiv.textContent = 'Settings saved successfully';
+      statusDiv.textContent = t('emergencySettingsSaved');
       statusDiv.className = 'passext-success';
     }
   }

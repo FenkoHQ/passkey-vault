@@ -1,0 +1,11 @@
+{
+  "appName": {
+    "message": "PassKey Vault"
+  },
+  "appDesc": {
+    "message": "Stockage et gestion sécurisés des passkeys"
+  },
+  "actionTitle": {
+    "message": "PassKey Vault"
+  }
+}

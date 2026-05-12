@@ -1,5 +1,14 @@
 // PassKey Vault — Options Page
 
+import {
+  SUPPORTED_LANGUAGES,
+  getStoredLanguage,
+  initAndLocalize,
+  setStoredLanguage,
+  t,
+} from '../i18n';
+import { SUPPORTED_THEMES, getStoredTheme, initTheme, setStoredTheme } from '../theme';
+
 const DEFAULT_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band'];
 
 interface DomainRules {
@@ -28,14 +37,58 @@ interface DebugLogEntry {
 
 // ==================== INIT ====================
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  await Promise.all([initAndLocalize(), initTheme()]);
   setupNavigation();
+  await setupGeneralSettings();
   loadInterceptionSettings();
   loadSyncSettings();
   loadSecuritySettings();
   loadDeveloperSettings();
   loadExtensionInfo();
 });
+
+// ==================== GENERAL ====================
+
+async function setupGeneralSettings(): Promise<void> {
+  await Promise.all([setupLanguageSettings(), setupThemeSettings()]);
+}
+
+async function setupLanguageSettings(): Promise<void> {
+  const select = document.getElementById('language-select') as HTMLSelectElement | null;
+  if (!select) return;
+
+  const storedLanguage = await getStoredLanguage();
+  select.innerHTML = SUPPORTED_LANGUAGES.map(
+    (language) => `<option value="${language.code}">${language.label}</option>`
+  ).join('');
+  select.value = storedLanguage;
+
+  select.addEventListener('change', async () => {
+    await setStoredLanguage(select.value as (typeof SUPPORTED_LANGUAGES)[number]['code']);
+    select.disabled = true;
+    const hint = select
+      .closest('.card')
+      ?.querySelector('.card-hint:last-child') as HTMLElement | null;
+    if (hint) hint.textContent = t('optionsLanguageSaved');
+    window.setTimeout(() => window.location.reload(), 300);
+  });
+}
+
+async function setupThemeSettings(): Promise<void> {
+  const select = document.getElementById('theme-select') as HTMLSelectElement | null;
+  if (!select) return;
+
+  const storedTheme = await getStoredTheme();
+  select.innerHTML = SUPPORTED_THEMES.map(
+    (theme) => `<option value="${theme.code}">${t(theme.labelKey)}</option>`
+  ).join('');
+  select.value = storedTheme;
+
+  select.addEventListener('change', async () => {
+    await setStoredTheme(select.value as (typeof SUPPORTED_THEMES)[number]['code']);
+  });
+}
 
 // ==================== NAVIGATION ====================
 
@@ -97,7 +150,8 @@ function updateDomainListVisibility(mode: string): void {
 
   if (mode === 'allowlist' || mode === 'blocklist') {
     card.style.display = 'block';
-    title.textContent = mode === 'allowlist' ? 'Allowed Domains' : 'Blocked Domains';
+    title.textContent =
+      mode === 'allowlist' ? t('optionsAllowedDomains') : t('optionsBlockedDomains');
   } else {
     card.style.display = 'none';
   }
@@ -216,7 +270,7 @@ function updateSyncStatus(status: SyncStatusResponse): void {
   setText('sync-local-count', String(status.localPasskeyCount));
   setText('sync-synced-count', String(status.syncedPasskeyCount));
   setText('sync-pending', String(status.pendingChanges));
-  setText('sync-last', status.lastSyncSuccess ? timeAgo(status.lastSyncSuccess) : 'Never');
+  setText('sync-last', status.lastSyncSuccess ? timeAgo(status.lastSyncSuccess) : t('commonNever'));
 }
 
 function renderSyncDevices(
@@ -225,7 +279,7 @@ function renderSyncDevices(
 ): void {
   const list = document.getElementById('sync-devices-list')!;
   if (!devices.length) {
-    list.innerHTML = '<p class="empty-hint">No devices.</p>';
+    list.innerHTML = `<p class="empty-hint">${t('optionsNoDevices')}</p>`;
     return;
   }
 
@@ -240,10 +294,10 @@ function renderSyncDevices(
           <line x1="12" x2="12" y1="17" y2="21"/>
         </svg>
         <div class="device-info">
-          <span class="device-name">${escapeHtml(d.name || 'Unknown')}</span>
-          <span class="device-meta">${d.lastSeen ? timeAgo(d.lastSeen) : 'Unknown'}</span>
+          <span class="device-name">${escapeHtml(d.name || t('commonUnknown'))}</span>
+          <span class="device-meta">${d.lastSeen ? timeAgo(d.lastSeen) : t('commonUnknown')}</span>
         </div>
-        ${isCurrent ? '<span class="device-badge">This Device</span>' : ''}
+        ${isCurrent ? `<span class="device-badge">${t('optionsThisDevice')}</span>` : ''}
       </div>`;
     })
     .join('');
@@ -323,13 +377,13 @@ async function loadSecuritySettings(): Promise<void> {
   const statusEl = document.getElementById('master-pw-status')!;
 
   if (response.isSetup === false) {
-    statusEl.textContent = 'Not Set';
+    statusEl.textContent = t('optionsNotSet');
     statusEl.className = 'status-badge not-set';
-  } else if (response.unlocked) {
-    statusEl.textContent = 'Unlocked';
+  } else if (response.isUnlocked) {
+    statusEl.textContent = t('optionsUnlocked');
     statusEl.className = 'status-badge unlocked';
   } else {
-    statusEl.textContent = 'Locked';
+    statusEl.textContent = t('optionsLocked');
     statusEl.className = 'status-badge locked';
   }
 
@@ -438,7 +492,7 @@ async function loadSyncLog(): Promise<void> {
   const response = await sendMessage('GET_SYNC_DEBUG_LOGS');
 
   if (!response.logs || response.logs.length === 0) {
-    container.innerHTML = '<p class="empty-hint">No sync logs.</p>';
+    container.innerHTML = `<p class="empty-hint">${t('optionsNoSyncLogs')}</p>`;
     return;
   }
 
@@ -463,7 +517,7 @@ async function loadWebAuthnLog(): Promise<void> {
   const logs: DebugLogEntry[] = (result.webauthn_log || []).slice(-100).reverse();
 
   if (logs.length === 0) {
-    container.innerHTML = '<p class="empty-hint">No WebAuthn events logged yet.</p>';
+    container.innerHTML = `<p class="empty-hint">${t('optionsNoWebAuthnLogs')}</p>`;
     return;
   }
 
@@ -508,7 +562,7 @@ async function importAllData(e: Event): Promise<void> {
   const file = input.files?.[0];
   if (!file) return;
 
-  if (!confirm('This will overwrite ALL existing data. Are you sure?')) {
+  if (!confirm(t('optionsImportConfirm'))) {
     input.value = '';
     return;
   }
@@ -518,31 +572,26 @@ async function importAllData(e: Event): Promise<void> {
     const data = JSON.parse(text);
     await chrome.storage.local.clear();
     await chrome.storage.local.set(data);
-    alert('Data imported. Reload the extension to apply changes.');
+    alert(t('optionsImportSuccess'));
   } catch {
-    alert('Invalid JSON file.');
+    alert(t('optionsInvalidJson'));
   }
   input.value = '';
 }
 
 async function clearPasskeys(): Promise<void> {
-  if (!confirm('Delete all passkeys? This cannot be undone.')) return;
+  if (!confirm(t('optionsClearConfirm'))) return;
 
   await chrome.storage.local.remove(['passkeys', 'passext_encrypted_passkeys']);
-  alert('All passkeys cleared.');
+  alert(t('optionsClearSuccess'));
 }
 
 async function factoryReset(): Promise<void> {
-  if (
-    !confirm(
-      'FACTORY RESET: This will wipe everything — passkeys, sync config, master password, all settings. Continue?'
-    )
-  )
-    return;
-  if (!confirm('Are you absolutely sure? This cannot be undone.')) return;
+  if (!confirm(t('optionsFactoryConfirm'))) return;
+  if (!confirm(t('optionsFactoryConfirmAgain'))) return;
 
   await chrome.storage.local.clear();
-  alert('Factory reset complete. Reload the extension.');
+  alert(t('optionsFactorySuccess'));
 }
 
 // ==================== HELPERS ====================
@@ -568,13 +617,13 @@ function escapeHtml(str: string): string {
 function timeAgo(timestamp: number): string {
   const diff = Date.now() - timestamp;
   const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 60) return t('timeSecondsAgo', { count: seconds });
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60) return t('timeMinutesAgo', { count: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return t('timeHoursAgo', { count: hours });
   const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return t('timeDaysAgo', { count: days });
 }
 
 function formatTime(timestamp: number): string {

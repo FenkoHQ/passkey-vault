@@ -1,4 +1,6 @@
 import { validateMnemonic } from '../crypto/bip39';
+import { initAndLocalize, t } from '../i18n';
+import { initTheme } from '../theme';
 
 const STORAGE_KEY = 'sync_config';
 const MNEMONIC_DISPLAY = 'mnemonic-words';
@@ -16,7 +18,8 @@ interface SyncConfig {
 
 let currentMnemonic: string = '';
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  await Promise.all([initAndLocalize(), initTheme()]);
   setupModeButtons();
   setupCreateChain();
   setupJoinChain();
@@ -66,7 +69,7 @@ function setupCreateChain(): void {
   createBtn.addEventListener('click', async () => {
     const deviceName = deviceNameInput.value.trim();
     if (!deviceName) {
-      alert('Please enter a device name');
+      alert(t('syncEnterDeviceName'));
       return;
     }
 
@@ -83,10 +86,10 @@ function setupCreateChain(): void {
         displayMnemonic(result.mnemonic);
         showSuccess(CREATE_SUCCESS);
       } else {
-        alert(`Failed to create sync chain: ${result.error}`);
+        alert(t('syncCreateFailed', { error: result.error }));
       }
     } catch (error) {
-      alert(`Error creating sync chain: ${error}`);
+      alert(t('syncCreateError', { error: String(error) }));
     }
   });
 
@@ -95,13 +98,12 @@ function setupCreateChain(): void {
 
     try {
       await navigator.clipboard.writeText(currentMnemonic);
-      copyMnemonicBtn.textContent = 'Copied!';
+      copyMnemonicBtn.textContent = t('commonCopied');
       setTimeout(() => {
-        copyMnemonicBtn.innerHTML =
-          '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><rect x="3" y="3" width="13" height="13" rx="2"></rect></svg> Copy';
+        copyMnemonicBtn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"></rect><rect x="3" y="3" width="13" height="13" rx="2"></rect></svg> ${t('commonCopy')}`;
       }, 2000);
     } catch (error) {
-      alert('Failed to copy to clipboard');
+      alert(t('syncCopyFailed'));
     }
   });
 
@@ -123,17 +125,17 @@ function setupJoinChain(): void {
     const mnemonic = mnemonicInput.value.trim();
 
     if (!deviceName) {
-      alert('Please enter a device name');
+      alert(t('syncEnterDeviceName'));
       return;
     }
 
     if (!mnemonic) {
-      alert('Please enter your recovery phrase');
+      alert(t('syncEnterRecovery'));
       return;
     }
 
     if (!validateMnemonic(mnemonic)) {
-      alert('Invalid recovery phrase. Please check and try again.');
+      alert(t('syncInvalidRecovery'));
       return;
     }
 
@@ -154,18 +156,16 @@ function setupJoinChain(): void {
           window.close();
         }, 2000);
       } else {
-        alert(`Failed to join sync chain: ${result.error}`);
+        alert(t('syncJoinFailed', { error: result.error }));
       }
     } catch (error) {
       hideLoading(JOIN_LOADING);
-      alert(`Error joining sync chain: ${error}`);
+      alert(t('syncJoinError', { error: String(error) }));
     }
   });
 
   scanQrBtn.addEventListener('click', async () => {
-    alert(
-      'QR code scanning requires camera access. This feature will be available in a future update.'
-    );
+    alert(t('syncQrFuture'));
   });
 }
 
