@@ -1,4 +1,4 @@
-// Basic Chrome Extension API type definitions for PassKey Vault
+// Basic Chrome Extension API type definitions for Passkey Vault
 // These are minimal definitions to enable TypeScript compilation
 // Note: WebAuthn types are provided by TypeScript's DOM lib
 /* eslint-disable @typescript-eslint/no-explicit-any */

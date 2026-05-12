@@ -2,7 +2,7 @@ import { initAndLocalize, t } from '../i18n';
 import { initTheme } from '../theme';
 
 /**
- * Emergency UI Controller for PassKey Vault
+ * Emergency UI Controller for Passkey Vault
  *
  * This module handles the hidden emergency interface that can be activated
  * via specific sequences or triggers.
@@ -38,7 +38,7 @@ class EmergencyUIController {
    */
   private async initialize(): Promise<void> {
     await Promise.all([initAndLocalize(), initTheme()]);
-    console.log('PassKey Vault: Emergency UI initializing');
+    console.log('Passkey Vault: Emergency UI initializing');
 
     // Wait for DOM to be ready
     if (document.readyState === 'loading') {
@@ -64,7 +64,7 @@ class EmergencyUIController {
     // Set up keyboard shortcuts
     this.setupKeyboardShortcuts();
 
-    console.log('PassKey Vault: Emergency UI setup complete');
+    console.log('Passkey Vault: Emergency UI setup complete');
   }
 
   /**

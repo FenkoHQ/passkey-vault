@@ -1,4 +1,4 @@
-# PassKey Vault
+# Passkey Vault
 
 A browser extension that intercepts WebAuthn API calls and stores passkeys locally, bypassing the browser's native passkey UI. Works on **Chrome** (MV3) and **Firefox** (MV2).
 
@@ -18,6 +18,10 @@ A browser extension that intercepts WebAuthn API calls and stores passkeys local
 
 <img src="docs/readme/cws-05-sync.png" alt="Sync across devices. No cloud required." width="640"/>
 
+<img src="docs/readme/cws-06-vault-dark.png" alt="Dark mode vault view." width="640"/>
+
+<img src="docs/readme/cws-07-settings-dark.png" alt="Dark mode interception controls." width="640"/>
+
 ---
 
 ## Features
@@ -35,7 +39,7 @@ A browser extension that intercepts WebAuthn API calls and stores passkeys local
 
 ### Chrome Web Store
 
-[Download PassKey Vault](https://chromewebstore.google.com/detail/passkey-vault/lopekoolgoijpmaidblgfgelbkfkgmod)
+[Download Passkey Vault](https://chromewebstore.google.com/detail/passkey-vault/lopekoolgoijpmaidblgfgelbkfkgmod)
 
 ### Build from source
 
@@ -52,11 +56,13 @@ npm run build:all      # Both
 ```
 
 **Load in Chrome:**
+
 1. Open `chrome://extensions/`
 2. Enable Developer mode
 3. Click "Load unpacked" → select `dist/`
 
 **Load in Firefox:**
+
 1. Open `about:debugging#/runtime/this-firefox`
 2. Click "Load Temporary Add-on..."
 3. Select `dist-firefox/manifest.json`
@@ -91,13 +97,99 @@ npm run capture          # Re-generate screenshots and demo video
 
 ---
 
+## Chrome Web Store Listing
+
+Use these fields when updating the Chrome Web Store listing for `v0.7.0`.
+
+**Name**
+
+Passkey Vault
+
+**Summary**
+
+Store and use WebAuthn passkeys locally, with backup, sync, and native browser fallback controls.
+
+**Category**
+
+Developer Tools
+
+**Language**
+
+English
+
+**Detailed Description**
+
+Passkey Vault is a local-first WebAuthn passkey tool for developers, testers, and advanced users who want direct control over passkey creation, storage, backup, sync, and browser fallback behavior.
+
+The extension intercepts WebAuthn credential creation and sign-in requests, stores passkeys in the browser's local extension storage, and lets you inspect, search, export, import, and sync credentials without depending on a third-party cloud account.
+
+Key features:
+
+- Local passkey vault for WebAuthn create and get flows
+- Default passthrough to the browser and OS passkey UI when no matching passkey is stored
+- Configurable interception rules for disabled, all-sites, and allowlist modes
+- Searchable popup with light and dark themes
+- Backup and import workflows for moving passkeys between environments
+- Optional cross-device sync using a Nostr-based sync chain
+- Developer tools for console logging, storage inspection, sync protocol logs, and WebAuthn event logs
+
+Important: Passkey Vault is intended as a research and developer tool. Private key material is stored in local browser extension storage. Treat extension data and exported backups as sensitive credential material.
+
+What's new in `v0.7.0`:
+
+- Added native browser fallback passthrough for sites without a stored passkey
+- Added interception controls for blocking or allowing browser fallback
+- Refreshed the popup, settings, import, sync, and emergency access UI
+- Added light and dark theme screenshots for the Chrome Web Store listing
+- Standardized the product name as Passkey Vault
+
+**Screenshots**
+
+Use up to five CWS screenshots in this order:
+
+1. `docs/cws/cws-01-vault.png`
+2. `docs/cws/cws-02-search.png`
+3. `docs/cws/cws-03-detail.png`
+4. `docs/cws/cws-07-settings-dark.png`
+5. `docs/cws/cws-05-sync.png`
+
+Additional generated screenshots are available in `docs/cws/` if the dashboard accepts more than five.
+
+**Promotional Images**
+
+- Small promo tile: `docs/cws/promo-small.png`
+- Marquee promo tile: `docs/cws/promo-marquee.png`
+
+**Homepage URL**
+
+https://github.com/FenkoHQ/passkey-vault
+
+**Support URL**
+
+https://github.com/FenkoHQ/passkey-vault/issues
+
+**Privacy / Single Purpose**
+
+Passkey Vault stores and manages WebAuthn passkeys locally so users can create, retrieve, inspect, backup, sync, and control browser fallback behavior for passkeys in supported browsers.
+
+**Privacy / Data Use**
+
+Passkey Vault stores passkey credential material in local browser extension storage. It does not sell user data and does not send credential material to a central service. Optional sync sends encrypted sync payloads through configured Nostr relays. Because the extension intercepts WebAuthn calls on visited sites, the Chrome Web Store privacy form should disclose authentication-related data and website interaction needed for the extension's single purpose.
+
+---
+
 ## Releasing
 
 ```bash
-npm run version:bump 0.5.0
-git add package.json src/manifest.json src/manifest.firefox.json
-git commit -m "bump to 0.5.0"
-git tag v0.5.0 && git push && git push --tags
+npm run lint
+npm run typecheck
+npm test
+npm run build:all
+npm run zip:all
+npm run validate:packages
+git tag v0.7.0
+git push origin main
+git push origin v0.7.0
 ```
 
 The CI pipeline builds both extensions, publishes to the Chrome Web Store, and creates a GitHub release with both ZIPs attached.

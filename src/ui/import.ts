@@ -1,5 +1,5 @@
 /**
- * Import Page for PassKey Vault
+ * Import Page for Passkey Vault
  *
  * Handles importing passkeys from backup files
  */

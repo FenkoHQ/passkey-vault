@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Automated screenshot and video capture for PassKey Vault extension.
+ * Automated screenshot and video capture for Passkey Vault extension.
  *
  * Usage:
  *   npm run capture          — screenshots + video
@@ -8,7 +8,7 @@
  *   npm run capture:video
  *
  * Requires: built extension in dist/  (run `npm run build:chrome` first)
- * Requires: display (Wayland/X11). On headless CI use: xvfb-run node scripts/capture-assets.js
+ * Uses headless Chromium by default. Set PLAYWRIGHT_CHROMIUM_EXECUTABLE to override the browser.
  */
 
 const { chromium } = require('playwright');
@@ -19,12 +19,18 @@ const ROOT = path.join(__dirname, '..');
 const EXTENSION_PATH = path.join(ROOT, 'dist');
 const SCREENSHOTS_DIR = path.join(ROOT, 'docs', 'screenshots');
 const CWS_DIR = path.join(ROOT, 'docs', 'cws');
+const README_DIR = path.join(ROOT, 'docs', 'readme');
 const VIDEO_DIR = path.join(ROOT, 'docs', 'video');
 const PROFILE_DIR = path.join(ROOT, '.playwright-profile');
+const CHROMIUM_EXECUTABLE =
+  process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ||
+  (fs.existsSync('/sbin/chromium') ? '/sbin/chromium' : undefined);
 
-// CWS requirement: 1280×800, full bleed, max 5
+// CWS requirement: 1280×800, full bleed.
 const CWS_W = 1280;
 const CWS_H = 800;
+const CWS_TOP_MARGIN = 36;
+const CWS_BOTTOM_STRIP_H = 110;
 const CWS_BG = '#0d0d0d'; // dark canvas — makes black/yellow UI pop
 
 // Popup is 360×400 per CSS; add some breathing room for the page chrome
@@ -82,12 +88,15 @@ async function launchWithExtension(opts = {}) {
   fs.mkdirSync(dir, { recursive: true });
 
   return chromium.launchPersistentContext(dir, {
-    headless: false,
+    headless: true,
+    executablePath: CHROMIUM_EXECUTABLE,
     args: [
       `--disable-extensions-except=${EXTENSION_PATH}`,
       `--load-extension=${EXTENSION_PATH}`,
       '--no-first-run',
       '--no-default-browser-check',
+      '--disable-crash-reporter',
+      '--disable-crashpad',
     ],
     viewport: { width: POPUP_W, height: POPUP_H },
     ...opts.contextOpts,
@@ -119,12 +128,15 @@ async function shotElement(page, name) {
 async function injectPasskeys(page, passkeys) {
   await page.evaluate((data) => {
     return new Promise((resolve) =>
-      chrome.storage.local.set(
-        { passkeys: data, master_password_setup_skipped: true },
-        resolve
-      )
+      chrome.storage.local.set({ passkeys: data, master_password_setup_skipped: true }, resolve)
     );
   }, passkeys);
+}
+
+async function setTheme(page, theme) {
+  await page.evaluate((value) => {
+    return new Promise((resolve) => chrome.storage.local.set({ ui_theme: value }, resolve));
+  }, theme);
 }
 
 async function waitReady(page, ms = 600) {
@@ -144,6 +156,7 @@ async function captureScreenshots() {
   // 01 — popup empty state
   {
     const p = await extPage(ctx, id, 'popup.html');
+    await setTheme(p, 'light');
     await injectPasskeys(p, []);
     await p.reload();
     await waitReady(p);
@@ -154,6 +167,7 @@ async function captureScreenshots() {
   // 02 — popup with passkeys (list view)
   {
     const p = await extPage(ctx, id, 'popup.html');
+    await setTheme(p, 'light');
     await injectPasskeys(p, MOCK_PASSKEYS);
     await p.reload();
     await waitReady(p);
@@ -174,6 +188,17 @@ async function captureScreenshots() {
     }
     await shotElement(p, '04-popup-detail.png');
 
+    await p.close();
+  }
+
+  // 12 — popup list, dark theme
+  {
+    const p = await extPage(ctx, id, 'popup.html');
+    await setTheme(p, 'dark');
+    await injectPasskeys(p, MOCK_PASSKEYS);
+    await p.reload();
+    await waitReady(p);
+    await shotElement(p, '12-popup-list-dark.png');
     await p.close();
   }
 
@@ -212,7 +237,14 @@ async function captureScreenshots() {
   // 09 — options page (interception)
   {
     const p = await extPage(ctx, id, 'options.html');
+    await setTheme(p, 'light');
+    await p.reload();
     await waitReady(p, 800);
+    const interceptionBtn = p.locator('.nav-item', { hasText: /interception/i }).first();
+    if (await interceptionBtn.count()) {
+      await interceptionBtn.click();
+      await p.waitForTimeout(300);
+    }
     await p.screenshot({ path: path.join(SCREENSHOTS_DIR, '09-options-interception.png') });
     console.log('  \u2705 09-options-interception.png');
 
@@ -227,11 +259,28 @@ async function captureScreenshots() {
     await p.close();
   }
 
+  // 13 — options page, dark theme
+  {
+    const p = await extPage(ctx, id, 'options.html');
+    await setTheme(p, 'dark');
+    await p.reload();
+    await waitReady(p, 800);
+    const interceptionBtn = p.locator('.nav-item', { hasText: /interception/i }).first();
+    if (await interceptionBtn.count()) {
+      await interceptionBtn.click();
+      await p.waitForTimeout(300);
+    }
+    await p.screenshot({ path: path.join(SCREENSHOTS_DIR, '13-options-interception-dark.png') });
+    console.log('  \u2705 13-options-interception-dark.png');
+    await p.close();
+  }
+
   // 11 — emergency access login
   {
     const p = await extPage(ctx, id, 'emergency.html');
     await waitReady(p, 800);
     await shotElement(p, '11-emergency-login.png');
+    await shotElement(p, '09-emergency-login.png');
     await p.close();
   }
 
@@ -245,15 +294,25 @@ async function captureVideo() {
   console.log('\n🎬 Recording demo video...');
   fs.mkdirSync(VIDEO_DIR, { recursive: true });
 
-  const ctx = await launchWithExtension({
-    profileDir: path.join(ROOT, '.playwright-profile-video'),
-    contextOpts: {
-      recordVideo: {
-        dir: VIDEO_DIR,
-        size: { width: POPUP_W, height: POPUP_H },
+  let ctx;
+  try {
+    ctx = await launchWithExtension({
+      profileDir: path.join(ROOT, '.playwright-profile-video'),
+      contextOpts: {
+        recordVideo: {
+          dir: VIDEO_DIR,
+          size: { width: POPUP_W, height: POPUP_H },
+        },
       },
-    },
-  });
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('ffmpeg')) {
+      console.warn('  ⚠️  Skipping video: Playwright ffmpeg is not installed.');
+      return;
+    }
+    throw error;
+  }
   const id = await getExtensionId(ctx);
 
   const p = await extPage(ctx, id, 'popup.html');
@@ -331,11 +390,14 @@ async function captureCWS() {
   // zoom: 1 means no scaling — we calculate it from the actual element height.
   // tagline shown in the reserved text strip at the bottom of each CWS image
   const TAGLINES = {
-    'cws-01-vault.png':    'YOUR PASSKEYS. YOUR DEVICE. NOBODY ELSE.',
-    'cws-02-search.png':   'FIND ANY PASSKEY INSTANTLY.',
-    'cws-03-detail.png':   'FULL CONTROL OVER EVERY CREDENTIAL.',
+    'cws-01-vault.png': 'YOUR PASSKEYS. YOUR DEVICE. NOBODY ELSE.',
+    'cws-02-search.png': 'FIND ANY PASSKEY INSTANTLY.',
+    'cws-03-detail.png': 'FULL CONTROL OVER EVERY CREDENTIAL.',
+    'cws-04-import.png': 'BRING YOUR PASSKEYS WITH YOU.',
     'cws-04-settings.png': 'DEVELOPER TOOLS BUILT RIGHT IN.',
-    'cws-05-sync.png':     'SYNC ACROSS DEVICES. NO CLOUD REQUIRED.',
+    'cws-05-sync.png': 'SYNC ACROSS DEVICES. NO CLOUD REQUIRED.',
+    'cws-06-vault-dark.png': 'DARK MODE FOR LOW-LIGHT WORKFLOWS.',
+    'cws-07-settings-dark.png': 'INTERCEPTION CONTROLS, DAY OR NIGHT.',
   };
 
   const cwsShot = async (page, name) => {
@@ -344,14 +406,17 @@ async function captureCWS() {
 
     // Measure the container's visible (non-scrollable) height
     const containerHeight = await page.evaluate(() => {
-      const el = document.querySelector('.container');
+      const el =
+        document.querySelector('.container') ||
+        document.querySelector('.sync-setup') ||
+        document.querySelector('.sync-settings') ||
+        document.querySelector('.import-container');
       if (!el) return 400;
       const rect = el.getBoundingClientRect();
       return Math.min(rect.height, window.innerHeight * 0.85);
     });
 
-    // Reserve 110px at the bottom for the tagline strip
-    const usableH = CWS_H - 110;
+    const usableH = CWS_H - CWS_TOP_MARGIN - CWS_BOTTOM_STRIP_H;
     const targetH = usableH * 0.88;
     const zoom = Math.min(targetH / containerHeight, 2.4);
     const tagline = TAGLINES[name] || '';
@@ -368,7 +433,7 @@ async function captureCWS() {
           justify-content: center !important;
           overflow: hidden !important;
           margin: 0 !important;
-          padding: 0 0 110px 0 !important;
+          padding: ${CWS_TOP_MARGIN}px 0 ${CWS_BOTTOM_STRIP_H}px 0 !important;
           position: relative !important;
         }
         /* dot-grid texture */
@@ -385,12 +450,15 @@ async function captureCWS() {
         body::after {
           content: '' !important;
           position: fixed !important;
-          top: 0 !important; left: 0 !important;
+          top: ${CWS_TOP_MARGIN}px !important; left: 0 !important;
           width: 120px !important; height: 4px !important;
           background: #fcd34d !important;
           z-index: 2 !important;
         }
-        .container {
+        .container,
+        .sync-setup,
+        .sync-settings,
+        .import-container {
           zoom: ${zoom.toFixed(3)} !important;
           box-shadow:
             0 32px 120px rgba(0,0,0,0.85),
@@ -403,10 +471,11 @@ async function captureCWS() {
     });
 
     // Inject tagline strip + right-side accent line
-    await page.evaluate(({ text, w, h }) => {
-      // bottom strip
-      const strip = document.createElement('div');
-      strip.style.cssText = `
+    await page.evaluate(
+      ({ text, topMargin, bottomStripHeight }) => {
+        // bottom strip
+        const strip = document.createElement('div');
+        strip.style.cssText = `
         position: fixed; bottom: 0; left: 0; right: 0; height: 110px;
         background: #fcd34d;
         display: flex; align-items: center; justify-content: space-between;
@@ -414,27 +483,30 @@ async function captureCWS() {
         z-index: 10;
         border-top: 3px solid #000;
       `;
-      strip.innerHTML = `
+        strip.innerHTML = `
         <span style="font-family:'Courier New',monospace;font-size:18px;font-weight:700;
           text-transform:uppercase;letter-spacing:2px;color:#000;max-width:700px">
           ${text}
         </span>
         <span style="font-family:'Courier New',monospace;font-size:13px;font-weight:700;
-          text-transform:uppercase;letter-spacing:1px;color:#000;opacity:0.5">
-          PASSKEY VAULT
+          letter-spacing:1px;color:#000;opacity:0.5">
+          Passkey Vault
         </span>
       `;
-      document.body.appendChild(strip);
+        document.body.appendChild(strip);
 
-      // right-side yellow accent bar
-      const bar = document.createElement('div');
-      bar.style.cssText = `
-        position: fixed; top: 0; right: 0; width: 4px; height: 100%;
+        // right-side yellow accent bar
+        const bar = document.createElement('div');
+        bar.style.cssText = `
+        position: fixed; top: ${topMargin}px; right: 0; width: 4px;
+        height: calc(100% - ${topMargin}px - ${bottomStripHeight}px);
         background: linear-gradient(to bottom, #fcd34d, transparent);
         z-index: 10;
       `;
-      document.body.appendChild(bar);
-    }, { text: tagline, w: CWS_W, h: CWS_H });
+        document.body.appendChild(bar);
+      },
+      { text: tagline, topMargin: CWS_TOP_MARGIN, bottomStripHeight: CWS_BOTTOM_STRIP_H }
+    );
 
     await page.waitForTimeout(150);
     const file = path.join(CWS_DIR, name);
@@ -446,6 +518,8 @@ async function captureCWS() {
   // 1 — vault with passkeys
   {
     const p = await extPage(ctx, id, 'popup.html');
+    await setTheme(p, 'light');
+    await p.reload();
     await waitReady(p);
     await cwsShot(p, 'cws-01-vault.png');
   }
@@ -453,6 +527,8 @@ async function captureCWS() {
   // 2 — search
   {
     const p = await extPage(ctx, id, 'popup.html');
+    await setTheme(p, 'light');
+    await p.reload();
     await waitReady(p);
     await p.fill('#search-input', 'github');
     await p.waitForTimeout(300);
@@ -462,6 +538,8 @@ async function captureCWS() {
   // 3 — expanded passkey detail
   {
     const p = await extPage(ctx, id, 'popup.html');
+    await setTheme(p, 'light');
+    await p.reload();
     await waitReady(p);
     const btn = p.locator('.expand-btn').first();
     if (await btn.count()) {
@@ -471,9 +549,20 @@ async function captureCWS() {
     await cwsShot(p, 'cws-03-detail.png');
   }
 
-  // 4 — settings / developer tools
+  // 4 — import
+  {
+    const p = await extPage(ctx, id, 'import.html');
+    await setTheme(p, 'light');
+    await p.reload();
+    await waitReady(p, 800);
+    await cwsShot(p, 'cws-04-import.png');
+  }
+
+  // 5 — settings / developer tools
   {
     const p = await extPage(ctx, id, 'options.html');
+    await setTheme(p, 'light');
+    await p.reload();
     await waitReady(p, 800);
     // Click Developer tab
     const devBtn = p.locator('.nav-item', { hasText: /developer/i }).first();
@@ -487,23 +576,27 @@ async function captureCWS() {
 
     // Inject tagline strip
     const tagline = TAGLINES['cws-04-settings.png'] || '';
-    await p.evaluate(({ text }) => {
-      const strip = document.createElement('div');
-      strip.style.cssText = `
+    await addOptionsCwsChrome(p);
+    await p.evaluate(
+      ({ text }) => {
+        const strip = document.createElement('div');
+        strip.style.cssText = `
         position: fixed; bottom: 0; left: 0; right: 0; height: 80px;
         background: #fcd34d;
         display: flex; align-items: center; justify-content: space-between;
         padding: 0 56px; z-index: 10000;
         border-top: 3px solid #000;
       `;
-      strip.innerHTML = `
+        strip.innerHTML = `
         <span style="font-family:'Courier New',monospace;font-size:18px;font-weight:700;
           text-transform:uppercase;letter-spacing:2px;color:#000;max-width:700px">${text}</span>
         <span style="font-family:'Courier New',monospace;font-size:13px;font-weight:700;
-          text-transform:uppercase;letter-spacing:1px;color:#000;opacity:0.5">PASSKEY VAULT</span>
+          letter-spacing:1px;color:#000;opacity:0.5">Passkey Vault</span>
       `;
-      document.body.appendChild(strip);
-    }, { text: tagline });
+        document.body.appendChild(strip);
+      },
+      { text: tagline }
+    );
 
     await p.waitForTimeout(150);
     const file = path.join(CWS_DIR, 'cws-04-settings.png');
@@ -512,15 +605,125 @@ async function captureCWS() {
     await p.close();
   }
 
-  // 5 — sync setup
+  // 6 — sync setup
   {
     const p = await extPage(ctx, id, 'sync-setup.html');
+    await setTheme(p, 'light');
+    await p.reload();
     await waitReady(p, 800);
     await cwsShot(p, 'cws-05-sync.png');
   }
 
+  // 7 — dark mode vault
+  {
+    const p = await extPage(ctx, id, 'popup.html');
+    await setTheme(p, 'dark');
+    await p.reload();
+    await waitReady(p);
+    await cwsShot(p, 'cws-06-vault-dark.png');
+  }
+
+  // 8 — dark mode interception controls
+  {
+    const p = await extPage(ctx, id, 'options.html');
+    await setTheme(p, 'dark');
+    await p.reload();
+    await waitReady(p, 800);
+    const interceptionBtn = p.locator('.nav-item', { hasText: /interception/i }).first();
+    if (await interceptionBtn.count()) {
+      await interceptionBtn.click();
+      await p.waitForTimeout(300);
+    }
+    await p.setViewportSize({ width: CWS_W, height: CWS_H });
+    await p.waitForTimeout(200);
+    await addOptionsCwsChrome(p);
+
+    const tagline = TAGLINES['cws-07-settings-dark.png'] || '';
+    await p.evaluate(
+      ({ text }) => {
+        const strip = document.createElement('div');
+        strip.style.cssText = `
+        position: fixed; bottom: 0; left: 0; right: 0; height: 80px;
+        background: #fcd34d;
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 0 56px; z-index: 10000;
+        border-top: 3px solid #000;
+      `;
+        strip.innerHTML = `
+        <span style="font-family:'Courier New',monospace;font-size:18px;font-weight:700;
+          text-transform:uppercase;letter-spacing:2px;color:#000;max-width:700px">${text}</span>
+        <span style="font-family:'Courier New',monospace;font-size:13px;font-weight:700;
+          letter-spacing:1px;color:#000;opacity:0.5">Passkey Vault</span>
+      `;
+        document.body.appendChild(strip);
+      },
+      { text: tagline }
+    );
+
+    const file = path.join(CWS_DIR, 'cws-07-settings-dark.png');
+    await p.screenshot({ path: file, clip: { x: 0, y: 0, width: CWS_W, height: CWS_H } });
+    console.log(`  \u2705 cws-07-settings-dark.png`);
+    await p.close();
+  }
+
   await ctx.close();
+  copyReadmeScreenshots();
   console.log(`\n  Saved to ${CWS_DIR}`);
+}
+
+function copyReadmeScreenshots() {
+  fs.mkdirSync(README_DIR, { recursive: true });
+  for (const name of [
+    'cws-01-vault.png',
+    'cws-02-search.png',
+    'cws-03-detail.png',
+    'cws-04-settings.png',
+    'cws-05-sync.png',
+    'cws-06-vault-dark.png',
+    'cws-07-settings-dark.png',
+  ]) {
+    fs.copyFileSync(path.join(CWS_DIR, name), path.join(README_DIR, name));
+  }
+  console.log(`  ✅ README screenshots copied to ${README_DIR}`);
+}
+
+async function addOptionsCwsChrome(page) {
+  await page.addStyleTag({
+    content: `
+      html,
+      body {
+        width: ${CWS_W}px !important;
+        height: ${CWS_H}px !important;
+        min-height: ${CWS_H}px !important;
+        overflow: hidden !important;
+        background: linear-gradient(160deg, #0a0a0a 0%, #111008 60%, #1a1200 100%) !important;
+        padding: ${CWS_TOP_MARGIN}px 0 80px !important;
+      }
+
+      .app {
+        width: calc(100% - 96px) !important;
+        max-width: 1120px !important;
+        height: calc(${CWS_H}px - ${CWS_TOP_MARGIN}px - 80px) !important;
+        min-height: 0 !important;
+        margin: 0 auto !important;
+        border: 1px solid rgba(252, 211, 77, 0.15) !important;
+        border-radius: 8px !important;
+        overflow: hidden !important;
+        box-shadow:
+          0 32px 120px rgba(0,0,0,0.85),
+          0 0 0 1px rgba(252,211,77,0.08) !important;
+      }
+
+      .sidebar {
+        height: 100% !important;
+      }
+
+      .content {
+        max-width: none !important;
+        padding-bottom: 40px !important;
+      }
+    `,
+  });
 }
 
 // ─── Promo Tiles ─────────────────────────────────────────────────────────────
@@ -576,7 +779,7 @@ body::before {
   display: flex; align-items: center; justify-content: center;
   margin-bottom: 6px;
 }
-.brand { font-size: 20px; font-weight: 700; color: #fff; text-transform: uppercase; letter-spacing: 2px; }
+.brand { font-size: 20px; font-weight: 700; color: #fff; letter-spacing: 0.5px; }
 .tagline { font-size: 11px; font-weight: 700; color: #fcd34d; text-transform: uppercase; letter-spacing: 1.5px; line-height: 1.7; }
 </style></head>
 <body>
@@ -641,15 +844,18 @@ body::before {
 
     await p.evaluate(() => {
       const topBar = document.createElement('div');
-      topBar.style.cssText = 'position:fixed;top:0;left:0;width:120px;height:4px;background:#fcd34d;z-index:10';
+      topBar.style.cssText =
+        'position:fixed;top:0;left:0;width:120px;height:4px;background:#fcd34d;z-index:10';
       document.body.appendChild(topBar);
 
       const rightBar = document.createElement('div');
-      rightBar.style.cssText = 'position:fixed;top:0;right:0;width:4px;height:100%;background:linear-gradient(to bottom,#fcd34d,transparent);z-index:10';
+      rightBar.style.cssText =
+        'position:fixed;top:0;right:0;width:4px;height:100%;background:linear-gradient(to bottom,#fcd34d,transparent);z-index:10';
       document.body.appendChild(rightBar);
 
       const divider = document.createElement('div');
-      divider.style.cssText = 'position:fixed;left:660px;top:8%;height:84%;width:1px;background:rgba(252,211,77,0.12);z-index:5';
+      divider.style.cssText =
+        'position:fixed;left:660px;top:8%;height:84%;width:1px;background:rgba(252,211,77,0.12);z-index:5';
       document.body.appendChild(divider);
 
       const text = document.createElement('div');

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PassKey Vault — Settings</title>
+    <title>Passkey Vault — Settings</title>
     <link rel="stylesheet" href="options.css" />
   </head>
   <body data-i18n-title="settingsTitle">
@@ -25,7 +25,7 @@
             <path d="M7 11V7a5 5 0 0 1 10 0v4" />
           </svg>
           <div>
-            <h1>PassKey Vault</h1>
+            <h1>Passkey Vault</h1>
             <span class="version" id="version"></span>
           </div>
         </div>
@@ -156,7 +156,7 @@
           <div class="section-header">
             <h2 data-i18n="optionsInterceptionTitle">WebAuthn Interception</h2>
             <p class="section-desc" data-i18n="optionsInterceptionDesc">
-              Control which domains PassKey Vault intercepts WebAuthn requests on.
+              Control which domains Passkey Vault intercepts WebAuthn requests on.
             </p>
           </div>
 
@@ -198,6 +198,20 @@
                     >Intercept everywhere except listed domains</span
                   >
                 </div>
+              </label>
+            </div>
+
+            <div class="setting-row interception-fallback-row">
+              <div>
+                <h3 data-i18n="optionsNativeFallback">Native Fallback</h3>
+                <p class="card-hint" data-i18n="optionsNativeFallbackDesc">
+                  If the vault has no matching passkey, let the browser continue with OS passkeys,
+                  security keys, or QR-code sign-in.
+                </p>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="passthrough-missing-toggle" checked />
+                <span class="toggle-slider"></span>
               </label>
             </div>
           </div>

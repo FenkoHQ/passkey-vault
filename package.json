@@ -1,6 +1,6 @@
 {
   "name": "passkey-vault",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "A browser extension for secure passkey (WebAuthn) storage and management",
   "scripts": {
     "build": "node build-extension.js",
@@ -17,9 +17,9 @@
     "lint:fix": "eslint src/**/*.ts --fix",
     "format": "prettier --write \"src/**/*.{ts,css,html}\"",
     "typecheck": "tsc --noEmit",
-    "zip": "npm run build && cd dist && zip -r ../passkey-vault-chrome.zip .",
-    "zip:firefox": "npm run build:firefox && cd dist-firefox && zip -r ../passkey-vault-firefox.zip .",
-    "zip:all": "npm run build:all && cd dist && zip -r ../passkey-vault-chrome.zip . && cd ../dist-firefox && zip -r ../passkey-vault-firefox.zip .",
+    "zip": "npm run build && rm -f passkey-vault-chrome.zip && cd dist && zip -r ../passkey-vault-chrome.zip .",
+    "zip:firefox": "npm run build:firefox && rm -f passkey-vault-firefox.zip && cd dist-firefox && zip -r ../passkey-vault-firefox.zip .",
+    "zip:all": "npm run build:all && rm -f passkey-vault-chrome.zip passkey-vault-firefox.zip && cd dist && zip -r ../passkey-vault-chrome.zip . && cd ../dist-firefox && zip -r ../passkey-vault-firefox.zip .",
     "clean": "rm -rf dist dist-firefox",
     "version:bump": "node scripts/bump-version.js",
     "capture": "node scripts/capture-assets.js all",

@@ -18,12 +18,12 @@ export const SUPPORTED_LANGUAGES: Array<{ code: SupportedLanguage; label: string
 ];
 
 const en: TranslationMap = {
-  appName: 'PassKey Vault',
-  settingsTitle: 'PassKey Vault — Settings',
-  importTitle: 'Import Passkeys - PassKey Vault',
-  syncSetupTitle: 'Sync Setup - PassKey Vault',
-  syncSettingsTitle: 'Sync Settings - PassKey Vault',
-  emergencyTitle: 'Emergency Access — PassKey Vault',
+  appName: 'Passkey Vault',
+  settingsTitle: 'Passkey Vault — Settings',
+  importTitle: 'Import Passkeys - Passkey Vault',
+  syncSetupTitle: 'Sync Setup - Passkey Vault',
+  syncSettingsTitle: 'Sync Settings - Passkey Vault',
+  emergencyTitle: 'Emergency Access — Passkey Vault',
 
   commonCancel: 'Cancel',
   commonConfirm: 'Confirm',
@@ -117,7 +117,7 @@ const en: TranslationMap = {
   themeLight: 'Light',
   themeDark: 'Dark',
   optionsInterceptionTitle: 'WebAuthn Interception',
-  optionsInterceptionDesc: 'Control which domains PassKey Vault intercepts WebAuthn requests on.',
+  optionsInterceptionDesc: 'Control which domains Passkey Vault intercepts WebAuthn requests on.',
   optionsInterceptionMode: 'Interception Mode',
   optionsDisabled: 'Disabled',
   optionsDisabledDesc: 'No interception — browser handles WebAuthn natively',
@@ -127,6 +127,9 @@ const en: TranslationMap = {
   optionsAllowlistDesc: 'Only intercept on listed domains',
   optionsBlocklist: 'Blocklist',
   optionsBlocklistDesc: 'Intercept everywhere except listed domains',
+  optionsNativeFallback: 'Native Fallback',
+  optionsNativeFallbackDesc:
+    'If the vault has no matching passkey, let the browser continue with OS passkeys, security keys, or QR-code sign-in.',
   optionsDomains: 'Domains',
   optionsAllowedDomains: 'Allowed Domains',
   optionsBlockedDomains: 'Blocked Domains',
@@ -362,7 +365,7 @@ const en: TranslationMap = {
 };
 
 const ru: TranslationMap = {
-  appName: 'PassKey Vault',
+  appName: 'Passkey Vault',
   commonCancel: 'Отмена',
   commonConfirm: 'Подтвердить',
   commonDelete: 'Удалить',
@@ -419,7 +422,7 @@ const ru: TranslationMap = {
   optionsLanguageHelp: 'Автоматически — язык браузера, если он поддерживается.',
   optionsLanguageSaved: 'Язык сохранён. Перезагрузка…',
   optionsInterceptionTitle: 'Перехват WebAuthn',
-  optionsInterceptionDesc: 'Управляйте доменами, где PassKey Vault перехватывает WebAuthn-запросы.',
+  optionsInterceptionDesc: 'Управляйте доменами, где Passkey Vault перехватывает WebAuthn-запросы.',
   optionsInterceptionMode: 'Режим перехвата',
   optionsDisabled: 'Отключено',
   optionsAllSites: 'Все сайты',
@@ -697,7 +700,7 @@ const ar: TranslationMap = {
 };
 
 const fa: TranslationMap = {
-  appName: 'PassKey Vault',
+  appName: 'Passkey Vault',
   commonCancel: 'لغو',
   commonConfirm: 'تأیید',
   commonDelete: 'حذف',
@@ -769,7 +772,7 @@ const fa: TranslationMap = {
   themeDark: 'تاریک',
   optionsInterceptionTitle: 'رهگیری WebAuthn',
   optionsInterceptionDesc:
-    'کنترل کنید PassKey Vault روی کدام دامنه‌ها درخواست‌های WebAuthn را رهگیری کند.',
+    'کنترل کنید Passkey Vault روی کدام دامنه‌ها درخواست‌های WebAuthn را رهگیری کند.',
   optionsInterceptionMode: 'حالت رهگیری',
   optionsDisabled: 'غیرفعال',
   optionsDisabledDesc: 'بدون رهگیری — مرورگر WebAuthn را به‌صورت بومی مدیریت می‌کند',

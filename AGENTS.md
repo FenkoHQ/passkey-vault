@@ -1,8 +1,8 @@
-# PassKey Vault - Chrome Extension Agents
+# Passkey Vault - Chrome Extension Agents
 
 ## Project Overview
 
-PassKey Vault is a sophisticated Chrome extension designed to securely store, manage, and retrieve passkeys (WebAuthn credentials) in a fully standalone manner. The extension operates invisibly in the background, providing automated passkey management with robust offline backup capabilities.
+Passkey Vault is a sophisticated Chrome extension designed to securely store, manage, and retrieve passkeys (WebAuthn credentials) in a fully standalone manner. The extension operates invisibly in the background, providing automated passkey management with robust offline backup capabilities.
 
 ## Core Agents
 

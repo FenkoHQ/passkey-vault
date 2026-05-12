@@ -75,6 +75,7 @@ function main() {
     'options.html',
     'options.js',
     'options.css',
+    '_locales/en/messages.json',
     'icons/icon16.png',
     'icons/icon48.png',
     'icons/icon128.png',
@@ -84,25 +85,47 @@ function main() {
     assert(entries.has(file), `Missing required package file: ${file}`);
   }
 
-  const allowedEntries = new Set([...requiredFiles, 'icons/']);
+  const sourceLocalesDir = path.join(root, 'src', '_locales');
+  const allowedEntries = new Set([...requiredFiles, 'icons/', '_locales/']);
+  for (const locale of fs.readdirSync(sourceLocalesDir)) {
+    allowedEntries.add(`_locales/${locale}/`);
+    allowedEntries.add(`_locales/${locale}/messages.json`);
+  }
   for (const entry of entries) {
     assert(allowedEntries.has(entry), `Unexpected package file: ${entry}`);
   }
 
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   const manifest = JSON.parse(readZipEntry('manifest.json').toString('utf8'));
+  const enMessages = JSON.parse(readZipEntry('_locales/en/messages.json').toString('utf8'));
 
-  assert(manifest.version === pkg.version, `Manifest version ${manifest.version} != ${pkg.version}`);
-  assert(manifest.version_name === pkg.version, `Manifest version_name ${manifest.version_name} != ${pkg.version}`);
-  assert(manifest.name === 'PassKey Vault', `Unexpected manifest name: ${manifest.name}`);
+  assert(
+    manifest.version === pkg.version,
+    `Manifest version ${manifest.version} != ${pkg.version}`
+  );
+  assert(
+    manifest.version_name === pkg.version,
+    `Manifest version_name ${manifest.version_name} != ${pkg.version}`
+  );
+  assert(manifest.name === '__MSG_appName__', `Unexpected manifest name: ${manifest.name}`);
+  assert(
+    enMessages.appName?.message === 'Passkey Vault',
+    `Unexpected localized app name: ${enMessages.appName?.message}`
+  );
   assert(manifest.icons?.['16'] === 'icons/icon16.png', 'Manifest icon16 path mismatch');
   assert(manifest.icons?.['48'] === 'icons/icon48.png', 'Manifest icon48 path mismatch');
   assert(manifest.icons?.['128'] === 'icons/icon128.png', 'Manifest icon128 path mismatch');
 
   if (target === 'chrome') {
-    assert(manifest.background?.service_worker === 'background.js', 'Chrome service worker mismatch');
+    assert(
+      manifest.background?.service_worker === 'background.js',
+      'Chrome service worker mismatch'
+    );
   } else {
-    assert(manifest.background?.scripts?.includes('background.js'), 'Firefox background script mismatch');
+    assert(
+      manifest.background?.scripts?.includes('background.js'),
+      'Firefox background script mismatch'
+    );
   }
 
   for (const size of [16, 48, 128]) {

@@ -1,5 +1,5 @@
 /* =============================================================
-   PassKey Vault — Popup, Sync Setup, Sync Settings
+   Passkey Vault — Popup, Sync Setup, Sync Settings
    Fenko Security design system. One source of truth.
    ============================================================= */
 
@@ -95,7 +95,7 @@ html {
 
 body {
   width: 360px;
-  min-height: 480px;
+  min-height: 440px;
   font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.5;
@@ -136,7 +136,7 @@ a:hover {
 .container {
   display: flex;
   flex-direction: column;
-  min-height: 480px;
+  min-height: 440px;
 }
 
 /* ---------- Header ---------- */
@@ -272,7 +272,7 @@ h3 {
   height: 16px;
 }
 
-.search-input {
+input[type='text'].search-input {
   width: 100%;
   padding: 9px 36px 9px 48px;
   border: 1px solid var(--border);
@@ -287,11 +287,11 @@ h3 {
     background 0.15s;
 }
 
-.search-input::placeholder {
+input[type='text'].search-input::placeholder {
   color: var(--text-subtle);
 }
 
-.search-input:focus {
+input[type='text'].search-input:focus {
   background: var(--bg);
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);

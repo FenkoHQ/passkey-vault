@@ -1,4 +1,4 @@
-// PassKey Vault — Options Page
+// Passkey Vault — Options Page
 
 import {
   SUPPORTED_LANGUAGES,
@@ -14,6 +14,7 @@ const DEFAULT_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.no
 interface DomainRules {
   mode: 'disabled' | 'all' | 'allowlist' | 'blocklist';
   domains: string[];
+  passthroughOnNoPasskey?: boolean;
 }
 
 interface SyncStatusResponse {
@@ -112,13 +113,26 @@ function setupNavigation(): void {
 
 async function loadInterceptionSettings(): Promise<void> {
   const result = await chrome.storage.local.get('domain_rules');
-  const rules: DomainRules = result.domain_rules || { mode: 'all', domains: [] };
+  const rules = getDomainRules(result.domain_rules);
 
   // Set radio
   const radio = document.querySelector(
     `input[name="interception-mode"][value="${rules.mode}"]`
   ) as HTMLInputElement | null;
   if (radio) radio.checked = true;
+
+  const passthroughToggle = document.getElementById(
+    'passthrough-missing-toggle'
+  ) as HTMLInputElement | null;
+  if (passthroughToggle) {
+    passthroughToggle.checked = rules.passthroughOnNoPasskey !== false;
+    passthroughToggle.addEventListener('change', async () => {
+      const current = await chrome.storage.local.get('domain_rules');
+      const updated = getDomainRules(current.domain_rules);
+      updated.passthroughOnNoPasskey = passthroughToggle.checked;
+      await chrome.storage.local.set({ domain_rules: updated });
+    });
+  }
 
   updateDomainListVisibility(rules.mode);
   renderDomainList(rules.domains);
@@ -128,7 +142,7 @@ async function loadInterceptionSettings(): Promise<void> {
     input.addEventListener('change', async (e) => {
       const mode = (e.target as HTMLInputElement).value as DomainRules['mode'];
       const current = await chrome.storage.local.get('domain_rules');
-      const updated: DomainRules = { ...(current.domain_rules || { domains: [] }), mode };
+      const updated: DomainRules = { ...getDomainRules(current.domain_rules), mode };
       await chrome.storage.local.set({ domain_rules: updated });
       updateDomainListVisibility(mode);
     });
@@ -166,7 +180,7 @@ async function addDomain(input: HTMLInputElement): Promise<void> {
   if (!domain) return;
 
   const result = await chrome.storage.local.get('domain_rules');
-  const rules: DomainRules = result.domain_rules || { mode: 'all', domains: [] };
+  const rules = getDomainRules(result.domain_rules);
 
   if (rules.domains.includes(domain)) {
     input.value = '';
@@ -181,10 +195,19 @@ async function addDomain(input: HTMLInputElement): Promise<void> {
 
 async function removeDomain(domain: string): Promise<void> {
   const result = await chrome.storage.local.get('domain_rules');
-  const rules: DomainRules = result.domain_rules || { mode: 'all', domains: [] };
+  const rules = getDomainRules(result.domain_rules);
   rules.domains = rules.domains.filter((d) => d !== domain);
   await chrome.storage.local.set({ domain_rules: rules });
   renderDomainList(rules.domains);
+}
+
+function getDomainRules(value: unknown): DomainRules {
+  const partial = (value || {}) as Partial<DomainRules>;
+  return {
+    mode: partial.mode || 'all',
+    domains: Array.isArray(partial.domains) ? partial.domains : [],
+    passthroughOnNoPasskey: partial.passthroughOnNoPasskey !== false,
+  };
 }
 
 function renderDomainList(domains: string[]): void {

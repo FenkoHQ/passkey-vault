@@ -1,5 +1,5 @@
 /* =============================================================
-   PassKey Vault — Options page
+   Passkey Vault — Options page
    Fenko Security design system. One source of truth.
    ============================================================= */
 
@@ -359,6 +359,27 @@ nav {
 
 .mode-option input:checked + .mode-card .mode-title {
   color: var(--accent);
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.setting-row > div {
+  min-width: 0;
+}
+
+.setting-row .card-hint {
+  margin-bottom: 0;
+}
+
+.interception-fallback-row {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-soft);
 }
 
 /* ---------- Domain input row ---------- */
@@ -827,6 +848,16 @@ textarea:focus {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md);
   background: var(--bg);
+}
+
+.card-actions + .storage-inspector,
+.card-actions + .log-viewer {
+  margin-top: 8px;
+}
+
+.storage-inspector > .empty-hint,
+.log-viewer > .empty-hint {
+  padding: 8px 12px;
 }
 
 .storage-key {

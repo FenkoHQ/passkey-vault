@@ -1,5 +1,5 @@
 /**
- * Content Script for PassKey Vault
+ * Content Script for Passkey Vault
  *
  * This script is injected into web pages to intercept WebAuthn API calls
  * and communicate with the background script.
@@ -15,6 +15,12 @@ interface PasskeyOption {
   userDisplayName: string;
   rpId: string;
   createdAt: number;
+}
+
+interface DomainRules {
+  mode: 'disabled' | 'all' | 'allowlist' | 'blocklist';
+  domains: string[];
+  passthroughOnNoPasskey?: boolean;
 }
 
 interface WindowWithVault extends Window {
@@ -113,6 +119,20 @@ class ContentScript {
     if (type === 'PASSKEY_CREATE_REQUEST') {
       // Create a new passkey
       try {
+        const pk = payload.publicKey as Record<string, unknown> | undefined;
+        const pkRp = (pk?.rp as Record<string, string>) || {};
+        const rpId = (pk?.rpId as string) || pkRp.id || new URL(payload.origin as string).hostname;
+        const rules = await this.getDomainRules();
+
+        if (!this.shouldInterceptDomain(rpId, rules)) {
+          this.postPassthroughResponse(
+            'PASSKEY_CREATE_RESPONSE',
+            requestId,
+            'Domain not intercepted'
+          );
+          return;
+        }
+
         const response = await this.sendMessage({
           type: 'CREATE_PASSKEY',
           payload,
@@ -121,12 +141,8 @@ class ContentScript {
         });
 
         if (response.success && response.credential) {
-          const pk = payload.publicKey as Record<string, unknown> | undefined;
           const pkUser = (pk?.user as Record<string, string>) || {};
-          const pkRp = (pk?.rp as Record<string, string>) || {};
           const userName = pkUser.displayName || pkUser.name || t('commonUnknownUser');
-          const rpId =
-            (pk?.rpId as string) || pkRp.id || new URL(payload.origin as string).hostname;
           _showPasskeyCreatedNotification(userName, rpId);
 
           // Reconstruct a proper PublicKeyCredential object
@@ -180,6 +196,13 @@ class ContentScript {
         // First, get list of available passkeys for this site
         const pk = payload.publicKey as Record<string, unknown> | undefined;
         const rpId = (pk?.rpId as string) || new URL(payload.origin as string).hostname;
+        const rules = await this.getDomainRules();
+
+        if (!this.shouldInterceptDomain(rpId, rules)) {
+          this.postPassthroughResponse('PASSKEY_GET_RESPONSE', requestId, 'Domain not intercepted');
+          return;
+        }
+
         const listResponse = await this.sendMessage({
           type: 'LIST_PASSKEYS_FOR_RP',
           payload: { rpId },
@@ -189,20 +212,16 @@ class ContentScript {
 
         const passkeys = listResponse.passkeys as Record<string, unknown>[] | undefined;
         if (!listResponse.success || !passkeys || passkeys.length === 0) {
-          // No passkeys found, return error to trigger fallback
-          window.postMessage(
-            {
-              source: 'PASSKEY_VAULT_CONTENT',
-              type: 'PASSKEY_GET_RESPONSE',
+          if (rules.passthroughOnNoPasskey !== false) {
+            this.postPassthroughResponse(
+              'PASSKEY_GET_RESPONSE',
               requestId,
-              result: {
-                success: false,
-                error: t('pageNoPasskeysSite'),
-                name: 'NotAllowedError',
-              },
-            },
-            '*'
-          );
+              'No vault passkey for this site'
+            );
+            return;
+          }
+
+          this.postBlockedResponse('PASSKEY_GET_RESPONSE', requestId, t('pageNoPasskeysSite'));
           return;
         }
 
@@ -233,6 +252,7 @@ class ContentScript {
                 success: false,
                 error: t('commonCancel'),
                 name: 'NotAllowedError',
+                blockNativeFallback: true,
               },
             },
             '*'
@@ -282,7 +302,7 @@ class ContentScript {
               source: 'PASSKEY_VAULT_CONTENT',
               type: 'PASSKEY_GET_RESPONSE',
               requestId,
-              result: response,
+              result: { ...response, blockNativeFallback: true },
             },
             '*'
           );
@@ -353,7 +373,7 @@ class ContentScript {
   private setupActivationListeners(): void {
     // Listen for custom activation events
     window.addEventListener('vault-activate', () => {
-      console.log('PassKey Vault: Activation event received');
+      console.log('Passkey Vault: Activation event received');
       this.activateEmergencyUI();
     });
 
@@ -499,6 +519,65 @@ class ContentScript {
       authenticatorAttachment: data.authenticatorAttachment,
       clientExtensionResults: data.clientExtensionResults,
     };
+  }
+
+  private async getDomainRules(): Promise<DomainRules> {
+    const result = await chrome.storage.local.get('domain_rules');
+    const partial = (result.domain_rules || {}) as Partial<DomainRules>;
+    return {
+      mode: partial.mode || 'all',
+      domains: Array.isArray(partial.domains) ? partial.domains : [],
+      passthroughOnNoPasskey: partial.passthroughOnNoPasskey !== false,
+    };
+  }
+
+  private shouldInterceptDomain(rpId: string, rules: DomainRules): boolean {
+    if (rules.mode === 'disabled') return false;
+    if (rules.mode === 'all') return true;
+
+    const domain = rpId.toLowerCase();
+    const matches = rules.domains.some((rule) => {
+      const normalizedRule = rule.toLowerCase();
+      return domain === normalizedRule || domain.endsWith(`.${normalizedRule}`);
+    });
+
+    if (rules.mode === 'allowlist') return matches;
+    if (rules.mode === 'blocklist') return !matches;
+    return true;
+  }
+
+  private postPassthroughResponse(type: string, requestId: string, reason: string): void {
+    window.postMessage(
+      {
+        source: 'PASSKEY_VAULT_CONTENT',
+        type,
+        requestId,
+        result: {
+          success: false,
+          passthrough: true,
+          error: reason,
+          name: 'NotAllowedError',
+        },
+      },
+      '*'
+    );
+  }
+
+  private postBlockedResponse(type: string, requestId: string, error: string): void {
+    window.postMessage(
+      {
+        source: 'PASSKEY_VAULT_CONTENT',
+        type,
+        requestId,
+        result: {
+          success: false,
+          error,
+          name: 'NotAllowedError',
+          blockNativeFallback: true,
+        },
+      },
+      '*'
+    );
   }
 
   /**

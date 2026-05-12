@@ -20,6 +20,7 @@
     resolve: (value: Credential | null) => void;
     reject: (reason?: unknown) => void;
     timeoutId: number;
+    nativeFallback?: () => Promise<Credential | null>;
   }
 
   interface PrfResults {
@@ -57,7 +58,7 @@
       const { requestId, result } = event.data;
 
       if (pendingRequests.has(requestId)) {
-        const { resolve, reject, timeoutId } = pendingRequests.get(requestId)!;
+        const { resolve, reject, timeoutId, nativeFallback } = pendingRequests.get(requestId)!;
         pendingRequests.delete(requestId);
         if (timeoutId) {
           clearTimeout(timeoutId);
@@ -123,11 +124,22 @@
             };
           }
           resolve(credential || result);
+        } else if (result.passthrough) {
+          if (DEBUG) console.log('Passkey Vault: Passing WebAuthn request to native browser UI');
+          if (!nativeFallback) {
+            reject(new DOMException('Native WebAuthn fallback is unavailable.', 'NotAllowedError'));
+            return;
+          }
+          nativeFallback().then(resolve).catch(reject);
         } else {
           // Create proper DOMException for WebAuthn errors
           const errorName = result.name || 'NotAllowedError';
           const errorMessage = result.error || 'The operation was aborted.';
-          reject(new DOMException(errorMessage, errorName));
+          const error = new DOMException(errorMessage, errorName);
+          if (result.blockNativeFallback) {
+            Object.defineProperty(error, '__passkeyVaultBlockNativeFallback', { value: true });
+          }
+          reject(error);
         }
       }
     }
@@ -140,7 +152,7 @@
 
     // Override create: fully intercept and handle passkey creation internally
     navigator.credentials.create = async function (options?: CredentialCreationOptions) {
-      if (DEBUG) console.log('PassKey Vault: Intercepted create request', options);
+      if (DEBUG) console.log('Passkey Vault: Intercepted create request', options);
 
       // Only intercept publicKey (WebAuthn) requests
       if (!options?.publicKey) {
@@ -160,7 +172,12 @@
           reject(new DOMException('The operation timed out.', 'NotAllowedError'));
         }, REQUEST_TIMEOUT_MS);
 
-        pendingRequests.set(requestId, { resolve, reject, timeoutId });
+        pendingRequests.set(requestId, {
+          resolve,
+          reject,
+          timeoutId,
+          nativeFallback: nativeCreate ? () => nativeCreate(options) : undefined,
+        });
 
         // Serialize the options for message passing
         const serializablePayload = {
@@ -188,7 +205,7 @@
         };
 
         if (DEBUG)
-          console.log('PassKey Vault: Sending CREATE_PASSKEY request', serializablePayload);
+          console.log('Passkey Vault: Sending CREATE_PASSKEY request', serializablePayload);
 
         window.postMessage(
           {
@@ -204,7 +221,7 @@
 
     // Override get: try extension-managed passkeys, fall back to native WebAuthn on failure.
     navigator.credentials.get = async function (options?: CredentialRequestOptions) {
-      if (DEBUG) console.log('PassKey Vault: Intercepted get request', options);
+      if (DEBUG) console.log('Passkey Vault: Intercepted get request', options);
 
       // Only intercept publicKey (WebAuthn) requests
       if (!options?.publicKey) {
@@ -225,7 +242,12 @@
             reject(new DOMException('The operation timed out.', 'NotAllowedError'));
           }, REQUEST_TIMEOUT_MS);
 
-          pendingRequests.set(requestId, { resolve, reject, timeoutId });
+          pendingRequests.set(requestId, {
+            resolve,
+            reject,
+            timeoutId,
+            nativeFallback: nativeGet ? () => nativeGet(options) : undefined,
+          });
 
           // Serialize the options for message passing
           const serializablePayload = {
@@ -245,7 +267,7 @@
             origin: window.location.origin,
           };
 
-          if (DEBUG) console.log('PassKey Vault: Sending GET_PASSKEY request', serializablePayload);
+          if (DEBUG) console.log('Passkey Vault: Sending GET_PASSKEY request', serializablePayload);
 
           window.postMessage(
             {
@@ -258,32 +280,29 @@
           );
         });
       } catch (e: unknown) {
-        // Check if this is a "no passkeys found" error - this is expected and should silently fall back
+        const blocksNativeFallback = Boolean(
+          (e as { __passkeyVaultBlockNativeFallback?: boolean }).__passkeyVaultBlockNativeFallback
+        );
+        if (blocksNativeFallback || !nativeGet) {
+          throw e;
+        }
+
         const errorMessage = e instanceof Error ? e.message : String(e);
-        const isNoPasskeysError =
-          errorMessage.includes('No passkeys found') || errorMessage.includes('not found');
 
         if (DEBUG) {
-          if (isNoPasskeysError) {
-            console.log('PassKey Vault: No stored passkeys for this site, using native WebAuthn');
-          } else {
-            console.warn(
-              'PassKey Vault: Extension get failed, falling back to native WebAuthn',
-              errorMessage
-            );
-          }
+          console.warn(
+            'Passkey Vault: Extension get failed, falling back to native WebAuthn',
+            errorMessage
+          );
         }
 
-        if (nativeGet) {
-          return nativeGet(options);
-        }
-        throw e;
+        return nativeGet(options);
       }
     };
 
-    if (DEBUG) console.log('PassKey Vault: WebAuthn API hooked successfully');
+    if (DEBUG) console.log('Passkey Vault: WebAuthn API hooked successfully');
   } else {
-    console.warn('PassKey Vault: navigator.credentials not found, cannot hook');
+    console.warn('Passkey Vault: navigator.credentials not found, cannot hook');
   }
 
   /**

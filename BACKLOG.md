@@ -1,4 +1,4 @@
-# PassKey Vault — Backlog
+# Passkey Vault — Backlog
 
 ## Phase 1: Harden (done)
 

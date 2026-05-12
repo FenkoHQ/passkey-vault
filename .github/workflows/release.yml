@@ -164,7 +164,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.tag_name.outputs.tag }}
-          name: PassKey Vault ${{ steps.tag_name.outputs.tag }}
+          name: Passkey Vault ${{ steps.tag_name.outputs.tag }}
           draft: false
           prerelease: ${{ contains(steps.tag_name.outputs.tag, 'alpha') || contains(steps.tag_name.outputs.tag, 'beta') || contains(steps.tag_name.outputs.tag, 'rc') }}
           files: |

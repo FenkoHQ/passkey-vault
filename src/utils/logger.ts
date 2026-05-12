@@ -1,5 +1,5 @@
 /**
- * Configurable logging utility for PassKey Vault
+ * Configurable logging utility for Passkey Vault
  *
  * By default, only errors are logged to the console.
  * Enable debug mode in the extension settings to see all logs.
@@ -40,25 +40,25 @@ class Logger {
 
   // Always log errors
   error(message: string, ...args: unknown[]): void {
-    console.error(`PassKey Vault: ${message}`, ...args);
+    console.error(`Passkey Vault: ${message}`, ...args);
   }
 
   // Only log warnings, info, and debug messages if debug mode is enabled
   warn(message: string, ...args: unknown[]): void {
     if (this.debugEnabled) {
-      console.warn(`PassKey Vault: ${message}`, ...args);
+      console.warn(`Passkey Vault: ${message}`, ...args);
     }
   }
 
   info(message: string, ...args: unknown[]): void {
     if (this.debugEnabled) {
-      console.log(`PassKey Vault: ${message}`, ...args);
+      console.log(`Passkey Vault: ${message}`, ...args);
     }
   }
 
   debug(message: string, ...args: unknown[]): void {
     if (this.debugEnabled) {
-      console.debug(`PassKey Vault: ${message}`, ...args);
+      console.debug(`Passkey Vault: ${message}`, ...args);
     }
   }
 }

@@ -1,5 +1,5 @@
 /**
- * Popup UI for PassKey Vault
+ * Popup UI for Passkey Vault
  *
  * Displays and manages stored passkeys with full export/import support
  */

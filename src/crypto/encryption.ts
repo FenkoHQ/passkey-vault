@@ -4,7 +4,7 @@ import { gcm } from '@noble/ciphers/aes';
 import { randomBytes } from '@noble/hashes/utils';
 
 /**
- * Encryption utilities for PassKey Vault
+ * Encryption utilities for Passkey Vault
  * Implements AES-256-GCM encryption with PBKDF2 key derivation
  */
 
