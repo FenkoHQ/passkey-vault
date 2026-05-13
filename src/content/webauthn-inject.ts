@@ -302,7 +302,14 @@
 
     if (DEBUG) console.log('Passkey Vault: WebAuthn API hooked successfully');
   } else {
-    console.warn('Passkey Vault: navigator.credentials not found, cannot hook');
+    // navigator.credentials is only exposed in secure contexts (HTTPS or
+    // http://localhost). On plain-HTTP origins the API is absent and there is
+    // nothing to hook — not an error, just a no-op for this page.
+    if (DEBUG) {
+      console.log(
+        'Passkey Vault: navigator.credentials unavailable (non-secure context), skipping hook'
+      );
+    }
   }
 
   /**

@@ -109,6 +109,11 @@ class BackgroundService {
       localPasskeyCount: 0,
       syncedPasskeyCount: 0,
     };
+    // MV3: listeners must be attached synchronously at SW wake, before any
+    // await — otherwise the first message after a cold start is dropped with
+    // "Could not establish connection. Receiving end does not exist."
+    this.setupMessageHandlers();
+    this.setupLifecycleHandlers();
     this.initialize();
   }
 
@@ -141,8 +146,6 @@ class BackgroundService {
     try {
       await logger.init();
       logger.info('Background service initializing...');
-      this.setupMessageHandlers();
-      this.setupLifecycleHandlers();
       await this.initializeSyncService();
       // Restore auto-lock timeout from storage
       const stored = await chrome.storage.local.get('auto_lock_timeout');
