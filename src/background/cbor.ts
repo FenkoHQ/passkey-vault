@@ -3,6 +3,14 @@
  * Covers map headers, text strings, byte strings, and COSE public keys.
  */
 
+// Passkey Vault AAGUID — stable identifier used so RPs can display the
+// "Passkey Vault" brand and icon (via the passkey-authenticator-aaguids
+// registry consumed by Chrome and other consumer RPs).
+// Source UUID: d2717a32-9851-48a8-9961-b264c97a411a
+export const PASSKEY_VAULT_AAGUID = new Uint8Array([
+  0xd2, 0x71, 0x7a, 0x32, 0x98, 0x51, 0x48, 0xa8, 0x99, 0x61, 0xb2, 0x64, 0xc9, 0x7a, 0x41, 0x1a,
+]);
+
 export function encodeMapHeader(length: number): number[] {
   if (length < 24) return [0xa0 + length];
   if (length < 256) return [0xb8, length];
@@ -108,7 +116,7 @@ export async function createAuthenticatorData(
   new DataView(counterBytes.buffer).setUint32(0, counter, false);
 
   if (includeAttestedCredentialData && credentialId && publicKeyRaw) {
-    const aaguid = new Uint8Array(16);
+    const aaguid = PASSKEY_VAULT_AAGUID;
     const credentialIdLength = new Uint8Array(2);
     new DataView(credentialIdLength.buffer).setUint16(0, credentialId.length, false);
     const cosePublicKey = rawPublicKeyToCose(publicKeyRaw);
