@@ -544,11 +544,20 @@ interface PasskeyOption {
   createdAt: number;
 }
 
+type PasskeySelectorResult =
+  | { action: 'use'; id: string }
+  | { action: 'cancel' }
+  | { action: 'passthrough' };
+
 /**
  * Show passkey selection modal
- * Returns the selected passkey ID or null if cancelled
+ * Returns one of: use selected passkey, cancel entirely, or pass through
+ * to the next handler / native WebAuthn UI.
  */
-function showPasskeySelector(passkeys: PasskeyOption[], rpId: string): Promise<string | null> {
+function showPasskeySelector(
+  passkeys: PasskeyOption[],
+  rpId: string
+): Promise<PasskeySelectorResult> {
   return new Promise((resolve) => {
     injectStyles();
 
@@ -608,6 +617,7 @@ function showPasskeySelector(passkeys: PasskeyOption[], rpId: string): Promise<s
          </div>
          <div class="pkv-card-footer">
            <button class="pkv-btn pkv-btn-secondary" id="pkv-cancel">${escapeHtml(t('commonCancel'))}</button>
+           <button class="pkv-btn pkv-btn-secondary" id="pkv-passthrough">${escapeHtml(t('pageUseOtherPasskey'))}</button>
            <button class="pkv-btn pkv-btn-primary" id="pkv-continue" ${passkeys.length === 0 ? 'disabled' : ''}>
              ${escapeHtml(t('pageContinue'))}
            </button>
@@ -628,7 +638,7 @@ function showPasskeySelector(passkeys: PasskeyOption[], rpId: string): Promise<s
     });
 
     // Cleanup function
-    const cleanup = (result: string | null) => {
+    const cleanup = (result: PasskeySelectorResult) => {
       document.removeEventListener('keydown', handleEscape);
       container.style.animation = 'pkv-slideOutRight 0.2s ease-in forwards';
       setTimeout(() => {
@@ -639,19 +649,23 @@ function showPasskeySelector(passkeys: PasskeyOption[], rpId: string): Promise<s
 
     // Handle cancel
     const cancelBtn = container.querySelector('#pkv-cancel');
-    cancelBtn?.addEventListener('click', () => cleanup(null));
+    cancelBtn?.addEventListener('click', () => cleanup({ action: 'cancel' }));
+
+    // Handle passthrough — let the next hook / native WebAuthn handle this
+    const passthroughBtn = container.querySelector('#pkv-passthrough');
+    passthroughBtn?.addEventListener('click', () => cleanup({ action: 'passthrough' }));
 
     // Handle continue
     const continueBtn = container.querySelector('#pkv-continue');
     continueBtn?.addEventListener('click', () => {
       if (!selectedId) return;
-      cleanup(selectedId);
+      cleanup({ action: 'use', id: selectedId });
     });
 
     // Handle escape key
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        cleanup(null);
+        cleanup({ action: 'cancel' });
       }
     };
     document.addEventListener('keydown', handleEscape);

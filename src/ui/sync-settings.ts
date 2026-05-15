@@ -408,13 +408,13 @@ function createDeviceCard(device: SyncDevice): string {
         <div class="device-info">
           <div class="device-name">${escapeHtml(device.name)}</div>
           <div class="device-meta">
-            <span class="device-type">${escapeHtml(device.deviceType)}</span>
+            <span class="device-type">${escapeHtml(formatDeviceType(device.deviceType))}</span>
             <span class="${badgeClass}">${isThisDevice ? t('optionsThisDevice') : t('syncOther')}</span>
           </div>
         </div>
         ${
           !isThisDevice
-            ? `<button class="device-remove-btn" data-device-id="${device.id}" title="Remove device">
+            ? `<button class="device-remove-btn" data-device-id="${device.id}" title="${escapeHtml(t('syncRemoveDevice'))}">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="18" y1="6" x2="6" y2="18"></line>
                 <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -434,6 +434,16 @@ function createDeviceCard(device: SyncDevice): string {
       </div>
     </div>
   `;
+}
+
+function formatDeviceType(deviceType: string): string {
+  const typeMap: Record<string, string> = {
+    desktop: t('syncDeviceTypeDesktop'),
+    laptop: t('syncDeviceTypeLaptop'),
+    mobile: t('syncDeviceTypeMobile'),
+    tablet: t('syncDeviceTypeTablet'),
+  };
+  return typeMap[deviceType.toLowerCase()] || t('syncDeviceTypeUnknown');
 }
 
 function getDeviceTypeIcon(deviceType: string): string {

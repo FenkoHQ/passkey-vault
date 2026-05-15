@@ -174,6 +174,10 @@ const en: TranslationMap = {
   optionsConsoleLoggingDesc: 'Log WebAuthn operations and sync events to the browser console.',
   optionsStorageInspector: 'Storage Inspector',
   optionsStorageInspectorDesc: 'Raw contents of chrome.storage.local.',
+  optionsStorageBytes: '{count} B',
+  optionsStorageKilobytes: '{count} KB',
+  optionsStorageBytesTotal: '{count} B total',
+  optionsStorageKilobytesTotal: '{count} KB total',
   optionsClickRefresh: 'Click Refresh to load.',
   optionsSyncProtocolLog: 'Sync Protocol Log',
   optionsSyncProtocolLogDesc: 'Recent Nostr relay events and sync operations.',
@@ -321,6 +325,12 @@ const en: TranslationMap = {
   syncConnecting: 'Connecting...',
   syncConnected: 'Connected',
   syncError: 'Error',
+  syncRemoveDevice: 'Remove device',
+  syncDeviceTypeDesktop: 'Desktop',
+  syncDeviceTypeLaptop: 'Laptop',
+  syncDeviceTypeMobile: 'Mobile',
+  syncDeviceTypeTablet: 'Tablet',
+  syncDeviceTypeUnknown: 'Unknown',
   syncLeaveConfirm:
     'Are you sure you want to leave this sync chain?\n\nThis will:\n• Remove this device from the sync chain\n• Delete all synced passkeys from this device\n• NOT affect passkeys on other devices in the chain\n\nMake sure you have access to another device before continuing.',
   syncLeft: 'You have left the sync chain.',
@@ -362,6 +372,7 @@ const en: TranslationMap = {
   pageSignInTo: 'Sign in to {rp}',
   pageNoPasskeysSite: 'No passkeys found for this site',
   pageContinue: 'Continue',
+  pageUseOtherPasskey: 'Use other passkey',
 };
 
 const ru: TranslationMap = {

@@ -23,8 +23,13 @@ interface DomainRules {
   passthroughOnNoPasskey?: boolean;
 }
 
+type PasskeySelectorResult =
+  | { action: 'use'; id: string }
+  | { action: 'cancel' }
+  | { action: 'passthrough' };
+
 interface WindowWithVault extends Window {
-  showPasskeySelector: (options: PasskeyOption[], rpId: string) => Promise<string | null>;
+  showPasskeySelector: (options: PasskeyOption[], rpId: string) => Promise<PasskeySelectorResult>;
   showPasskeyCreatedNotification: (userName: string, rpId: string) => void;
   showPasskeyUsedNotification: (userName: string, rpId: string) => void;
   showErrorNotification: (title: string, message: string) => void;
@@ -211,12 +216,32 @@ class ContentScript {
         });
 
         const passkeys = listResponse.passkeys as Record<string, unknown>[] | undefined;
-        if (!listResponse.success || !passkeys || passkeys.length === 0) {
+
+        // If the RP specified allowCredentials, the server only accepts those
+        // specific credential IDs (e.g. it knows the user is "alice" and lists
+        // alice's credentials). Suggesting a vault passkey not in that list
+        // would just fail at the server, so filter them out before deciding
+        // whether to show the picker.
+        const allowCredentials = (pk?.allowCredentials as Array<{ id: string }> | undefined) || [];
+        const allowedIds = allowCredentials
+          .map((c) => c?.id)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0);
+        const matchingPasskeys =
+          allowedIds.length > 0 && passkeys
+            ? passkeys.filter((p) => {
+                const credId = (p.credentialId || p.id) as string;
+                return allowedIds.includes(credId);
+              })
+            : passkeys;
+
+        if (!listResponse.success || !matchingPasskeys || matchingPasskeys.length === 0) {
           if (rules.passthroughOnNoPasskey !== false) {
             this.postPassthroughResponse(
               'PASSKEY_GET_RESPONSE',
               requestId,
-              'No vault passkey for this site'
+              allowedIds.length > 0
+                ? 'No vault passkey matches allowCredentials'
+                : 'No vault passkey for this site'
             );
             return;
           }
@@ -226,7 +251,7 @@ class ContentScript {
         }
 
         // Convert to PasskeyOption format for the selector
-        const passkeyOptions: PasskeyOption[] = passkeys.map((pk) => {
+        const passkeyOptions: PasskeyOption[] = matchingPasskeys.map((pk) => {
           const user = pk.user as Record<string, string> | undefined;
           return {
             id: pk.id as string,
@@ -239,10 +264,18 @@ class ContentScript {
         });
 
         // Show passkey selector UI
-        const selectedId = await _showPasskeySelector(passkeyOptions, rpId);
+        const selectorResult = await _showPasskeySelector(passkeyOptions, rpId);
 
-        if (!selectedId) {
-          // User cancelled
+        if (selectorResult.action === 'passthrough') {
+          this.postPassthroughResponse(
+            'PASSKEY_GET_RESPONSE',
+            requestId,
+            'User chose other passkey'
+          );
+          return;
+        }
+
+        if (selectorResult.action === 'cancel') {
           window.postMessage(
             {
               source: 'PASSKEY_VAULT_CONTENT',
@@ -259,6 +292,8 @@ class ContentScript {
           );
           return;
         }
+
+        const selectedId = selectorResult.id;
 
         // Get the selected passkey and sign
         const response = await this.sendMessage({

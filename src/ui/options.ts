@@ -226,7 +226,7 @@ function renderDomainList(domains: string[]): void {
       (d) => `
     <div class="domain-item">
       <span>${escapeHtml(d)}</span>
-      <button data-domain="${escapeHtml(d)}" title="Remove">
+      <button data-domain="${escapeHtml(d)}" title="${escapeHtml(t('commonRemove'))}">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
         </svg>
@@ -287,7 +287,7 @@ async function loadSyncSettings(): Promise<void> {
 
 function updateSyncStatus(status: SyncStatusResponse): void {
   const badge = document.getElementById('sync-connection-badge')!;
-  badge.textContent = status.connectionStatus;
+  badge.textContent = formatConnectionStatus(status.connectionStatus);
   badge.className = 'status-badge ' + status.connectionStatus;
 
   setText('sync-local-count', String(status.localPasskeyCount));
@@ -353,7 +353,7 @@ function renderRelayList(relays: string[], currentRelay: string): void {
     <div class="relay-item">
       <span class="relay-status ${url === currentRelay ? 'active' : ''}"></span>
       <span class="relay-url">${escapeHtml(url)}</span>
-      <button data-relay="${escapeHtml(url)}" title="Remove">
+      <button data-relay="${escapeHtml(url)}" title="${escapeHtml(t('commonRemove'))}">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
         </svg>
@@ -482,7 +482,7 @@ async function loadStorageInspector(): Promise<void> {
       const json = JSON.stringify(data[key], null, 2);
       const size = new Blob([json]).size;
       totalBytes += size;
-      const sizeStr = size > 1024 ? `${(size / 1024).toFixed(1)} KB` : `${size} B`;
+      const sizeStr = formatStorageSize(size);
 
       return `
       <div class="storage-key">
@@ -497,8 +497,7 @@ async function loadStorageInspector(): Promise<void> {
     })
     .join('');
 
-  totalEl.textContent =
-    totalBytes > 1024 ? `${(totalBytes / 1024).toFixed(1)} KB total` : `${totalBytes} B total`;
+  totalEl.textContent = formatStorageSize(totalBytes, true);
 
   // Toggle expand
   container.querySelectorAll('.storage-key-header').forEach((header) => {
@@ -655,4 +654,22 @@ function formatTime(timestamp: number): string {
     minute: '2-digit',
     second: '2-digit',
   });
+}
+
+function formatConnectionStatus(status: string): string {
+  const statusMap: Record<string, string> = {
+    disconnected: t('syncDisconnected'),
+    connecting: t('syncConnecting'),
+    connected: t('syncConnected'),
+    error: t('syncError'),
+  };
+  return statusMap[status] || status;
+}
+
+function formatStorageSize(bytes: number, total = false): string {
+  if (bytes > 1024) {
+    const kb = (bytes / 1024).toFixed(1);
+    return t(total ? 'optionsStorageKilobytesTotal' : 'optionsStorageKilobytes', { count: kb });
+  }
+  return t(total ? 'optionsStorageBytesTotal' : 'optionsStorageBytes', { count: bytes });
 }
