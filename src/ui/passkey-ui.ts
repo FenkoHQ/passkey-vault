@@ -110,7 +110,7 @@ const UI_STYLES = `
     background: #ffffff;
     border-radius: 0;
     border: 3px solid #000000;
-    width: 260px;
+    width: min(340px, calc(100vw - 40px));
     max-height: 70vh;
     overflow: hidden;
     font-family: 'Courier New', Courier, monospace;
@@ -148,7 +148,8 @@ const UI_STYLES = `
   .pkv-card-footer {
     padding: 10px 16px;
     border-top: 2px solid #000000;
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
     background: #f5f5f5;
   }
@@ -247,6 +248,7 @@ const UI_STYLES = `
   /* Buttons */
   .pkv-btn {
     flex: 1;
+    min-width: 0;
     padding: 10px 16px;
     border: 3px solid #000000;
     border-radius: 0;
@@ -258,8 +260,14 @@ const UI_STYLES = `
     align-items: center;
     justify-content: center;
     gap: 6px;
+    line-height: 1.2;
+    text-align: center;
     text-transform: uppercase;
     font-family: 'Courier New', Courier, monospace;
+  }
+
+  .pkv-card-footer .pkv-btn-primary {
+    grid-column: 1 / -1;
   }
 
   .pkv-btn-primary {
