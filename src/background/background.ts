@@ -18,6 +18,19 @@ import {
   buildClientExtensionResults,
   encodePrfExtension,
 } from './prf';
+import {
+  generateTotp as generateTotpCode,
+  generateHotp as generateHotpCode,
+  parseOtpauth,
+} from '../crypto/totp';
+import {
+  loadTotpEntries,
+  addTotpEntry as addTotpEntryStore,
+  deleteTotpEntry as deleteTotpEntryStore,
+  entryToSecretBytes,
+  generateTotpId,
+  type StoredTotpEntry,
+} from '../crypto/totp-store';
 
 const PASSKEY_STORAGE_KEY = 'passkeys';
 const SYNC_CONFIG_KEY = 'sync_config';
@@ -230,6 +243,14 @@ class BackgroundService {
         return this.handleDeletePasskey(payload || {});
       case 'ENCRYPT_BACKUP':
         return this.handleEncryptBackup(payload as { data: string; password: string });
+      case 'LIST_TOTP_ENTRIES':
+        return this.handleListTotpEntries();
+      case 'ADD_TOTP_ENTRY':
+        return this.handleAddTotpEntry(payload || {});
+      case 'DELETE_TOTP_ENTRY':
+        return this.handleDeleteTotpEntry(payload || {});
+      case 'GENERATE_TOTP_CODE':
+        return this.handleGenerateTotpCode(payload || {});
       case 'DECRYPT_BACKUP':
         return this.handleDecryptBackup(
           payload as { data: string; iv: string; salt: string; password: string }
@@ -715,6 +736,130 @@ class BackgroundService {
     }
   }
 
+  // ==================== TOTP OPERATIONS ====================
+
+  private async handleListTotpEntries(): Promise<unknown> {
+    try {
+      const entries = await loadTotpEntries();
+      return { success: true, entries, count: entries.length };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Error listing TOTP entries:', error);
+      return { success: false, error: message };
+    }
+  }
+
+  private async handleAddTotpEntry(payload: MessagePayload): Promise<unknown> {
+    try {
+      const otpauthUri = payload.otpauthUri as string | undefined;
+      const entryInput = payload.entry as Partial<StoredTotpEntry> | undefined;
+
+      let entry: StoredTotpEntry;
+
+      if (otpauthUri) {
+        const parsed = parseOtpauth(otpauthUri);
+        const secretB64 = arrayBufferToBase64(parsed.secret.buffer as ArrayBuffer);
+        entry = {
+          id: generateTotpId(),
+          type: parsed.type,
+          issuer: parsed.issuer,
+          account: parsed.account,
+          secretB64,
+          algorithm: parsed.algorithm,
+          digits: parsed.digits,
+          period: parsed.period,
+          counter: parsed.counter,
+          createdAt: Date.now(),
+        };
+      } else if (entryInput && entryInput.issuer && entryInput.secretB64) {
+        entry = {
+          id: entryInput.id || generateTotpId(),
+          type: entryInput.type || 'totp',
+          issuer: entryInput.issuer,
+          account: entryInput.account || '',
+          secretB64: entryInput.secretB64,
+          algorithm: entryInput.algorithm || 'SHA1',
+          digits: entryInput.digits || 6,
+          period: entryInput.period || 30,
+          counter: entryInput.counter || 0,
+          createdAt: entryInput.createdAt || Date.now(),
+        };
+      } else {
+        return { success: false, error: 'Provide otpauthUri or a complete entry' };
+      }
+
+      await addTotpEntryStore(entry);
+      this.logSync('TOTP_CREATED', { id: entry.id, issuer: entry.issuer });
+      await this.incrementPendingChanges();
+      this.triggerSync();
+      return { success: true, entry };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Error adding TOTP entry:', error);
+      return { success: false, error: message };
+    }
+  }
+
+  private async handleDeleteTotpEntry(payload: MessagePayload): Promise<unknown> {
+    try {
+      const id = payload.id as string;
+      if (!id) return { success: false, error: 'Missing id' };
+      const deleted = await deleteTotpEntryStore(id);
+      if (!deleted) return { success: false, error: 'Entry not found' };
+      this.logSync('TOTP_DELETED', { id });
+      await this.incrementPendingChanges();
+      this.triggerSync();
+      return { success: true };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Error deleting TOTP entry:', error);
+      return { success: false, error: message };
+    }
+  }
+
+  private async handleGenerateTotpCode(payload: MessagePayload): Promise<unknown> {
+    try {
+      const id = payload.id as string;
+      const counter = payload.counter as number | undefined;
+      const timestamp = (payload.timestamp as number | undefined) ?? Date.now();
+      if (!id) return { success: false, error: 'Missing id' };
+
+      const entries = await loadTotpEntries();
+      const entry = entries.find((e) => e.id === id);
+      if (!entry) return { success: false, error: 'Entry not found' };
+
+      const secret = entryToSecretBytes(entry);
+      const code =
+        entry.type === 'hotp'
+          ? generateHotpCode({
+              secret,
+              algorithm: entry.algorithm,
+              digits: entry.digits,
+              counter: counter ?? entry.counter,
+            })
+          : generateTotpCode({
+              secret,
+              algorithm: entry.algorithm,
+              digits: entry.digits,
+              period: entry.period,
+              timestamp,
+            });
+
+      return {
+        success: true,
+        code,
+        algorithm: entry.algorithm,
+        digits: entry.digits,
+        type: entry.type,
+        timestamp,
+      };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Error generating TOTP code:', error);
+      return { success: false, error: message };
+    }
+  }
+
   // ==================== SYNC OPERATIONS ====================
 
   private async createSyncChain(deviceName: string, wordCount: number): Promise<unknown> {
@@ -1128,6 +1273,13 @@ class BackgroundService {
       }
       if (passkeys.length > 0) {
         logger.info(`Migrated ${passkeys.length} passkeys to secure storage`);
+      }
+
+      const totpResult = await chrome.storage.local.get('totp_entries');
+      const totpEntries: StoredTotpEntry[] = totpResult['totp_entries'] || [];
+      if (totpEntries.length > 0) {
+        await secureStorage.storeTotpEntries(totpEntries as unknown as Record<string, unknown>[]);
+        logger.info(`Migrated ${totpEntries.length} TOTP entries to secure storage`);
       }
 
       return { success: true, message: 'Master password setup complete' };

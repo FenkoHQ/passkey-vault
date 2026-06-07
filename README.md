@@ -28,7 +28,8 @@ A browser extension that intercepts WebAuthn API calls and stores passkeys local
 
 - **WebAuthn interception** — captures `navigator.credentials.create()` and `navigator.credentials.get()` before the browser handles them
 - **Local storage** — passkeys stay in browser local storage, no external server
-- **Backup & import** — export all passkeys (including private keys) as a JSON file, import on another device
+- **TOTP / 2FA codes** — RFC 6238 generator with live codes, clipboard copy, otpauth:// import, included in backup and sync
+- **Backup & import** — export all passkeys (including private keys) and TOTP entries as a JSON file, import on another device
 - **Cross-device sync** — optional Nostr-based sync chain using a BIP-39 seed phrase
 - **Emergency access** — standalone recovery page for vault management without the extension popup
 - **Chrome + Firefox** — single codebase, separate manifests
@@ -75,6 +76,7 @@ npm run build:all      # Both
 2. On `credentials.create()`, the background script generates an ECDSA P-256 key pair, creates a valid attestation response, and stores the passkey
 3. On `credentials.get()`, it signs the challenge with the stored private key using proper CBOR encoding
 4. The popup reads directly from `chrome.storage.local` — no background message passing for display
+5. TOTP codes are derived locally from each entry's secret using HMAC-SHA1/256/512; the popup caches the current code and refreshes it once per second when the 2FA tab is open
 
 ---
 

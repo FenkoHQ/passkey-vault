@@ -6,6 +6,7 @@ const RECONNECT_DELAY = 5000;
 const HEARTBEAT_INTERVAL = 300000; // 5 minutes - relays rate limit aggressively
 const MIN_BROADCAST_INTERVAL = 10000; // Minimum 10s between broadcasts
 const PASSKEY_STORAGE_KEY = 'passkeys';
+const TOTP_STORAGE_KEY = 'totp_entries';
 const SYNC_DEVICES_KEY = 'sync_devices';
 const MAX_DEBUG_LOGS = 200;
 const MAX_PROCESSED_EVENTS = 1000; // Track last N event IDs for replay protection
@@ -63,6 +64,22 @@ export interface SyncChain {
   devices: SyncDevice[];
 }
 
+// TOTP entry synced between devices (same shape as the local store, minus
+// sync metadata fields which get attached on the receiving side)
+export interface SyncTotpEntry {
+  id: string;
+  type: 'totp' | 'hotp';
+  issuer: string;
+  account: string;
+  secretB64: string;
+  algorithm: 'SHA1' | 'SHA256' | 'SHA512';
+  digits: number;
+  period: number;
+  counter: number;
+  createdAt: number;
+  lastUsed?: number;
+}
+
 // Debug info returned by getDebugInfo
 export interface SyncDebugInfo {
   chainId: string | null;
@@ -115,6 +132,7 @@ export interface EncryptedPasskeyBundle {
   // SECURITY FIX: Removed passkeyIds from outside encrypted payload
   // passkeyIds are now only inside the encrypted ciphertext
   passkeyCount: number; // Only expose count, not IDs
+  totpCount: number; // TOTP entry count (also only inside ciphertext)
 }
 
 export class SyncService {
@@ -771,9 +789,14 @@ export class SyncService {
         this.log('info', 'sync', 'Received passkey bundle', {
           from: msg.deviceId?.substring(0, 8),
           passkeyCount: bundle.passkeyCount,
+          totpCount: bundle.totpCount || 0,
         });
-        const remotePasskeys = await this.decryptBundle(bundle);
+        const { passkeys: remotePasskeys, totpEntries: remoteTotp } =
+          await this.decryptBundle(bundle);
         await this.mergePasskeys(remotePasskeys, msg.deviceId);
+        if (remoteTotp.length > 0) {
+          await this.mergeTotpEntries(remoteTotp, msg.deviceId);
+        }
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         this.log('error', 'sync', 'Failed to decrypt/merge bundle', { error: errorMessage });
@@ -959,10 +982,15 @@ export class SyncService {
       throw new Error('Encryption key not initialized');
     }
 
+    const totpResult = await chrome.storage.local.get(TOTP_STORAGE_KEY);
+    const totpEntries = (totpResult[TOTP_STORAGE_KEY] || []) as SyncTotpEntry[];
+
     // Include passkeyIds INSIDE the encrypted payload
     const bundlePayload = {
       passkeys,
       passkeyIds: passkeys.map((p) => p.id),
+      totpEntries,
+      totpIds: totpEntries.map((e) => e.id),
       timestamp: Date.now(),
       deviceId: this.deviceId,
     };
@@ -985,10 +1013,13 @@ export class SyncService {
       ciphertext: this.arrayBufferToBase64(ciphertext),
       // SECURITY FIX: Only expose count, not individual IDs
       passkeyCount: passkeys.length,
+      totpCount: totpEntries.length,
     };
   }
 
-  private async decryptBundle(bundle: EncryptedPasskeyBundle): Promise<SyncPasskey[]> {
+  private async decryptBundle(
+    bundle: EncryptedPasskeyBundle
+  ): Promise<{ passkeys: SyncPasskey[]; totpEntries: SyncTotpEntry[] }> {
     if (!this.encryptionKey) {
       throw new Error('Encryption key not initialized');
     }
@@ -1007,9 +1038,12 @@ export class SyncService {
 
     // Handle both old format (direct passkeys array) and new format (bundlePayload object)
     if (Array.isArray(payload)) {
-      return payload; // Old format - direct passkeys array
+      return { passkeys: payload, totpEntries: [] };
     }
-    return payload.passkeys || []; // New format - extract passkeys from payload
+    return {
+      passkeys: payload.passkeys || [],
+      totpEntries: payload.totpEntries || [],
+    };
   }
 
   private async getLocalPasskeys(): Promise<SyncPasskey[]> {
@@ -1070,6 +1104,40 @@ export class SyncService {
       });
     } else {
       this.log('info', 'merge', 'No changes needed');
+    }
+  }
+
+  private async mergeTotpEntries(
+    remoteEntries: SyncTotpEntry[],
+    sourceDeviceId: string
+  ): Promise<void> {
+    const result = await chrome.storage.local.get(TOTP_STORAGE_KEY);
+    const local = (result[TOTP_STORAGE_KEY] || []) as SyncTotpEntry[];
+    const localMap = new Map(local.map((e) => [e.id, e]));
+
+    let added = 0;
+    let updated = 0;
+
+    for (const remote of remoteEntries) {
+      const existing = localMap.get(remote.id);
+      if (!existing) {
+        localMap.set(remote.id, remote);
+        added++;
+      } else if (remote.createdAt > existing.createdAt) {
+        localMap.set(remote.id, remote);
+        updated++;
+      }
+    }
+
+    if (added > 0 || updated > 0) {
+      const merged = Array.from(localMap.values());
+      await chrome.storage.local.set({ [TOTP_STORAGE_KEY]: merged });
+      this.log('info', 'merge', 'TOTP merge complete', {
+        added,
+        updated,
+        total: merged.length,
+        sourceDevice: sourceDeviceId.substring(0, 8),
+      });
     }
   }
 

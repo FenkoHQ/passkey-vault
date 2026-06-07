@@ -170,6 +170,43 @@ code,
   margin-top: 2px;
 }
 
+.sidebar-warning {
+  margin-top: auto;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-left: 12px;
+  margin-right: 12px;
+  padding: 12px;
+  background: var(--warning-soft);
+  border: 1px solid var(--warning);
+  border-radius: 10px;
+}
+
+.sidebar-warning-icon {
+  flex-shrink: 0;
+  color: var(--warning);
+  margin-top: 1px;
+}
+
+.sidebar-warning-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar-warning-text strong {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--warning);
+}
+
+.sidebar-warning-text span {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
 nav {
   display: flex;
   flex-direction: column;

@@ -21,6 +21,7 @@ const STORAGE_KEYS = {
   MASTER_KEY_CHECK: 'passext_master_key_check',
   ENCRYPTED_SYNC_CONFIG: 'passext_encrypted_sync_config',
   ENCRYPTED_PASSKEYS: 'passext_encrypted_passkeys',
+  ENCRYPTED_TOTP_ENTRIES: 'passext_encrypted_totp_entries',
   ENCRYPTION_SALT: 'passext_encryption_salt',
 } as const;
 
@@ -296,6 +297,62 @@ export class SecureStorage {
     return passkeys.filter((p) => p.rpId === rpId);
   }
 
+  async storeTotpEntries(entries: Record<string, unknown>[]): Promise<void> {
+    this.ensureUnlocked();
+
+    const encrypted = encryptData(JSON.stringify(entries), this.encryptionKey!);
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES]: encrypted,
+    });
+
+    this.resetAutoLock();
+  }
+
+  async getTotpEntries(): Promise<Record<string, unknown>[]> {
+    this.ensureUnlocked();
+
+    const result = await chrome.storage.local.get(STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES);
+    if (!result[STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES]) {
+      return [];
+    }
+
+    try {
+      const decrypted = decryptData(
+        result[STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES],
+        this.encryptionKey!
+      );
+      this.resetAutoLock();
+      return JSON.parse(decrypted);
+    } catch (error) {
+      console.error('Failed to decrypt TOTP entries:', error);
+      return [];
+    }
+  }
+
+  async upsertTotpEntry(entry: Record<string, unknown>): Promise<void> {
+    const entries = await this.getTotpEntries();
+    const index = entries.findIndex((e) => e.id === entry.id);
+
+    if (index >= 0) {
+      entries[index] = entry;
+    } else {
+      entries.push(entry);
+    }
+
+    await this.storeTotpEntries(entries);
+  }
+
+  async deleteTotpEntry(id: string): Promise<boolean> {
+    const entries = await this.getTotpEntries();
+    const filtered = entries.filter((e) => e.id !== id);
+
+    if (filtered.length < entries.length) {
+      await this.storeTotpEntries(filtered);
+      return true;
+    }
+    return false;
+  }
+
   /**
    * Change the master password
    */
@@ -312,6 +369,7 @@ export class SecureStorage {
       // Get all existing data
       const syncConfig = await this.getSyncConfig();
       const passkeys = await this.getPasskeys();
+      const totpEntries = await this.getTotpEntries();
 
       // Generate new salt
       const newSalt = randomBytes(ENCRYPTION_CONFIG.saltLength);
@@ -342,6 +400,9 @@ export class SecureStorage {
       if (passkeys.length > 0) {
         await this.storePasskeys(passkeys);
       }
+      if (totpEntries.length > 0) {
+        await this.storeTotpEntries(totpEntries);
+      }
 
       this.resetAutoLock();
       return true;
@@ -360,6 +421,7 @@ export class SecureStorage {
       STORAGE_KEYS.MASTER_KEY_CHECK,
       STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG,
       STORAGE_KEYS.ENCRYPTED_PASSKEYS,
+      STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES,
       STORAGE_KEYS.ENCRYPTION_SALT,
     ]);
   }

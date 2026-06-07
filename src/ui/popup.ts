@@ -4,6 +4,7 @@
  * Displays and manages stored passkeys with full export/import support
  */
 
+import jsQR from 'jsqr';
 import { formatCount, initAndLocalize, t } from '../i18n';
 import { initTheme } from '../theme';
 
@@ -29,19 +30,40 @@ import { initTheme } from '../theme';
   }
 
   const POPUP_PASSKEY_STORAGE_KEY = 'passkeys';
+  const POPUP_TOTP_STORAGE_KEY = 'totp_entries';
+  const VAULT_WARNING_DISMISSED_KEY = 'vault_warning_dismissed';
   const EXPORT_VERSION = '1.0';
   const SETUP_SKIPPED_KEY = 'master_password_setup_skipped';
+
+  interface PopupTotpEntry {
+    id: string;
+    type: 'totp' | 'hotp';
+    issuer: string;
+    account: string;
+    secretB64: string;
+    algorithm: 'SHA1' | 'SHA256' | 'SHA512';
+    digits: number;
+    period: number;
+    counter: number;
+    createdAt: number;
+  }
 
   // DOM elements
   let loadingEl: HTMLElement;
   let emptyStateEl: HTMLElement;
-  let passkeyListEl: HTMLElement;
+  let vaultListEl: HTMLElement;
+  let noResultsEl: HTMLElement;
+  let noResultsTextEl: HTMLElement;
   let passkeyCountEl: HTMLElement;
   let refreshBtn: HTMLButtonElement;
   let exportFullBtn: HTMLButtonElement;
   let confirmModal: HTMLElement;
   let searchInput: HTMLInputElement;
   let searchClearBtn: HTMLButtonElement;
+  let filterPasskeysBtn: HTMLButtonElement;
+  let filterTotpBtn: HTMLButtonElement;
+  let vaultWarningEl: HTMLElement;
+  let vaultWarningDismissBtn: HTMLButtonElement;
 
   // Screen elements
   let lockScreen: HTMLElement;
@@ -49,6 +71,11 @@ import { initTheme } from '../theme';
   let mainContainer: HTMLElement;
 
   let allPasskeys: PopupPasskey[] = [];
+  let allTotpEntries: PopupTotpEntry[] = [];
+  const filters = { passkeys: true, totp: true };
+  let totpTickInterval: number | null = null;
+  const codeCache = new Map<string, { code: string; expiresAt: number }>();
+  const VAULT_FILTERS_KEY = 'vault_filters';
 
   // Initialize popup when DOM is loaded
   document.addEventListener('DOMContentLoaded', async () => {
@@ -199,9 +226,65 @@ import { initTheme } from '../theme';
     mainContainer.style.display = 'block';
     initializeElements();
     createConfirmModal();
-    loadPasskeys();
     loadSyncStatus();
     setupEventListeners();
+    startTotpTicker();
+    initVaultWarning();
+    initFilters().then(loadVault);
+  }
+
+  async function initFilters(): Promise<void> {
+    try {
+      const result = await chrome.storage.local.get(VAULT_FILTERS_KEY);
+      const stored = result[VAULT_FILTERS_KEY] as
+        | { passkeys?: boolean; totp?: boolean }
+        | undefined;
+      if (stored) {
+        filters.passkeys = stored.passkeys !== false;
+        filters.totp = stored.totp !== false;
+      }
+    } catch (error) {
+      console.error('Failed to read vault filters:', error);
+    }
+    syncFilterChips();
+  }
+
+  function syncFilterChips(): void {
+    filterPasskeysBtn.classList.toggle('active', filters.passkeys);
+    filterPasskeysBtn.setAttribute('aria-pressed', String(filters.passkeys));
+    filterTotpBtn.classList.toggle('active', filters.totp);
+    filterTotpBtn.setAttribute('aria-pressed', String(filters.totp));
+  }
+
+  async function toggleFilter(type: 'passkeys' | 'totp'): Promise<void> {
+    filters[type] = !filters[type];
+    syncFilterChips();
+    renderVault();
+    try {
+      await chrome.storage.local.set({ [VAULT_FILTERS_KEY]: { ...filters } });
+    } catch (error) {
+      console.error('Failed to persist vault filters:', error);
+    }
+  }
+
+  async function initVaultWarning(): Promise<void> {
+    if (!vaultWarningEl) return;
+    try {
+      const result = await chrome.storage.local.get(VAULT_WARNING_DISMISSED_KEY);
+      vaultWarningEl.hidden = result[VAULT_WARNING_DISMISSED_KEY] === true;
+    } catch (error) {
+      console.error('Failed to read vault warning state:', error);
+      vaultWarningEl.hidden = false;
+    }
+  }
+
+  async function dismissVaultWarning(): Promise<void> {
+    vaultWarningEl.hidden = true;
+    try {
+      await chrome.storage.local.set({ [VAULT_WARNING_DISMISSED_KEY]: true });
+    } catch (error) {
+      console.error('Failed to persist vault warning dismissal:', error);
+    }
   }
 
   async function loadSyncStatus(): Promise<void> {
@@ -252,12 +335,18 @@ import { initTheme } from '../theme';
   function initializeElements(): void {
     loadingEl = document.getElementById('loading') as HTMLElement;
     emptyStateEl = document.getElementById('empty-state') as HTMLElement;
-    passkeyListEl = document.getElementById('passkey-list') as HTMLElement;
+    vaultListEl = document.getElementById('vault-list') as HTMLElement;
+    noResultsEl = document.getElementById('no-results') as HTMLElement;
+    noResultsTextEl = document.getElementById('no-results-text') as HTMLElement;
     passkeyCountEl = document.getElementById('passkey-count') as HTMLElement;
     refreshBtn = document.getElementById('refresh-btn') as HTMLButtonElement;
     exportFullBtn = document.getElementById('export-full-btn') as HTMLButtonElement;
     searchInput = document.getElementById('search-input') as HTMLInputElement;
     searchClearBtn = document.getElementById('search-clear') as HTMLButtonElement;
+    filterPasskeysBtn = document.getElementById('filter-passkeys') as HTMLButtonElement;
+    filterTotpBtn = document.getElementById('filter-totp') as HTMLButtonElement;
+    vaultWarningEl = document.getElementById('vault-warning') as HTMLElement;
+    vaultWarningDismissBtn = document.getElementById('vault-warning-dismiss') as HTMLButtonElement;
   }
 
   function createConfirmModal(): void {
@@ -333,7 +422,7 @@ import { initTheme } from '../theme';
   }
 
   function setupEventListeners(): void {
-    refreshBtn.addEventListener('click', loadPasskeys);
+    refreshBtn.addEventListener('click', loadVault);
     exportFullBtn.addEventListener('click', exportPasskeysFull);
 
     searchInput.addEventListener('input', handleSearch);
@@ -343,31 +432,33 @@ import { initTheme } from '../theme';
     if (importEmptyBtn) {
       importEmptyBtn.addEventListener('click', openImportPage);
     }
+
+    filterPasskeysBtn.addEventListener('click', () => toggleFilter('passkeys'));
+    filterTotpBtn.addEventListener('click', () => toggleFilter('totp'));
+
+    const addTotpEmpty = document.getElementById('add-totp-empty-btn');
+    if (addTotpEmpty) {
+      addTotpEmpty.addEventListener('click', showAddTotpDialog);
+    }
+    const addTotpBtn = document.getElementById('add-totp-btn');
+    if (addTotpBtn) {
+      addTotpBtn.addEventListener('click', showAddTotpDialog);
+    }
+
+    if (vaultWarningDismissBtn) {
+      vaultWarningDismissBtn.addEventListener('click', dismissVaultWarning);
+    }
   }
 
   function handleSearch(): void {
-    const query = searchInput.value.trim().toLowerCase();
-
-    searchClearBtn.style.display = query ? 'block' : 'none';
-
-    if (!query) {
-      renderPasskeys(allPasskeys);
-      return;
-    }
-
-    const filtered = filterAndSortPasskeys(allPasskeys, query);
-
-    if (filtered.length === 0) {
-      showNoResults(query);
-    } else {
-      renderPasskeys(filtered);
-    }
+    searchClearBtn.style.display = searchInput.value.trim() ? 'block' : 'none';
+    renderVault();
   }
 
   function clearSearch(): void {
     searchInput.value = '';
     searchClearBtn.style.display = 'none';
-    renderPasskeys(allPasskeys);
+    renderVault();
     searchInput.focus();
   }
 
@@ -429,45 +520,29 @@ import { initTheme } from '../theme';
     return scored.map((item) => item.passkey);
   }
 
-  function showNoResults(query: string): void {
-    passkeyListEl.innerHTML = `
-      <div class="no-results">
-        <div class="no-results-icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/><path d="m15 8-4 4-2-2"/></svg></div>
-        <p>${popupEscapeHtml(t('popupNoResults', { query }))}</p>
-      </div>
-    `;
-    passkeyListEl.style.display = 'flex';
-  }
-
   function openImportPage(): void {
     window.open(chrome.runtime.getURL('import.html'));
   }
 
-  async function loadPasskeys(): Promise<void> {
+  // Load both passkeys and TOTP entries, then render the unified vault list.
+  async function loadVault(): Promise<void> {
     try {
       loadingEl.style.display = 'flex';
       emptyStateEl.style.display = 'none';
-      passkeyListEl.style.display = 'none';
+      noResultsEl.hidden = true;
+      vaultListEl.style.display = 'none';
 
-      searchInput.value = '';
-      searchClearBtn.style.display = 'none';
-
-      const result = await chrome.storage.local.get(POPUP_PASSKEY_STORAGE_KEY);
-      const passkeys = (result[POPUP_PASSKEY_STORAGE_KEY] || []) as PopupPasskey[];
-
-      allPasskeys = passkeys;
+      const [passkeyResult, totpResult] = await Promise.all([
+        chrome.storage.local.get(POPUP_PASSKEY_STORAGE_KEY),
+        chrome.storage.local.get(POPUP_TOTP_STORAGE_KEY),
+      ]);
+      allPasskeys = (passkeyResult[POPUP_PASSKEY_STORAGE_KEY] || []) as PopupPasskey[];
+      allTotpEntries = (totpResult[POPUP_TOTP_STORAGE_KEY] || []) as PopupTotpEntry[];
 
       loadingEl.style.display = 'none';
-
-      passkeyCountEl.textContent = formatCount('popupPasskeyCount', passkeys.length);
-
-      if (passkeys.length === 0) {
-        emptyStateEl.style.display = 'block';
-      } else {
-        renderPasskeys(passkeys);
-      }
+      renderVault();
     } catch (error) {
-      console.error('Error loading passkeys:', error);
+      console.error('Error loading vault:', error);
       loadingEl.innerHTML = `
         <div class="error-state">
           <div class="error-icon"><svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg></div>
@@ -478,24 +553,85 @@ import { initTheme } from '../theme';
     }
   }
 
-  function renderPasskeys(passkeys: PopupPasskey[]): void {
-    passkeyListEl.innerHTML = '';
-
-    const sortedPasskeys = [...passkeys].sort(
-      (a, b) => getCreatedAtTimestamp(b) - getCreatedAtTimestamp(a)
+  function filterTotpEntries(entries: PopupTotpEntry[], query: string): PopupTotpEntry[] {
+    const matched = query
+      ? entries.filter((e) => {
+          const issuer = (e.issuer || '').toLowerCase();
+          const account = (e.account || '').toLowerCase();
+          return issuer.includes(query) || account.includes(query);
+        })
+      : [...entries];
+    return matched.sort((a, b) =>
+      (a.issuer || a.account || '')
+        .toLowerCase()
+        .localeCompare((b.issuer || b.account || '').toLowerCase())
     );
+  }
 
-    sortedPasskeys.forEach((passkey) => {
-      const item = createPasskeyItem(passkey);
-      passkeyListEl.appendChild(item);
-    });
+  function updateVaultCount(): void {
+    const parts: string[] = [];
+    if (allPasskeys.length > 0) {
+      parts.push(formatCount('popupPasskeyCount', allPasskeys.length));
+    }
+    if (allTotpEntries.length > 0) {
+      parts.push(formatCount('popupTotpCount', allTotpEntries.length));
+    }
+    passkeyCountEl.textContent = parts.length
+      ? parts.join(' · ')
+      : formatCount('popupPasskeyCount', 0);
+  }
 
-    passkeyListEl.style.display = 'flex';
+  // Render the unified list from current data, search query, and filters.
+  function renderVault(): void {
+    if (!vaultListEl) return;
+    updateVaultCount();
+
+    const query = searchInput.value.trim().toLowerCase();
+    const totalStored = allPasskeys.length + allTotpEntries.length;
+
+    // Vault has nothing at all → onboarding empty state
+    if (totalStored === 0) {
+      emptyStateEl.style.display = 'block';
+      noResultsEl.hidden = true;
+      vaultListEl.style.display = 'none';
+      vaultListEl.innerHTML = '';
+      return;
+    }
+    emptyStateEl.style.display = 'none';
+
+    const visibleTotp = filters.totp ? filterTotpEntries(allTotpEntries, query) : [];
+    const visiblePasskeys = filters.passkeys
+      ? query
+        ? filterAndSortPasskeys(allPasskeys, query)
+        : [...allPasskeys].sort((a, b) => getCreatedAtTimestamp(b) - getCreatedAtTimestamp(a))
+      : [];
+
+    if (visibleTotp.length === 0 && visiblePasskeys.length === 0) {
+      vaultListEl.style.display = 'none';
+      vaultListEl.innerHTML = '';
+      noResultsTextEl.textContent = query
+        ? t('popupNoResults', { query })
+        : t('popupFilterAllHidden');
+      noResultsEl.hidden = false;
+      return;
+    }
+    noResultsEl.hidden = true;
+
+    // 2FA codes first (time-sensitive), then passkeys
+    vaultListEl.innerHTML = '';
+    for (const entry of visibleTotp) {
+      vaultListEl.appendChild(createTotpItem(entry));
+    }
+    for (const passkey of visiblePasskeys) {
+      vaultListEl.appendChild(createPasskeyItem(passkey));
+    }
+    vaultListEl.style.display = 'flex';
+    refreshTotpCodes();
   }
 
   function createPasskeyItem(passkey: PopupPasskey): HTMLElement {
     const div = document.createElement('div');
-    div.className = 'passkey-item';
+    div.className = 'passkey-item vault-item';
 
     const createdAt = passkey.createdAt ? new Date(passkey.createdAt) : null;
     const dateStr = createdAt
@@ -507,6 +643,15 @@ import { initTheme } from '../theme';
     const credentialIdShort = passkey.id ? passkey.id.substring(0, 20) + '...' : t('commonUnknown');
 
     div.innerHTML = `
+      <div class="vault-item-icon vault-item-icon--passkey" title="${popupEscapeHtml(t('popupTabPasskeys'))}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="7.5" cy="15.5" r="4.5"></circle>
+          <path d="m10.7 12.3 8.3-8.3"></path>
+          <path d="m17 6 2 2"></path>
+          <path d="m13 10 2 2"></path>
+        </svg>
+      </div>
+      <div class="vault-item-body">
       <div class="passkey-header">
         <div class="passkey-info">
           <div class="passkey-rp">${popupEscapeHtml(passkey.rpId || t('commonUnknownSite'))}</div>
@@ -536,6 +681,7 @@ import { initTheme } from '../theme';
           <span class="label">${t('popupKeyId')}</span>
           <span class="value">${popupEscapeHtml(credentialIdShort)}</span>
         </div>
+      </div>
       </div>
     `;
 
@@ -613,7 +759,7 @@ import { initTheme } from '../theme';
 
         showNotification(t('popupPasskeyDeleted'));
 
-        await loadPasskeys();
+        await loadVault();
       } else {
         showNotification(t('popupPasskeyNotFound'), 'error');
       }
@@ -639,6 +785,9 @@ import { initTheme } from '../theme';
         return;
       }
 
+      const totpResult = await chrome.storage.local.get('totp_entries');
+      const totpEntries = (totpResult['totp_entries'] || []) as unknown[];
+
       const exportData = {
         version: EXPORT_VERSION,
         exportType: 'full',
@@ -657,6 +806,7 @@ import { initTheme } from '../theme';
           lastUsed: p.lastUsed,
           prfKey: p.prfKey,
         })),
+        totpEntries,
       };
 
       const plaintext = JSON.stringify(exportData);
@@ -676,14 +826,15 @@ import { initTheme } from '../theme';
         version: EXPORT_VERSION,
         exportedAt: new Date().toISOString(),
         passkeyCount: passkeys.length,
+        totpCount: totpEntries.length,
         data: encResponse.encrypted.data,
         iv: encResponse.encrypted.iv,
         salt: encResponse.encrypted.salt,
         algorithm: encResponse.encrypted.algorithm,
       };
 
-      downloadJson(encryptedBackup, `passkeys-backup-${getDateString()}.json`);
-      showNotification(t('popupExportedPasskeys', { count: passkeys.length }));
+      downloadJson(encryptedBackup, `passkey-vault-backup-${getDateString()}.json`);
+      showNotification(t('popupExportedPasskeys', { count: passkeys.length + totpEntries.length }));
     } catch (error) {
       console.error('Error exporting passkeys:', error);
       showNotification(t('popupFailedExport'), 'error');
@@ -804,5 +955,340 @@ import { initTheme } from '../theme';
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+  }
+
+  // ==================== TOTP ====================
+
+  function createTotpItem(entry: PopupTotpEntry): HTMLElement {
+    const div = document.createElement('div');
+    div.className = 'totp-item vault-item';
+    div.dataset.id = entry.id;
+    const issuerLabel = entry.issuer || entry.account || t('commonUnknown');
+    const accountLabel = entry.account && entry.issuer ? entry.account : '';
+
+    div.innerHTML = `
+      <div class="vault-item-icon vault-item-icon--totp" title="${popupEscapeHtml(t('popupTabTotp'))}">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <polyline points="12 6 12 12 16 14"></polyline>
+        </svg>
+      </div>
+      <div class="vault-item-body">
+        <div class="totp-row">
+          <div class="totp-info">
+            <div class="totp-issuer">${popupEscapeHtml(issuerLabel)}</div>
+            ${accountLabel ? `<div class="totp-account">${popupEscapeHtml(accountLabel)}</div>` : ''}
+          </div>
+          <div class="totp-code-wrap">
+            <div class="totp-code" data-id="${popupEscapeHtml(entry.id)}" title="${popupEscapeHtml(t('popupTotpClickToCopy'))}">••••••</div>
+            <button class="totp-copy-btn" data-id="${popupEscapeHtml(entry.id)}" title="${popupEscapeHtml(t('commonCopy'))}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2"></rect>
+                <rect x="3" y="3" width="13" height="13" rx="2"></rect>
+              </svg>
+            </button>
+            <button class="totp-delete" data-id="${popupEscapeHtml(entry.id)}" title="${popupEscapeHtml(t('commonDelete'))}">×</button>
+          </div>
+        </div>
+        <div class="totp-progress-track">
+          <div class="totp-progress"></div>
+        </div>
+      </div>
+    `;
+
+    const codeEl = div.querySelector('.totp-code') as HTMLElement;
+    codeEl.addEventListener('click', () => copyCodeToClipboard(entry.id, codeEl));
+
+    const copyBtn = div.querySelector('.totp-copy-btn') as HTMLButtonElement;
+    copyBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      copyCodeToClipboard(entry.id, codeEl, copyBtn);
+    });
+
+    const deleteBtn = div.querySelector('.totp-delete') as HTMLButtonElement;
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteTotpEntry(entry);
+    });
+
+    return div;
+  }
+
+  async function refreshTotpCodes(): Promise<void> {
+    if (!filters.totp || allTotpEntries.length === 0) return;
+    const now = Date.now();
+    for (const entry of allTotpEntries) {
+      const period = entry.period || 30;
+      const expiresAt = Math.ceil(now / (period * 1000)) * (period * 1000);
+      const cached = codeCache.get(entry.id);
+      if (cached && cached.expiresAt === expiresAt) {
+        paintCode(entry, cached.code, now);
+        continue;
+      }
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: 'GENERATE_TOTP_CODE',
+          payload: { id: entry.id, timestamp: now },
+        });
+        if (response?.success) {
+          codeCache.set(entry.id, { code: response.code, expiresAt });
+          paintCode(entry, response.code, now);
+        } else {
+          paintCodeError(entry);
+        }
+      } catch (error) {
+        console.error('Failed to generate code:', error);
+        paintCodeError(entry);
+      }
+    }
+  }
+
+  function paintCode(entry: PopupTotpEntry, code: string, now: number): void {
+    const el = vaultListEl.querySelector(
+      `.totp-code[data-id="${CSS.escape(entry.id)}"]`
+    ) as HTMLElement | null;
+    if (!el) return;
+    el.textContent = formatCodeDisplay(code, entry.digits);
+    const period = entry.period || 30;
+    const remaining = period - (Math.floor(now / 1000) % period);
+    el.classList.remove('expiring', 'expired');
+    const progress = vaultListEl.querySelector(
+      `.totp-item[data-id="${CSS.escape(entry.id)}"] .totp-progress`
+    ) as HTMLElement | null;
+    if (progress) {
+      progress.style.width = `${(remaining / period) * 100}%`;
+      progress.classList.remove('expiring', 'expired');
+      if (remaining <= 3) {
+        el.classList.add('expiring');
+        progress.classList.add('expiring');
+      }
+      if (remaining <= 0) {
+        el.classList.add('expired');
+        progress.classList.add('expired');
+      }
+    }
+  }
+
+  function paintCodeError(entry: PopupTotpEntry): void {
+    const el = vaultListEl.querySelector(
+      `.totp-code[data-id="${CSS.escape(entry.id)}"]`
+    ) as HTMLElement | null;
+    if (el) el.textContent = '------';
+  }
+
+  function formatCodeDisplay(code: string, digits: number): string {
+    if (digits === 6) {
+      return `${code.slice(0, 3)} ${code.slice(3)}`;
+    }
+    if (digits === 8) {
+      return `${code.slice(0, 4)} ${code.slice(4)}`;
+    }
+    return code;
+  }
+
+  function startTotpTicker(): void {
+    if (totpTickInterval) return;
+    totpTickInterval = window.setInterval(() => {
+      if (filters.totp && allTotpEntries.length > 0) {
+        refreshTotpCodes();
+      }
+    }, 1000);
+  }
+
+  async function copyCodeToClipboard(
+    id: string,
+    codeEl: HTMLElement,
+    btnEl?: HTMLButtonElement
+  ): Promise<void> {
+    let code: string | undefined;
+    const cached = codeCache.get(id);
+    if (cached && cached.expiresAt > Date.now()) {
+      code = cached.code;
+    } else {
+      const response = await chrome.runtime.sendMessage({
+        type: 'GENERATE_TOTP_CODE',
+        payload: { id, timestamp: Date.now() },
+      });
+      if (response?.success) {
+        code = response.code;
+      }
+    }
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      const target = btnEl || codeEl;
+      target.classList.add('copied');
+      setTimeout(() => target.classList.remove('copied'), 1200);
+    } catch (error) {
+      console.error('Clipboard copy failed:', error);
+      showNotification(t('popupFailedCopy'), 'error');
+    }
+  }
+
+  async function deleteTotpEntry(entry: PopupTotpEntry): Promise<void> {
+    const label = entry.issuer || entry.account || t('commonUnknown');
+    const confirmed = await showConfirmModal(
+      t('popupDeleteTotpTitle'),
+      t('popupDeleteTotpMessage', { issuer: label }),
+      t('commonDelete'),
+      true
+    );
+    if (!confirmed) return;
+
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'DELETE_TOTP_ENTRY',
+        payload: { id: entry.id },
+      });
+      if (response.success) {
+        codeCache.delete(entry.id);
+        showNotification(t('popupTotpDeleted'));
+        await loadVault();
+      } else {
+        showNotification(response.error || t('popupFailedDelete'), 'error');
+      }
+    } catch (error) {
+      console.error('Failed to delete TOTP entry:', error);
+      showNotification(t('popupFailedDelete'), 'error');
+    }
+  }
+
+  // Decode a QR code from an image blob (pasted screenshot or uploaded file).
+  // Returns the embedded text (an otpauth:// URI for authenticator QR codes),
+  // or null if no QR code was found.
+  async function decodeQrFromBlob(blob: Blob): Promise<string | null> {
+    const bitmap = await createImageBitmap(blob);
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(bitmap, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const result = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: 'attemptBoth',
+      });
+      return result?.data ?? null;
+    } finally {
+      bitmap.close();
+    }
+  }
+
+  function showAddTotpDialog(): void {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal-content" style="max-width: 360px">
+        <h3 class="modal-title">${popupEscapeHtml(t('popupAddTotpTitle'))}</h3>
+        <p class="modal-message">${popupEscapeHtml(t('popupAddTotpHelp'))}</p>
+        <textarea id="totp-uri-input" rows="3" placeholder="otpauth://totp/..."
+          style="width: 100%; padding: 8px; border: 1px solid var(--border); background: var(--bg-elev); color: var(--text); border-radius: var(--radius-md); font-family: var(--font-mono); font-size: 12px; box-sizing: border-box; resize: vertical"></textarea>
+        <div class="totp-uri-import">
+          <button type="button" class="btn btn-secondary" id="totp-upload-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <circle cx="8.5" cy="8.5" r="1.5"></circle>
+              <polyline points="21 15 16 10 5 21"></polyline>
+            </svg>
+            <span>${popupEscapeHtml(t('popupTotpChooseImage'))}</span>
+          </button>
+          <input type="file" id="totp-image-input" accept="image/*" hidden />
+        </div>
+        <p class="totp-import-hint">${popupEscapeHtml(t('popupTotpImportHint'))}</p>
+        <div id="totp-add-error" style="color: var(--danger); font-size: 12px; margin: 6px 0; display: none"></div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="totp-add-cancel">${popupEscapeHtml(t('commonCancel'))}</button>
+          <button class="btn btn-primary" id="totp-add-save">${popupEscapeHtml(t('commonAdd'))}</button>
+        </div>
+      </div>
+    `;
+    overlay.style.display = 'flex';
+    document.body.appendChild(overlay);
+
+    const input = overlay.querySelector('#totp-uri-input') as HTMLTextAreaElement;
+    const errorEl = overlay.querySelector('#totp-add-error') as HTMLElement;
+    const saveBtn = overlay.querySelector('#totp-add-save') as HTMLButtonElement;
+    const cancelBtn = overlay.querySelector('#totp-add-cancel') as HTMLButtonElement;
+    const uploadBtn = overlay.querySelector('#totp-upload-btn') as HTMLButtonElement;
+    const imageInput = overlay.querySelector('#totp-image-input') as HTMLInputElement;
+
+    input.focus();
+
+    const showError = (msg: string) => {
+      errorEl.textContent = msg;
+      errorEl.style.display = 'block';
+    };
+
+    const fillFromImage = async (blob: Blob) => {
+      errorEl.style.display = 'none';
+      try {
+        const uri = await decodeQrFromBlob(blob);
+        if (!uri) {
+          showError(t('popupTotpNoQrFound'));
+          return;
+        }
+        input.value = uri.trim();
+      } catch (error) {
+        console.error('QR decode failed:', error);
+        showError(t('popupTotpDecodeFailed'));
+      }
+    };
+
+    uploadBtn.addEventListener('click', () => imageInput.click());
+    imageInput.addEventListener('change', () => {
+      const file = imageInput.files?.[0];
+      if (file) fillFromImage(file);
+    });
+
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.kind === 'file' && item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (file) {
+            e.preventDefault();
+            fillFromImage(file);
+            return;
+          }
+        }
+      }
+    };
+    overlay.addEventListener('paste', onPaste);
+
+    const cleanup = () => {
+      overlay.removeEventListener('paste', onPaste);
+      overlay.remove();
+    };
+
+    saveBtn.addEventListener('click', async () => {
+      const uri = input.value.trim();
+      if (!uri) {
+        errorEl.textContent = t('popupTotpUriRequired');
+        errorEl.style.display = 'block';
+        return;
+      }
+      saveBtn.disabled = true;
+      const response = await chrome.runtime.sendMessage({
+        type: 'ADD_TOTP_ENTRY',
+        payload: { otpauthUri: uri },
+      });
+      if (response.success) {
+        codeCache.clear();
+        showNotification(t('popupTotpAdded'));
+        cleanup();
+        await loadVault();
+      } else {
+        errorEl.textContent = response.error || t('popupTotpAddFailed');
+        errorEl.style.display = 'block';
+        saveBtn.disabled = false;
+      }
+    });
+
+    cancelBtn.addEventListener('click', cleanup);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) cleanup();
+    });
   }
 })();

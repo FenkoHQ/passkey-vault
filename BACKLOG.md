@@ -12,6 +12,8 @@
 - [x] Consolidate duplicated base64 utilities
 - [x] Fix silent error swallowing in catch blocks
 - [x] Password-protect export files (AES-256-GCM, password required on import)
+- [x] TOTP / HOTP store (RFC 6238 / 4226) with otpauth:// import, live codes, clipboard copy
+- [x] TOTP entries included in encrypted backup and Nostr sync bundle
 
 ## Phase 2: Complete
 
