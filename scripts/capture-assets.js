@@ -342,6 +342,89 @@ async function captureScreenshots() {
   console.log(`\n  Saved to ${SCREENSHOTS_DIR}`);
 }
 
+// ─── README screenshots ──────────────────────────────────────────────────────
+// Clean, dark-theme, native-ratio captures of the actual UI — no marketing
+// canvas, no stretching. These are the images shown in README.md.
+
+async function captureReadme() {
+  console.log('\n🖼  Capturing README screenshots (dark, native ratio)...');
+  fs.mkdirSync(README_DIR, { recursive: true });
+
+  const ctx = await launchWithExtension({
+    profileDir: path.join(ROOT, '.playwright-profile-readme'),
+    contextOpts: { viewport: { width: 380, height: 640 } },
+  });
+  const id = await getExtensionId(ctx);
+
+  const shotSel = async (page, selector, name) => {
+    await page.locator(selector).first().screenshot({ path: path.join(README_DIR, name) });
+    console.log(`  ✅ ${name}`);
+  };
+
+  // Vault list, 2FA detail, and search — one page, dark
+  {
+    const p = await extPage(ctx, id, 'popup.html');
+    await setTheme(p, 'dark');
+    await injectPasskeys(p, MOCK_PASSKEYS);
+    await injectTotp(p, MOCK_TOTP);
+    await p.reload();
+    await waitReady(p);
+    await shotSel(p, '.container', 'vault.png');
+
+    const totpExpand = p.locator('.totp-item .expand-btn').first();
+    if (await totpExpand.count()) {
+      await totpExpand.click();
+      await p.waitForTimeout(300);
+    }
+    await shotSel(p, '.container', 'totp.png');
+    if (await totpExpand.count()) {
+      await totpExpand.click();
+      await p.waitForTimeout(150);
+    }
+
+    await p.fill('#search-input', 'git');
+    await p.waitForTimeout(300);
+    await shotSel(p, '.container', 'search.png');
+    await p.close();
+  }
+
+  // Add Code dialog — otpauth:// / QR-image import
+  {
+    const p = await extPage(ctx, id, 'popup.html');
+    await setTheme(p, 'dark');
+    await injectPasskeys(p, MOCK_PASSKEYS);
+    await injectTotp(p, MOCK_TOTP);
+    await p.reload();
+    await waitReady(p);
+    await p.click('#add-totp-btn');
+    await p.waitForTimeout(300);
+    await shotSel(p, '.modal-content:has(#totp-uri-input)', 'add-code.png');
+    await p.close();
+  }
+
+  // Lock screen — set a PIN, then lock (done last; it locks the shared profile)
+  {
+    const p = await extPage(ctx, id, 'popup.html');
+    await setTheme(p, 'dark');
+    await injectPasskeys(p, MOCK_PASSKEYS);
+    await injectTotp(p, MOCK_TOTP);
+    await p.evaluate(async () => {
+      await chrome.runtime.sendMessage({
+        type: 'SETUP_MASTER_PASSWORD',
+        payload: { password: '1234' },
+      });
+      await chrome.runtime.sendMessage({ type: 'LOCK_SECURE_STORAGE' });
+    });
+    await p.reload();
+    await waitReady(p);
+    await shotSel(p, '#lock-screen', 'lock.png');
+    await p.close();
+  }
+
+  await ctx.close();
+  console.log(`  Saved to ${README_DIR}`);
+}
+
 // ─── Video ───────────────────────────────────────────────────────────────────
 
 async function captureVideo() {
@@ -451,8 +534,7 @@ async function captureCWS() {
     'cws-04-import.png': 'BRING YOUR PASSKEYS WITH YOU.',
     'cws-04-settings.png': 'DEVELOPER TOOLS BUILT RIGHT IN.',
     'cws-05-sync.png': 'SYNC ACROSS DEVICES. NO CLOUD REQUIRED.',
-    'cws-06-vault-dark.png': 'DARK MODE FOR LOW-LIGHT WORKFLOWS.',
-    'cws-07-settings-dark.png': 'INTERCEPTION CONTROLS, DAY OR NIGHT.',
+    'cws-07-settings-dark.png': 'FINE-GRAINED INTERCEPTION CONTROLS.',
     'cws-08-totp.png': 'BUILT-IN 2FA CODES, GENERATED LOCALLY.',
   };
 
@@ -510,6 +592,12 @@ async function captureCWS() {
           width: 120px !important; height: 4px !important;
           background: #fcd34d !important;
           z-index: 2 !important;
+        }
+        /* Keep the popup at its real 360px width — never stretch to the canvas */
+        .container {
+          width: 360px !important;
+          max-width: 360px !important;
+          flex: 0 0 auto !important;
         }
         .container,
         .sync-setup,
@@ -574,7 +662,7 @@ async function captureCWS() {
   // 1 — vault with passkeys
   {
     const p = await extPage(ctx, id, 'popup.html');
-    await setTheme(p, 'light');
+    await setTheme(p, 'dark');
     await p.reload();
     await waitReady(p);
     await cwsShot(p, 'cws-01-vault.png');
@@ -583,7 +671,7 @@ async function captureCWS() {
   // 2 — search
   {
     const p = await extPage(ctx, id, 'popup.html');
-    await setTheme(p, 'light');
+    await setTheme(p, 'dark');
     await p.reload();
     await waitReady(p);
     await p.fill('#search-input', 'github');
@@ -594,7 +682,7 @@ async function captureCWS() {
   // 3 — expanded passkey detail
   {
     const p = await extPage(ctx, id, 'popup.html');
-    await setTheme(p, 'light');
+    await setTheme(p, 'dark');
     await p.reload();
     await waitReady(p);
     const btn = p.locator('.passkey-item .expand-btn').first();
@@ -608,7 +696,7 @@ async function captureCWS() {
   // 3b — expanded 2FA code detail (highlights the built-in authenticator)
   {
     const p = await extPage(ctx, id, 'popup.html');
-    await setTheme(p, 'light');
+    await setTheme(p, 'dark');
     await p.reload();
     await waitReady(p);
     const btn = p.locator('.totp-item .expand-btn').first();
@@ -622,7 +710,7 @@ async function captureCWS() {
   // 4 — import
   {
     const p = await extPage(ctx, id, 'import.html');
-    await setTheme(p, 'light');
+    await setTheme(p, 'dark');
     await p.reload();
     await waitReady(p, 800);
     await cwsShot(p, 'cws-04-import.png');
@@ -631,7 +719,7 @@ async function captureCWS() {
   // 5 — settings / developer tools
   {
     const p = await extPage(ctx, id, 'options.html');
-    await setTheme(p, 'light');
+    await setTheme(p, 'dark');
     await p.reload();
     await waitReady(p, 800);
     // Click Developer tab
@@ -678,22 +766,13 @@ async function captureCWS() {
   // 6 — sync setup
   {
     const p = await extPage(ctx, id, 'sync-setup.html');
-    await setTheme(p, 'light');
+    await setTheme(p, 'dark');
     await p.reload();
     await waitReady(p, 800);
     await cwsShot(p, 'cws-05-sync.png');
   }
 
-  // 7 — dark mode vault
-  {
-    const p = await extPage(ctx, id, 'popup.html');
-    await setTheme(p, 'dark');
-    await p.reload();
-    await waitReady(p);
-    await cwsShot(p, 'cws-06-vault-dark.png');
-  }
-
-  // 8 — dark mode interception controls
+  // 8 — interception controls
   {
     const p = await extPage(ctx, id, 'options.html');
     await setTheme(p, 'dark');
@@ -737,25 +816,7 @@ async function captureCWS() {
   }
 
   await ctx.close();
-  copyReadmeScreenshots();
   console.log(`\n  Saved to ${CWS_DIR}`);
-}
-
-function copyReadmeScreenshots() {
-  fs.mkdirSync(README_DIR, { recursive: true });
-  for (const name of [
-    'cws-01-vault.png',
-    'cws-02-search.png',
-    'cws-03-detail.png',
-    'cws-08-totp.png',
-    'cws-04-settings.png',
-    'cws-05-sync.png',
-    'cws-06-vault-dark.png',
-    'cws-07-settings-dark.png',
-  ]) {
-    fs.copyFileSync(path.join(CWS_DIR, name), path.join(README_DIR, name));
-  }
-  console.log(`  ✅ README screenshots copied to ${README_DIR}`);
 }
 
 async function addOptionsCwsChrome(page) {
@@ -967,6 +1028,7 @@ async function main() {
   }
 
   if (MODE === 'all' || MODE === 'screenshots') await captureScreenshots();
+  if (MODE === 'all' || MODE === 'readme') await captureReadme();
   if (MODE === 'all' || MODE === 'video') await captureVideo();
   if (MODE === 'all' || MODE === 'cws') await captureCWS();
   if (MODE === 'all' || MODE === 'promo') await capturePromoTiles();

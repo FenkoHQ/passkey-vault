@@ -18,6 +18,7 @@ build/
 .playwright-profile/
 .playwright-profile-video/
 .playwright-profile-cws/
+.playwright-profile-readme/
 docs/screenshots/
 docs/video/
 

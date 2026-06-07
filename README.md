@@ -8,21 +8,17 @@ A browser extension that intercepts WebAuthn API calls and stores passkeys local
 
 ## Screenshots
 
-<img src="docs/readme/cws-01-vault.png" alt="Passkeys and 2FA codes in one vault. On your device. Nobody else." width="640"/>
-
-<img src="docs/readme/cws-02-search.png" alt="Find any passkey or code instantly." width="640"/>
-
-<img src="docs/readme/cws-03-detail.png" alt="Full control over every credential." width="640"/>
-
-<img src="docs/readme/cws-08-totp.png" alt="Built-in 2FA codes, generated locally." width="640"/>
-
-<img src="docs/readme/cws-04-settings.png" alt="Developer tools built right in." width="640"/>
-
-<img src="docs/readme/cws-05-sync.png" alt="Sync across devices. No cloud required." width="640"/>
-
-<img src="docs/readme/cws-06-vault-dark.png" alt="Dark mode vault view." width="640"/>
-
-<img src="docs/readme/cws-07-settings-dark.png" alt="Dark mode interception controls." width="640"/>
+<p>
+  <img src="docs/readme/vault.png" alt="Passkeys and 2FA codes in one searchable vault" width="300"/>
+  <img src="docs/readme/totp.png" alt="Expandable details for every entry" width="300"/>
+</p>
+<p>
+  <img src="docs/readme/add-code.png" alt="Add a 2FA code by otpauth URI, pasted QR, or uploaded image" width="300"/>
+  <img src="docs/readme/lock.png" alt="Lock the vault behind a PIN" width="300"/>
+</p>
+<p>
+  <img src="docs/readme/search.png" alt="Search across passkeys and 2FA codes at once" width="300"/>
+</p>
 
 ---
 
