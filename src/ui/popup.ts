@@ -591,9 +591,11 @@ import { initTheme } from '../theme';
   function filterTotpEntries(entries: PopupTotpEntry[], query: string): PopupTotpEntry[] {
     const matched = query
       ? entries.filter((e) => {
-          const issuer = (e.issuer || '').toLowerCase();
-          const account = (e.account || '').toLowerCase();
-          return issuer.includes(query) || account.includes(query);
+          const haystack = [e.issuer, e.account, e.type, e.algorithm]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase();
+          return haystack.includes(query);
         })
       : [...entries];
     return matched.sort((a, b) =>
@@ -1003,6 +1005,23 @@ import { initTheme } from '../theme';
     const issuerLabel = entry.issuer || entry.account || t('commonUnknown');
     const accountLabel = entry.account && entry.issuer ? entry.account : '';
 
+    const created = entry.createdAt ? new Date(entry.createdAt) : null;
+    const dateStr = created
+      ? created.toLocaleDateString() +
+        ' ' +
+        created.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : t('commonUnknown');
+
+    const detailRow = (label: string, value: string): string => `
+      <div class="passkey-detail-row">
+        <span class="label">${popupEscapeHtml(label)}</span>
+        <span class="value">${popupEscapeHtml(value)}</span>
+      </div>`;
+    const periodRow =
+      entry.type === 'hotp'
+        ? detailRow(t('popupTotpCounter'), String(entry.counter ?? 0))
+        : detailRow(t('popupTotpPeriod'), `${entry.period || 30}s`);
+
     div.innerHTML = `
       <div class="vault-item-icon vault-item-icon--totp" title="${popupEscapeHtml(t('popupTabTotp'))}">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1024,11 +1043,25 @@ import { initTheme } from '../theme';
                 <rect x="3" y="3" width="13" height="13" rx="2"></rect>
               </svg>
             </button>
+            <button class="expand-btn" title="${popupEscapeHtml(t('popupDetails'))}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
             <button class="totp-delete" data-id="${popupEscapeHtml(entry.id)}" title="${popupEscapeHtml(t('commonDelete'))}">${popupEscapeHtml(t('popupDel'))}</button>
           </div>
         </div>
         <div class="totp-progress-track">
           <div class="totp-progress"></div>
+        </div>
+        <div class="passkey-details totp-details">
+          ${entry.issuer ? detailRow(t('popupTotpIssuer'), entry.issuer) : ''}
+          ${entry.account ? detailRow(t('popupTotpAccount'), entry.account) : ''}
+          ${detailRow(t('popupTotpType'), entry.type.toUpperCase())}
+          ${detailRow(t('popupTotpAlgorithm'), entry.algorithm)}
+          ${detailRow(t('popupTotpDigits'), String(entry.digits))}
+          ${periodRow}
+          ${detailRow(t('popupAdded'), dateStr)}
         </div>
       </div>
     `;
@@ -1040,6 +1073,15 @@ import { initTheme } from '../theme';
     copyBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       copyCodeToClipboard(entry.id, codeEl, copyBtn);
+    });
+
+    const expandBtn = div.querySelector('.expand-btn') as HTMLButtonElement;
+    const details = div.querySelector('.totp-details') as HTMLElement;
+    expandBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isExpanded = details.classList.toggle('show');
+      expandBtn.classList.toggle('expanded', isExpanded);
+      div.classList.toggle('expanded', isExpanded);
     });
 
     const deleteBtn = div.querySelector('.totp-delete') as HTMLButtonElement;
