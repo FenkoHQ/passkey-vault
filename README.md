@@ -8,17 +8,38 @@ A browser extension that intercepts WebAuthn API calls and stores passkeys local
 
 ## Screenshots
 
-<p>
-  <img src="docs/readme/vault.png" alt="Passkeys and 2FA codes in one searchable vault" width="300"/>
-  <img src="docs/readme/totp.png" alt="Expandable details for every entry" width="300"/>
-</p>
-<p>
-  <img src="docs/readme/add-code.png" alt="Add a 2FA code by otpauth URI, pasted QR, or uploaded image" width="300"/>
-  <img src="docs/readme/lock.png" alt="Lock the vault behind a PIN" width="300"/>
-</p>
-<p>
-  <img src="docs/readme/search.png" alt="Search across passkeys and 2FA codes at once" width="300"/>
-</p>
+<table>
+  <tr>
+    <td align="center" valign="top" width="33%">
+      <img src="docs/readme/vault.png" width="240" alt="Passkeys and 2FA codes in one searchable vault"/>
+    </td>
+    <td align="center" valign="top" width="33%">
+      <img src="docs/readme/totp.png" width="240" alt="Expandable details for every entry"/>
+    </td>
+    <td align="center" valign="top" width="33%">
+      <img src="docs/readme/search.png" width="240" alt="Search across passkeys and 2FA codes at once"/>
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>One searchable vault</b></sub></td>
+    <td align="center"><sub><b>Details on every entry</b></sub></td>
+    <td align="center"><sub><b>Find anything fast</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top">
+      <img src="docs/readme/add-code.png" width="240" alt="Add a 2FA code by otpauth URI, pasted QR, or uploaded image"/>
+    </td>
+    <td align="center" valign="top">
+      <img src="docs/readme/lock.png" width="240" alt="Lock the vault behind a PIN"/>
+    </td>
+    <td></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Add codes by URI or QR image</b></sub></td>
+    <td align="center"><sub><b>Lock behind a PIN</b></sub></td>
+    <td></td>
+  </tr>
+</table>
 
 ---
 
