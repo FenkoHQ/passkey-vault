@@ -80,6 +80,35 @@ const MOCK_PASSKEYS = [
   },
 ];
 
+// Secrets are arbitrary bytes (base64); the generated code values don't matter
+// for a screenshot, only that they render. Different secrets → different codes.
+const MOCK_TOTP = [
+  {
+    id: 'totp_github_01',
+    type: 'totp',
+    issuer: 'GitHub',
+    account: 'jane@example.com',
+    secretB64: Buffer.from('github-totp-secret-01').toString('base64'),
+    algorithm: 'SHA1',
+    digits: 6,
+    period: 30,
+    counter: 0,
+    createdAt: Date.now() - 1000 * 60 * 60 * 24 * 4,
+  },
+  {
+    id: 'totp_aws_02',
+    type: 'totp',
+    issuer: 'AWS',
+    account: 'jane',
+    secretB64: Buffer.from('aws-totp-secret-key-02').toString('base64'),
+    algorithm: 'SHA1',
+    digits: 6,
+    period: 30,
+    counter: 0,
+    createdAt: Date.now() - 1000 * 60 * 60 * 24 * 2,
+  },
+];
+
 const MODE = process.argv[2] || 'all';
 
 async function launchWithExtension(opts = {}) {
@@ -133,6 +162,12 @@ async function injectPasskeys(page, passkeys) {
   }, passkeys);
 }
 
+async function injectTotp(page, totp) {
+  await page.evaluate((data) => {
+    return new Promise((resolve) => chrome.storage.local.set({ totp_entries: data }, resolve));
+  }, totp);
+}
+
 async function setTheme(page, theme) {
   await page.evaluate((value) => {
     return new Promise((resolve) => chrome.storage.local.set({ ui_theme: value }, resolve));
@@ -164,11 +199,12 @@ async function captureScreenshots() {
     await p.close();
   }
 
-  // 02 — popup with passkeys (list view)
+  // 02 — popup with passkeys + 2FA codes (unified list view)
   {
     const p = await extPage(ctx, id, 'popup.html');
     await setTheme(p, 'light');
     await injectPasskeys(p, MOCK_PASSKEYS);
+    await injectTotp(p, MOCK_TOTP);
     await p.reload();
     await waitReady(p);
     await shotElement(p, '02-popup-list.png');
@@ -191,11 +227,29 @@ async function captureScreenshots() {
     await p.close();
   }
 
+  // 14 — expanded 2FA code detail
+  {
+    const p = await extPage(ctx, id, 'popup.html');
+    await setTheme(p, 'light');
+    await injectPasskeys(p, MOCK_PASSKEYS);
+    await injectTotp(p, MOCK_TOTP);
+    await p.reload();
+    await waitReady(p);
+    const totpExpand = p.locator('.totp-item .expand-btn').first();
+    if (await totpExpand.count()) {
+      await totpExpand.click();
+      await p.waitForTimeout(300);
+    }
+    await shotElement(p, '14-popup-totp-detail.png');
+    await p.close();
+  }
+
   // 12 — popup list, dark theme
   {
     const p = await extPage(ctx, id, 'popup.html');
     await setTheme(p, 'dark');
     await injectPasskeys(p, MOCK_PASSKEYS);
+    await injectTotp(p, MOCK_TOTP);
     await p.reload();
     await waitReady(p);
     await shotElement(p, '12-popup-list-dark.png');
@@ -381,9 +435,10 @@ async function captureCWS() {
   });
   const id = await getExtensionId(ctx);
 
-  // Inject passkeys once via a throwaway page so storage is set for all pages
+  // Inject passkeys + 2FA codes once via a throwaway page so storage is set for all pages
   const setup = await extPage(ctx, id, 'popup.html');
   await injectPasskeys(setup, MOCK_PASSKEYS);
+  await injectTotp(setup, MOCK_TOTP);
   await setup.close();
 
   // Scales container to fill ~90% of CWS_H, centered on CWS_BG canvas.
@@ -398,6 +453,7 @@ async function captureCWS() {
     'cws-05-sync.png': 'SYNC ACROSS DEVICES. NO CLOUD REQUIRED.',
     'cws-06-vault-dark.png': 'DARK MODE FOR LOW-LIGHT WORKFLOWS.',
     'cws-07-settings-dark.png': 'INTERCEPTION CONTROLS, DAY OR NIGHT.',
+    'cws-08-totp.png': 'BUILT-IN 2FA CODES, GENERATED LOCALLY.',
   };
 
   const cwsShot = async (page, name) => {
@@ -541,12 +597,26 @@ async function captureCWS() {
     await setTheme(p, 'light');
     await p.reload();
     await waitReady(p);
-    const btn = p.locator('.expand-btn').first();
+    const btn = p.locator('.passkey-item .expand-btn').first();
     if (await btn.count()) {
       await btn.click();
       await p.waitForTimeout(300);
     }
     await cwsShot(p, 'cws-03-detail.png');
+  }
+
+  // 3b — expanded 2FA code detail (highlights the built-in authenticator)
+  {
+    const p = await extPage(ctx, id, 'popup.html');
+    await setTheme(p, 'light');
+    await p.reload();
+    await waitReady(p);
+    const btn = p.locator('.totp-item .expand-btn').first();
+    if (await btn.count()) {
+      await btn.click();
+      await p.waitForTimeout(300);
+    }
+    await cwsShot(p, 'cws-08-totp.png');
   }
 
   // 4 — import
@@ -677,6 +747,7 @@ function copyReadmeScreenshots() {
     'cws-01-vault.png',
     'cws-02-search.png',
     'cws-03-detail.png',
+    'cws-08-totp.png',
     'cws-04-settings.png',
     'cws-05-sync.png',
     'cws-06-vault-dark.png',

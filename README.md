@@ -8,11 +8,13 @@ A browser extension that intercepts WebAuthn API calls and stores passkeys local
 
 ## Screenshots
 
-<img src="docs/readme/cws-01-vault.png" alt="Your passkeys. Your device. Nobody else." width="640"/>
+<img src="docs/readme/cws-01-vault.png" alt="Passkeys and 2FA codes in one vault. On your device. Nobody else." width="640"/>
 
-<img src="docs/readme/cws-02-search.png" alt="Find any passkey instantly." width="640"/>
+<img src="docs/readme/cws-02-search.png" alt="Find any passkey or code instantly." width="640"/>
 
 <img src="docs/readme/cws-03-detail.png" alt="Full control over every credential." width="640"/>
+
+<img src="docs/readme/cws-08-totp.png" alt="Built-in 2FA codes, generated locally." width="640"/>
 
 <img src="docs/readme/cws-04-settings.png" alt="Developer tools built right in." width="640"/>
 
@@ -28,9 +30,11 @@ A browser extension that intercepts WebAuthn API calls and stores passkeys local
 
 - **WebAuthn interception** — captures `navigator.credentials.create()` and `navigator.credentials.get()` before the browser handles them
 - **Local storage** — passkeys stay in browser local storage, no external server
-- **TOTP / 2FA codes** — RFC 6238 generator with live codes, clipboard copy, otpauth:// import, included in backup and sync
+- **TOTP / 2FA codes** — built-in RFC 6238 / 4226 authenticator with live codes, clipboard copy, and `otpauth://` import (paste a URI, paste a QR screenshot, or upload a QR image — decoded locally, no camera)
+- **Unified vault** — passkeys and 2FA codes share one searchable list with per-type filters; each entry expands to show its details
+- **Vault lock** — optional 4–12 digit master PIN encrypts the vault at rest and locks the popup; set, change, or remove it any time
 - **Backup & import** — export all passkeys (including private keys) and TOTP entries as a JSON file, import on another device
-- **Cross-device sync** — optional Nostr-based sync chain using a BIP-39 seed phrase
+- **Cross-device sync** — optional Nostr-based sync chain using a BIP-39 seed phrase; passkeys and 2FA codes sync end-to-end encrypted
 - **Emergency access** — standalone recovery page for vault management without the extension popup
 - **Chrome + Firefox** — single codebase, separate manifests
 
@@ -76,7 +80,8 @@ npm run build:all      # Both
 2. On `credentials.create()`, the background script generates an ECDSA P-256 key pair, creates a valid attestation response, and stores the passkey
 3. On `credentials.get()`, it signs the challenge with the stored private key using proper CBOR encoding
 4. The popup reads directly from `chrome.storage.local` — no background message passing for display
-5. TOTP codes are derived locally from each entry's secret using HMAC-SHA1/256/512; the popup caches the current code and refreshes it once per second when the 2FA tab is open
+5. TOTP codes are derived locally from each entry's secret using HMAC-SHA1/256/512; the popup caches the current code and refreshes it once per second while the vault is open
+6. With a master PIN set, the vault is also written as an AES-GCM encrypted copy and the popup gates behind a lock screen; removing the PIN drops the encrypted copy
 
 ---
 
@@ -128,31 +133,32 @@ The extension intercepts WebAuthn credential creation and sign-in requests, stor
 Key features:
 
 - Local passkey vault for WebAuthn create and get flows
+- Built-in TOTP / 2FA authenticator (RFC 6238) with live codes, clipboard copy, and otpauth:// / QR-image import
+- Optional master PIN that encrypts the vault at rest and locks the popup
 - Default passthrough to the browser and OS passkey UI when no matching passkey is stored
 - Configurable interception rules for disabled, all-sites, and allowlist modes
-- Searchable popup with light and dark themes
-- Backup and import workflows for moving passkeys between environments
+- Unified, searchable popup with per-type filters and light/dark themes
+- Backup and import workflows for moving passkeys and 2FA codes between environments
 - Optional cross-device sync using a Nostr-based sync chain
 - Developer tools for console logging, storage inspection, sync protocol logs, and WebAuthn event logs
 
 Important: Passkey Vault is intended as a research and developer tool. Private key material is stored in local browser extension storage. Treat extension data and exported backups as sensitive credential material.
 
-What's new in `v0.7.0`:
+What's new:
 
-- Added native browser fallback passthrough for sites without a stored passkey
-- Added interception controls for blocking or allowing browser fallback
-- Refreshed the popup, settings, import, sync, and emergency access UI
-- Added light and dark theme screenshots for the Chrome Web Store listing
-- Standardized the product name as Passkey Vault
+- Added a built-in TOTP / 2FA authenticator with live codes, clipboard copy, and otpauth:// / QR-image import
+- Merged passkeys and 2FA codes into one searchable vault with per-type filters and expandable details
+- Added an optional master PIN that encrypts the vault at rest and locks the popup
+- Earlier: native browser fallback passthrough, interception controls, refreshed UI, and light/dark themes
 
 **Screenshots**
 
 Use up to five CWS screenshots in this order:
 
 1. `docs/cws/cws-01-vault.png`
-2. `docs/cws/cws-02-search.png`
-3. `docs/cws/cws-03-detail.png`
-4. `docs/cws/cws-07-settings-dark.png`
+2. `docs/cws/cws-08-totp.png`
+3. `docs/cws/cws-02-search.png`
+4. `docs/cws/cws-03-detail.png`
 5. `docs/cws/cws-05-sync.png`
 
 Additional generated screenshots are available in `docs/cws/` if the dashboard accepts more than five.
@@ -215,8 +221,9 @@ src/
 
 ## Security
 
-- Private keys are stored unencrypted in `chrome.storage.local`
-- Export files contain private keys — treat them like passwords
+- Passkeys and TOTP secrets live in `chrome.storage.local`. Setting a master PIN adds an AES-GCM encrypted copy and a lock screen, but a raw copy is kept for display — treat the profile as sensitive regardless
+- Export files contain private keys and TOTP secrets — treat them like passwords
+- Sync payloads are end-to-end encrypted; relays never see plaintext
 - This is a research/developer tool, not a production credential manager
 
 ---

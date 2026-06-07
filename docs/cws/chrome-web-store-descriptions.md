@@ -6,25 +6,27 @@ Paste-ready listing copy for the locales currently present in `src/_locales`.
 
 ### Summary
 
-Store and use WebAuthn passkeys locally, with backup, sync, and browser fallback controls.
+Store WebAuthn passkeys and 2FA codes locally, with backup, sync, and browser fallback controls.
 
 ### Detailed Description
 
-Passkey Vault is a local-first WebAuthn passkey tool for developers, testers, and advanced users who want direct control over passkey creation, storage, backup, sync, and browser fallback behavior.
+Passkey Vault is a local-first WebAuthn passkey and 2FA tool for developers, testers, and advanced users who want direct control over passkey creation, storage, two-factor codes, backup, sync, and browser fallback behavior.
 
-The extension intercepts WebAuthn registration and sign-in requests, stores passkeys in local browser extension storage, and lets you inspect, search, export, import, and sync credentials without depending on a third-party cloud account.
+The extension intercepts WebAuthn registration and sign-in requests, stores passkeys in local browser extension storage, and lets you inspect, search, export, import, and sync credentials without depending on a third-party cloud account. It also doubles as a TOTP authenticator for your one-time codes.
 
 Key features:
 
 - Local vault for WebAuthn create and get flows
+- Built-in TOTP / 2FA authenticator (RFC 6238) with live codes, clipboard copy, and otpauth:// / QR-image import
+- Optional master PIN that encrypts the vault at rest and locks the popup
 - Browser and OS passkey fallback when no matching vault entry exists
 - Disabled, all-sites, and allowlist interception modes
-- Searchable popup with light and dark themes
-- Backup and import for moving passkeys between environments
+- Unified, searchable popup with per-type filters and light/dark themes
+- Backup and import for moving passkeys and 2FA codes between environments
 - Optional cross-device sync using an encrypted Nostr-based sync chain
 - Developer logging, storage inspection, sync logs, and WebAuthn event tools
 
-Important: Passkey Vault is a research and developer tool. Private key material is stored in local browser extension storage. Treat extension data and exported backups as sensitive credential material.
+Important: Passkey Vault is a research and developer tool. Private keys and 2FA secrets are stored in local browser extension storage. Treat extension data and exported backups as sensitive credential material.
 
 ## French (`fr`)
 
@@ -41,6 +43,8 @@ L'extension intercepte les demandes d'inscription et de connexion WebAuthn, stoc
 Fonctionnalités principales :
 
 - Coffre local pour les flux WebAuthn create et get
+- Authentificateur TOTP / 2FA intégré (RFC 6238) avec codes en direct, copie et import otpauth:// / image QR
+- Code PIN principal optionnel qui chiffre le coffre au repos et verrouille la popup
 - Repli vers l'interface passkey du navigateur et du système lorsqu'aucune entrée correspondante n'existe dans le coffre
 - Modes d'interception désactivé, tous les sites et liste d'autorisation
 - Popup consultable avec thèmes clair et sombre
@@ -65,6 +69,8 @@ La extensión intercepta solicitudes de registro e inicio de sesión WebAuthn, g
 Funciones principales:
 
 - Bóveda local para flujos WebAuthn create y get
+- Autenticador TOTP / 2FA integrado (RFC 6238) con códigos en vivo, copia e importación otpauth:// / imagen QR
+- PIN maestro opcional que cifra la bóveda en reposo y bloquea el popup
 - Reserva hacia la interfaz de passkeys del navegador y del sistema cuando no existe una entrada coincidente en la bóveda
 - Modos de interceptación desactivado, todos los sitios y lista permitida
 - Popup con búsqueda y temas claro y oscuro
@@ -89,6 +95,8 @@ Passkey Vault هي أداة محلية أولاً لمفاتيح مرور WebAut
 الميزات الرئيسية:
 
 - خزنة محلية لتدفقات WebAuthn create و get
+- مصادق TOTP / 2FA مدمج (RFC 6238) مع رموز حيّة ونسخ واستيراد otpauth:// / صورة QR
+- رمز PIN رئيسي اختياري يشفّر الخزنة أثناء السكون ويقفل النافذة المنبثقة
 - الرجوع إلى واجهة مفاتيح المرور في المتصفح ونظام التشغيل عند عدم وجود إدخال مطابق في الخزنة
 - أوضاع اعتراض: معطل، كل المواقع، وقائمة السماح
 - نافذة منبثقة قابلة للبحث مع وضعين فاتح وداكن
@@ -113,6 +121,8 @@ Passkey Vault یک ابزار محلی‌محور برای کلیدهای عبو
 قابلیت‌های اصلی:
 
 - خزانه محلی برای جریان‌های WebAuthn create و get
+- احرازکننده TOTP / 2FA داخلی (RFC 6238) با کدهای زنده، کپی، و وارد کردن otpauth:// / تصویر QR
+- پین اصلی اختیاری که خزانه را در حالت سکون رمزگذاری و پنجره بازشونده را قفل می‌کند
 - بازگشت به رابط کلید عبور مرورگر و سیستم‌عامل زمانی که ورودی منطبقی در خزانه وجود ندارد
 - حالت‌های رهگیری: غیرفعال، همه سایت‌ها و فهرست مجاز
 - پنجره بازشونده قابل جستجو با پوسته روشن و تاریک
@@ -137,6 +147,8 @@ Passkey Vault — это local-first инструмент для passkey WebAuth
 Ключевые возможности:
 
 - Локальное хранилище для потоков WebAuthn create и get
+- Встроенный TOTP / 2FA аутентификатор (RFC 6238) с живыми кодами, копированием и импортом otpauth:// / QR-изображения
+- Опциональный мастер-PIN, который шифрует хранилище и блокирует popup
 - Fallback к интерфейсу passkey браузера и ОС, если в хранилище нет подходящей записи
 - Режимы перехвата: отключено, все сайты и список разрешенных сайтов
 - Popup с поиском и светлой/темной темой
@@ -161,6 +173,8 @@ Passkey Vault 是一款本地优先的 WebAuthn passkey 工具，面向开发者
 主要功能：
 
 - 用于 WebAuthn create 和 get 流程的本地凭据库
+- 内置 TOTP / 2FA 验证器（RFC 6238），支持实时验证码、复制以及 otpauth:// / 二维码图片导入
+- 可选的主 PIN，可加密本地凭据库并锁定弹出窗口
 - 当凭据库中没有匹配条目时，回退到浏览器和操作系统的 passkey 界面
 - 支持关闭、所有网站和允许列表三种拦截模式
 - 支持搜索的弹出窗口，并提供浅色和深色主题
