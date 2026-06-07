@@ -1037,12 +1037,6 @@ import { initTheme } from '../theme';
           </div>
           <div class="totp-code-wrap">
             <div class="totp-code" data-id="${popupEscapeHtml(entry.id)}" title="${popupEscapeHtml(t('popupTotpClickToCopy'))}">••••••</div>
-            <button class="totp-copy-btn" data-id="${popupEscapeHtml(entry.id)}" title="${popupEscapeHtml(t('commonCopy'))}">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="9" y="9" width="13" height="13" rx="2"></rect>
-                <rect x="3" y="3" width="13" height="13" rx="2"></rect>
-              </svg>
-            </button>
             <button class="expand-btn" title="${popupEscapeHtml(t('popupDetails'))}">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="6 9 12 15 18 9"></polyline>
@@ -1068,12 +1062,6 @@ import { initTheme } from '../theme';
 
     const codeEl = div.querySelector('.totp-code') as HTMLElement;
     codeEl.addEventListener('click', () => copyCodeToClipboard(entry.id, codeEl));
-
-    const copyBtn = div.querySelector('.totp-copy-btn') as HTMLButtonElement;
-    copyBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      copyCodeToClipboard(entry.id, codeEl, copyBtn);
-    });
 
     const expandBtn = div.querySelector('.expand-btn') as HTMLButtonElement;
     const details = div.querySelector('.totp-details') as HTMLElement;

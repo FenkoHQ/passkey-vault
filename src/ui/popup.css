@@ -481,7 +481,7 @@ h3 {
 .totp-code-wrap {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
@@ -495,15 +495,20 @@ h3 {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md);
   padding: 6px 10px;
-  min-width: 92px;
+  min-width: 84px;
   text-align: center;
   user-select: all;
   cursor: pointer;
-  transition: border-color 0.15s;
+  transition: border-color 0.15s, color 0.15s;
 }
 
 .totp-code:hover {
   border-color: var(--accent);
+}
+
+.totp-code.copied {
+  color: var(--success);
+  border-color: var(--success);
 }
 
 .totp-code.expiring {
@@ -514,30 +519,6 @@ h3 {
 .totp-code.expired {
   color: var(--danger);
   border-color: var(--danger);
-}
-
-.totp-copy-btn {
-  flex-shrink: 0;
-  background: var(--bg-elev);
-  border: 1px solid var(--border-soft);
-  color: var(--text-muted);
-  border-radius: var(--radius-md);
-  padding: 6px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.15s, border-color 0.15s;
-}
-
-.totp-copy-btn:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-.totp-copy-btn.copied {
-  color: var(--success);
-  border-color: var(--success);
 }
 
 .totp-delete {
