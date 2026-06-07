@@ -119,6 +119,7 @@
             </svg>
             <span>Passkey Vault</span>
           </h1>
+          <div class="header-actions">
           <button
             id="lock-btn"
             class="icon-btn"
@@ -163,11 +164,11 @@
               <circle cx="12" cy="12" r="3" />
             </svg>
           </button>
+          </div>
         </div>
       </header>
 
-      <div class="status-row">
-        <span class="badge" id="passkey-count">0 passkeys</span>
+      <div class="status-row" id="status-row" hidden>
         <span id="sync-status-badge" class="badge muted" hidden></span>
       </div>
 

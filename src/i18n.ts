@@ -73,6 +73,8 @@ const en: TranslationMap = {
   popupSyncOffline: 'offline',
   popupSyncPending: '{count} pending',
   popupSearchPlaceholder: 'Search',
+  popupSearchIn: 'Search in {scope}',
+  popupSearchAnd: ' and ',
   popupLoadingPasskeys: 'Loading vault...',
   popupNoPasskeysYet: 'No Passkeys Yet',
   popupNoPasskeysHelp:

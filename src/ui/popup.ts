@@ -54,7 +54,7 @@ import { initTheme } from '../theme';
   let vaultListEl: HTMLElement;
   let noResultsEl: HTMLElement;
   let noResultsTextEl: HTMLElement;
-  let passkeyCountEl: HTMLElement;
+  let statusRowEl: HTMLElement;
   let refreshBtn: HTMLButtonElement;
   let exportFullBtn: HTMLButtonElement;
   let confirmModal: HTMLElement;
@@ -253,7 +253,9 @@ import { initTheme } from '../theme';
   function showMainScreen(): void {
     lockScreen.style.display = 'none';
     setupScreen.style.display = 'none';
-    mainContainer.style.display = 'block';
+    // .container is a flex column — keep that so <main> can flex and the
+    // footer pins to the bottom (a plain 'block' would break the layout)
+    mainContainer.style.display = 'flex';
     initializeElements();
     createConfirmModal();
     loadSyncStatus();
@@ -325,11 +327,13 @@ import { initTheme } from '../theme';
       const response = await chrome.runtime.sendMessage({ type: 'GET_SYNC_STATUS' });
       if (!response.success || !response.status?.enabled) {
         badge.style.display = 'none';
+        if (statusRowEl) statusRowEl.hidden = true;
         return;
       }
 
       const status = response.status;
       badge.style.display = 'inline-block';
+      if (statusRowEl) statusRowEl.hidden = false;
 
       switch (status.connectionStatus) {
         case 'connected':
@@ -359,6 +363,7 @@ import { initTheme } from '../theme';
       }
     } catch {
       badge.style.display = 'none';
+      if (statusRowEl) statusRowEl.hidden = true;
     }
   }
 
@@ -368,7 +373,7 @@ import { initTheme } from '../theme';
     vaultListEl = document.getElementById('vault-list') as HTMLElement;
     noResultsEl = document.getElementById('no-results') as HTMLElement;
     noResultsTextEl = document.getElementById('no-results-text') as HTMLElement;
-    passkeyCountEl = document.getElementById('passkey-count') as HTMLElement;
+    statusRowEl = document.getElementById('status-row') as HTMLElement;
     refreshBtn = document.getElementById('refresh-btn') as HTMLButtonElement;
     exportFullBtn = document.getElementById('export-full-btn') as HTMLButtonElement;
     searchInput = document.getElementById('search-input') as HTMLInputElement;
@@ -598,6 +603,8 @@ import { initTheme } from '../theme';
     );
   }
 
+  // Fold the vault counts into the search placeholder, e.g.
+  // "Search in 1 passkey and 1 code" — keeps the header uncluttered.
   function updateVaultCount(): void {
     const parts: string[] = [];
     if (allPasskeys.length > 0) {
@@ -606,9 +613,9 @@ import { initTheme } from '../theme';
     if (allTotpEntries.length > 0) {
       parts.push(formatCount('popupTotpCount', allTotpEntries.length));
     }
-    passkeyCountEl.textContent = parts.length
-      ? parts.join(' · ')
-      : formatCount('popupPasskeyCount', 0);
+    searchInput.placeholder = parts.length
+      ? t('popupSearchIn', { scope: parts.join(t('popupSearchAnd')) })
+      : t('popupSearchPlaceholder');
   }
 
   // Render the unified list from current data, search query, and filters.

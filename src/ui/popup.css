@@ -156,6 +156,12 @@ header {
   gap: 8px;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 h1 {
   margin: 0;
   font-size: 15px;
@@ -193,6 +199,10 @@ h3 {
   align-items: center;
   gap: 8px;
   padding: 8px 16px 0;
+}
+
+.status-row[hidden] {
+  display: none;
 }
 
 .badge {
