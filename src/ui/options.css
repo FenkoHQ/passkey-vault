@@ -336,6 +336,32 @@ nav {
   flex-wrap: wrap;
 }
 
+/* ---------- Master password form ---------- */
+.pw-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.pw-form[hidden] {
+  display: none;
+}
+
+.pw-form input[type='password'] {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.field-error {
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.field-error[hidden] {
+  display: none;
+}
+
 /* ---------- Mode selector (interception) ---------- */
 .mode-selector {
   display: flex;
@@ -797,6 +823,10 @@ textarea:focus {
 }
 
 /* ---------- Buttons ---------- */
+.btn[hidden] {
+  display: none;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -855,6 +885,16 @@ textarea:focus {
 .btn-secondary:hover {
   background: var(--bg-elev);
   border-color: var(--accent);
+}
+
+.btn-danger {
+  background: transparent;
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.btn-danger:hover {
+  background: var(--danger-soft);
 }
 
 .btn-ghost {

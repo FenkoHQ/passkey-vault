@@ -91,6 +91,11 @@ import { initTheme } from '../theme';
       });
     }
 
+    const lockBtn = document.getElementById('lock-btn');
+    if (lockBtn) {
+      lockBtn.addEventListener('click', lockVault);
+    }
+
     checkSecureStorageState();
   });
 
@@ -123,6 +128,28 @@ import { initTheme } from '../theme';
     }
   }
 
+  // Manually lock the vault from the popup. If no master password is set yet,
+  // there's nothing to lock behind — send the user to set one up first.
+  async function lockVault(): Promise<void> {
+    try {
+      const state = await chrome.runtime.sendMessage({ type: 'IS_SECURE_STORAGE_UNLOCKED' });
+      if (state?.success && state.isSetup === false) {
+        showNotification(t('popupLockNoPasswordPrompt'));
+        showSetupScreen();
+        return;
+      }
+      await chrome.runtime.sendMessage({ type: 'LOCK_SECURE_STORAGE' });
+    } catch (error) {
+      console.error('Failed to lock vault:', error);
+    }
+    // Drop in-memory data so the locked UI holds nothing sensitive
+    allPasskeys = [];
+    allTotpEntries = [];
+    codeCache.clear();
+    if (vaultListEl) vaultListEl.innerHTML = '';
+    showLockScreen();
+  }
+
   function showLockScreen(): void {
     lockScreen.style.display = 'block';
     setupScreen.style.display = 'none';
@@ -132,6 +159,9 @@ import { initTheme } from '../theme';
     const unlockBtn = document.getElementById('unlock-btn') as HTMLButtonElement;
     const errorEl = document.getElementById('unlock-error') as HTMLElement;
 
+    // Never carry a PIN over from a previous session/entry
+    passwordInput.value = '';
+    errorEl.style.display = 'none';
     passwordInput.focus();
 
     const doUnlock = async () => {
@@ -184,7 +214,7 @@ import { initTheme } from '../theme';
       const confirm = confirmInput.value;
       errorEl.style.display = 'none';
 
-      if (password.length < 8) {
+      if (!/^\d{4,12}$/.test(password)) {
         errorEl.textContent = t('popupPasswordMin');
         errorEl.style.display = 'block';
         return;

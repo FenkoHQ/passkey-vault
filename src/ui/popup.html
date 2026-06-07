@@ -27,13 +27,14 @@
           </svg>
         </div>
         <h1><span data-i18n="popupVaultLocked">Vault Locked</span></h1>
-        <p class="auth-hint" data-i18n="popupUnlockHelp">Enter your master password to unlock.</p>
+        <p class="auth-hint" data-i18n="popupUnlockHelp">Enter your PIN to unlock.</p>
       </div>
       <div class="auth-form">
         <input
           type="password"
           id="unlock-password"
-          placeholder="Master password"
+          inputmode="numeric"
+          placeholder="PIN"
           data-i18n-placeholder="popupMasterPasswordPlaceholder"
           autocomplete="off"
         />
@@ -65,27 +66,31 @@
         </div>
         <h1><span data-i18n="popupSetupVault">Set Up Vault</span></h1>
         <p class="auth-hint" data-i18n="popupSetupHelp">
-          Create a master password to encrypt your passkeys at rest.
+          Set a PIN (4–12 digits) to lock your vault.
         </p>
       </div>
       <div class="auth-form">
         <input
           type="password"
           id="setup-password"
-          placeholder="Master password (min 8 chars)"
+          inputmode="numeric"
+          maxlength="12"
+          placeholder="PIN (4–12 digits)"
           data-i18n-placeholder="popupSetupPasswordPlaceholder"
           autocomplete="off"
         />
         <input
           type="password"
           id="setup-password-confirm"
-          placeholder="Confirm password"
+          inputmode="numeric"
+          maxlength="12"
+          placeholder="Confirm PIN"
           data-i18n-placeholder="popupConfirmPasswordPlaceholder"
           autocomplete="off"
         />
         <div id="setup-error" class="field-error" hidden></div>
         <button type="button" id="setup-btn" class="btn btn-primary btn-full">
-          <span data-i18n="popupCreatePassword">Create Password</span>
+          <span data-i18n="popupCreatePassword">Create PIN</span>
         </button>
         <button type="button" id="skip-setup-btn" class="btn btn-ghost btn-full">
           <span data-i18n="popupSkipForNow">Skip for now</span>
@@ -114,6 +119,27 @@
             </svg>
             <span>Passkey Vault</span>
           </h1>
+          <button
+            id="lock-btn"
+            class="icon-btn"
+            type="button"
+            title="Lock vault"
+            data-i18n-title="popupLockTitle"
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+          </button>
           <button
             id="options-btn"
             class="icon-btn"

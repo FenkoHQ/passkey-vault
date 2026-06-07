@@ -413,6 +413,27 @@ export class SecureStorage {
   }
 
   /**
+   * Remove the master password: verify the current one, then drop the
+   * encrypted layer (check value, salt, encrypted blobs) so the vault is no
+   * longer locked. Raw display copies in chrome.storage.local are untouched.
+   */
+  async removeMasterPassword(currentPassword: string): Promise<boolean> {
+    const verified = await this.initialize(currentPassword);
+    if (!verified) {
+      return false;
+    }
+    this.lock();
+    await chrome.storage.local.remove([
+      STORAGE_KEYS.MASTER_KEY_CHECK,
+      STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG,
+      STORAGE_KEYS.ENCRYPTED_PASSKEYS,
+      STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES,
+      STORAGE_KEYS.ENCRYPTION_SALT,
+    ]);
+    return true;
+  }
+
+  /**
    * Wipe all secure data (emergency reset)
    */
   async emergencyWipe(): Promise<void> {

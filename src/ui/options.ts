@@ -105,6 +105,11 @@ function setupNavigation(): void {
 
       document.querySelectorAll('.section').forEach((s) => s.classList.remove('active'));
       document.getElementById(`section-${section}`)?.classList.add('active');
+
+      // Re-read live state when entering the security section
+      if (section === 'security') {
+        refreshSecurityStatus();
+      }
     });
   });
 }
@@ -395,37 +400,139 @@ async function addRelay(input: HTMLInputElement): Promise<void> {
 
 // ==================== SECURITY ====================
 
+let securityWired = false;
+
 async function loadSecuritySettings(): Promise<void> {
+  if (!securityWired) {
+    securityWired = true;
+    wireSecurityHandlers();
+  }
+  await refreshSecurityStatus();
+}
+
+async function refreshSecurityStatus(): Promise<void> {
   const response = await sendMessage('IS_SECURE_STORAGE_UNLOCKED');
   const statusEl = document.getElementById('master-pw-status')!;
+  const setForm = document.getElementById('master-pw-set')!;
+  const changeForm = document.getElementById('master-pw-change')!;
+  const lockBtn = document.getElementById('lock-now-btn')!;
 
   if (response.isSetup === false) {
     statusEl.textContent = t('optionsNotSet');
     statusEl.className = 'status-badge not-set';
+    setForm.hidden = false;
+    changeForm.hidden = true;
   } else if (response.isUnlocked) {
     statusEl.textContent = t('optionsUnlocked');
     statusEl.className = 'status-badge unlocked';
+    setForm.hidden = true;
+    changeForm.hidden = false;
+    lockBtn.hidden = false;
   } else {
     statusEl.textContent = t('optionsLocked');
     statusEl.className = 'status-badge locked';
+    setForm.hidden = true;
+    changeForm.hidden = false;
+    lockBtn.hidden = true; // already locked
   }
+
+  const result = await chrome.storage.local.get('auto_lock_timeout');
+  const timeout = result.auto_lock_timeout ?? 30;
+  (document.getElementById('auto-lock-timeout') as HTMLSelectElement).value = String(timeout);
+}
+
+function wireSecurityHandlers(): void {
+  const val = (id: string): string => (document.getElementById(id) as HTMLInputElement).value;
+  const clear = (...ids: string[]) =>
+    ids.forEach((id) => ((document.getElementById(id) as HTMLInputElement).value = ''));
+  const showErr = (id: string, msg: string) => {
+    const el = document.getElementById(id)!;
+    el.textContent = msg;
+    el.hidden = false;
+  };
+  const hideErr = (id: string) => {
+    document.getElementById(id)!.hidden = true;
+  };
+
+  // Set a new master password (when none exists)
+  document.getElementById('set-pw-btn')!.addEventListener('click', async () => {
+    hideErr('set-pw-error');
+    const pw = val('set-pw');
+    if (!/^\d{4,12}$/.test(pw)) {
+      showErr('set-pw-error', t('optionsPasswordMin'));
+      return;
+    }
+    if (pw !== val('set-pw-confirm')) {
+      showErr('set-pw-error', t('optionsPasswordsNoMatch'));
+      return;
+    }
+    const resp = await sendMessage('SETUP_MASTER_PASSWORD', { password: pw });
+    if (resp.success) {
+      clear('set-pw', 'set-pw-confirm');
+      await chrome.storage.local.remove('master_password_setup_skipped');
+      await refreshSecurityStatus();
+    } else {
+      showErr('set-pw-error', (resp.error as string) || t('optionsSetupFailed'));
+    }
+  });
+
+  // Change the existing master password
+  document.getElementById('change-pw-btn')!.addEventListener('click', async () => {
+    hideErr('change-pw-error');
+    const next = val('change-pw-new');
+    if (!/^\d{4,12}$/.test(next)) {
+      showErr('change-pw-error', t('optionsPasswordMin'));
+      return;
+    }
+    if (next !== val('change-pw-confirm')) {
+      showErr('change-pw-error', t('optionsPasswordsNoMatch'));
+      return;
+    }
+    const resp = await sendMessage('CHANGE_MASTER_PASSWORD', {
+      currentPassword: val('change-pw-current'),
+      newPassword: next,
+    });
+    if (resp.success) {
+      clear('change-pw-current', 'change-pw-new', 'change-pw-confirm');
+      await refreshSecurityStatus();
+    } else {
+      showErr('change-pw-error', (resp.error as string) || t('optionsWrongPassword'));
+    }
+  });
+
+  // Remove the master PIN entirely (requires the current PIN)
+  document.getElementById('remove-pw-btn')!.addEventListener('click', async () => {
+    hideErr('change-pw-error');
+    const current = val('change-pw-current');
+    if (!current) {
+      showErr('change-pw-error', t('optionsRemoveNeedsCurrent'));
+      return;
+    }
+    if (!window.confirm(t('optionsRemoveConfirm'))) {
+      return;
+    }
+    const resp = await sendMessage('REMOVE_MASTER_PASSWORD', { currentPassword: current });
+    if (resp.success) {
+      clear('change-pw-current', 'change-pw-new', 'change-pw-confirm');
+      // Don't nag to set one up again on the popup
+      await chrome.storage.local.set({ master_password_setup_skipped: true });
+      await refreshSecurityStatus();
+    } else {
+      showErr('change-pw-error', (resp.error as string) || t('optionsWrongPassword'));
+    }
+  });
 
   // Lock now
   document.getElementById('lock-now-btn')!.addEventListener('click', async () => {
     await sendMessage('LOCK_SECURE_STORAGE');
-    loadSecuritySettings();
+    await refreshSecurityStatus();
   });
 
   // Auto-lock timeout
-  const result = await chrome.storage.local.get('auto_lock_timeout');
-  const timeout = result.auto_lock_timeout ?? 30;
   const select = document.getElementById('auto-lock-timeout') as HTMLSelectElement;
-  select.value = String(timeout);
-
   select.addEventListener('change', async () => {
     const minutes = parseInt(select.value, 10);
     await chrome.storage.local.set({ auto_lock_timeout: minutes });
-    // Notify background to update the timer
     await sendMessage('SET_AUTO_LOCK_TIMEOUT', { minutes });
   });
 }

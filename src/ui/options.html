@@ -369,17 +369,85 @@
           </div>
 
           <div class="card">
-            <h3 data-i18n="optionsMasterPassword">Master Password</h3>
+            <h3 data-i18n="optionsMasterPassword">Master PIN</h3>
             <div class="card-row">
               <span class="info-label" data-i18n="optionsStatus">Status</span>
               <span id="master-pw-status" class="status-badge" data-i18n="optionsChecking"
                 >Checking...</span
               >
             </div>
-            <div class="card-actions">
-              <button id="lock-now-btn" class="btn btn-secondary btn-sm">
-                <span data-i18n="optionsLockNow">Lock Now</span>
-              </button>
+
+            <!-- Shown when no master PIN is set yet -->
+            <div id="master-pw-set" class="pw-form" hidden>
+              <p class="card-hint" data-i18n="optionsSetMasterDesc">
+                Set a PIN (4–12 digits) to lock your vault behind a passcode.
+              </p>
+              <input
+                type="password"
+                id="set-pw"
+                inputmode="numeric"
+                maxlength="12"
+                placeholder="PIN (4–12 digits)"
+                data-i18n-placeholder="optionsNewPasswordPlaceholder"
+                autocomplete="new-password"
+              />
+              <input
+                type="password"
+                id="set-pw-confirm"
+                inputmode="numeric"
+                maxlength="12"
+                placeholder="Confirm PIN"
+                data-i18n-placeholder="optionsConfirmPasswordPlaceholder"
+                autocomplete="new-password"
+              />
+              <div id="set-pw-error" class="field-error" hidden></div>
+              <div class="card-actions">
+                <button id="set-pw-btn" class="btn btn-primary btn-sm">
+                  <span data-i18n="optionsSetPassword">Set PIN</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Shown when a master password exists -->
+            <div id="master-pw-change" class="pw-form" hidden>
+              <input
+                type="password"
+                id="change-pw-current"
+                inputmode="numeric"
+                placeholder="Current PIN"
+                data-i18n-placeholder="optionsCurrentPasswordPlaceholder"
+                autocomplete="current-password"
+              />
+              <input
+                type="password"
+                id="change-pw-new"
+                inputmode="numeric"
+                maxlength="12"
+                placeholder="New PIN (4–12 digits)"
+                data-i18n-placeholder="optionsNewPasswordChangePlaceholder"
+                autocomplete="new-password"
+              />
+              <input
+                type="password"
+                id="change-pw-confirm"
+                inputmode="numeric"
+                maxlength="12"
+                placeholder="Confirm new PIN"
+                data-i18n-placeholder="optionsConfirmPasswordPlaceholder"
+                autocomplete="new-password"
+              />
+              <div id="change-pw-error" class="field-error" hidden></div>
+              <div class="card-actions">
+                <button id="change-pw-btn" class="btn btn-primary btn-sm">
+                  <span data-i18n="optionsChangePassword">Change PIN</span>
+                </button>
+                <button id="lock-now-btn" class="btn btn-secondary btn-sm">
+                  <span data-i18n="optionsLockNow">Lock Now</span>
+                </button>
+                <button id="remove-pw-btn" class="btn btn-danger btn-sm">
+                  <span data-i18n="optionsRemovePassword">Remove PIN</span>
+                </button>
+              </div>
             </div>
           </div>
 

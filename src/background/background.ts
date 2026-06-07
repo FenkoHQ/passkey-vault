@@ -289,6 +289,8 @@ class BackgroundService {
         return this.handleChangeMasterPassword(
           payload as { currentPassword: string; newPassword: string }
         );
+      case 'REMOVE_MASTER_PASSWORD':
+        return this.handleRemoveMasterPassword(payload as { currentPassword: string });
       case 'SET_DEBUG_LOGGING':
         return this.handleSetDebugLogging(payload as { enabled: boolean });
       case 'GET_DEBUG_LOGGING':
@@ -1243,8 +1245,8 @@ class BackgroundService {
   private async handleSetupMasterPassword(payload: { password: string }): Promise<unknown> {
     try {
       const { password } = payload;
-      if (!password || password.length < 8) {
-        return { success: false, error: 'Password must be at least 8 characters' };
+      if (!/^\d{4,12}$/.test(password || '')) {
+        return { success: false, error: 'PIN must be 4 to 12 digits' };
       }
 
       const unlocked = await secureStorage.initialize(password);
@@ -1321,6 +1323,24 @@ class BackgroundService {
     }
   }
 
+  private async handleRemoveMasterPassword(payload: { currentPassword: string }): Promise<unknown> {
+    try {
+      const { currentPassword } = payload;
+      if (!currentPassword) {
+        return { success: false, error: 'Current PIN is required' };
+      }
+      const removed = await secureStorage.removeMasterPassword(currentPassword);
+      if (!removed) {
+        return { success: false, error: 'Failed to remove PIN — check your current PIN' };
+      }
+      return { success: true, message: 'Master PIN removed' };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('Failed to remove master password:', error);
+      return { success: false, error: message };
+    }
+  }
+
   private async handleIsSecureStorageUnlocked(): Promise<unknown> {
     try {
       const isUnlocked = secureStorage.isStorageUnlocked();
@@ -1339,10 +1359,10 @@ class BackgroundService {
     try {
       const { currentPassword, newPassword } = payload;
       if (!currentPassword || !newPassword) {
-        return { success: false, error: 'Both current and new passwords are required' };
+        return { success: false, error: 'Both current and new PINs are required' };
       }
-      if (newPassword.length < 8) {
-        return { success: false, error: 'New password must be at least 8 characters' };
+      if (!/^\d{4,12}$/.test(newPassword)) {
+        return { success: false, error: 'PIN must be 4 to 12 digits' };
       }
 
       const changed = await secureStorage.changeMasterPassword(currentPassword, newPassword);
