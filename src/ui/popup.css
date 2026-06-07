@@ -541,16 +541,24 @@ h3 {
 }
 
 .totp-delete {
-  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  padding: 0 8px;
+  margin-left: 4px;
   border: 1px solid var(--border-soft);
+  background: transparent;
   color: var(--text-muted);
-  border-radius: var(--radius-md);
-  padding: 4px 8px;
+  border-radius: var(--radius-sm);
   font-size: 11px;
+  font-weight: 500;
   cursor: pointer;
+  transition: all 0.15s;
 }
 
 .totp-delete:hover {
+  background: var(--danger-soft);
   color: var(--danger);
   border-color: var(--danger);
 }

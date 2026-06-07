@@ -1024,7 +1024,7 @@ import { initTheme } from '../theme';
                 <rect x="3" y="3" width="13" height="13" rx="2"></rect>
               </svg>
             </button>
-            <button class="totp-delete" data-id="${popupEscapeHtml(entry.id)}" title="${popupEscapeHtml(t('commonDelete'))}">×</button>
+            <button class="totp-delete" data-id="${popupEscapeHtml(entry.id)}" title="${popupEscapeHtml(t('commonDelete'))}">${popupEscapeHtml(t('popupDel'))}</button>
           </div>
         </div>
         <div class="totp-progress-track">
