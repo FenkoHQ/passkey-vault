@@ -182,8 +182,8 @@ Additional generated screenshots are available in `docs/cws/` if the dashboard a
 
 **Promotional Images**
 
-- Small promo tile: `docs/cws/promo-small.png`
-- Marquee promo tile: `docs/cws/promo-marquee.png`
+- Small promo tile (440×280): `docs/cws/promo-small.jpg`
+- Marquee promo tile (1400×560): `docs/cws/promo-marquee.jpg`
 
 **Homepage URL**
 

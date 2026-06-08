@@ -6,27 +6,27 @@ Paste-ready listing copy for the locales currently present in `src/_locales`.
 
 ### Summary
 
-Store WebAuthn passkeys and 2FA codes locally, with backup, sync, and browser fallback controls.
+Store WebAuthn passkeys and TOTP 2FA codes locally. One searchable vault, optional PIN lock, encrypted sync, no cloud account.
 
 ### Detailed Description
 
-Passkey Vault is a local-first WebAuthn passkey and 2FA tool for developers, testers, and advanced users who want direct control over passkey creation, storage, two-factor codes, backup, sync, and browser fallback behavior.
+Passkey Vault keeps your WebAuthn passkeys and your TOTP two-factor codes on your own device, in one place. No cloud account, and no third party holding your keys.
 
-The extension intercepts WebAuthn registration and sign-in requests, stores passkeys in local browser extension storage, and lets you inspect, search, export, import, and sync credentials without depending on a third-party cloud account. It also doubles as a TOTP authenticator for your one-time codes.
+It intercepts WebAuthn sign-up and sign-in requests so you can create, store, search, and reuse passkeys directly, and it doubles as a 2FA authenticator for the one-time codes you would otherwise keep in a separate app.
 
-Key features:
+What you can do:
 
-- Local vault for WebAuthn create and get flows
-- Built-in TOTP / 2FA authenticator (RFC 6238) with live codes, clipboard copy, and otpauth:// / QR-image import
-- Optional master PIN that encrypts the vault at rest and locks the popup
-- Browser and OS passkey fallback when no matching vault entry exists
-- Disabled, all-sites, and allowlist interception modes
-- Unified, searchable popup with per-type filters and light/dark themes
-- Backup and import for moving passkeys and 2FA codes between environments
-- Optional cross-device sync using an encrypted Nostr-based sync chain
-- Developer logging, storage inspection, sync logs, and WebAuthn event tools
+- Keep passkeys and 2FA codes in one searchable vault, filtered by type
+- Generate TOTP codes locally (RFC 6238) with a live countdown and click-to-copy
+- Add codes by pasting an otpauth:// link, a QR screenshot, or a QR image; decoded on your device, with no camera permission
+- Lock the vault behind an optional PIN that encrypts it at rest
+- Back up everything to an encrypted file, or sync across devices over an end-to-end encrypted channel with no account
+- Fall back to the browser and OS passkey UI for sites you have not saved, with per-site interception controls
+- Inspect storage, sync logs, and WebAuthn events with the built-in developer tools
 
-Important: Passkey Vault is a research and developer tool. Private keys and 2FA secrets are stored in local browser extension storage. Treat extension data and exported backups as sensitive credential material.
+Your keys never leave your device unless you export or sync them, and sync is end-to-end encrypted, so the relays never see plaintext. There is no recovery if you lose every device and backup, so keep an offline backup.
+
+Passkey Vault is a local-first tool aimed at developers, testers, and advanced users. Private keys and 2FA secrets live in local browser storage; treat the extension data and exported backups as sensitive credential material.
 
 ## French (`fr`)
 

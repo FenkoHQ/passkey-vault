@@ -18,8 +18,8 @@ Extras available in this folder if you want to swap any in:
 
 ## Promotional tiles
 
-- Small promo tile (440×280): `promo-small.png`
-- Marquee promo tile (1400×560): `promo-marquee.png`
+- Small promo tile (440×280, JPEG, no alpha): `promo-small.jpg`
+- Marquee promo tile (1400×560, JPEG, no alpha): `promo-marquee.jpg`
 
 ## Listing text
 

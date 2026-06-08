@@ -876,6 +876,11 @@ async function capturePromoTiles() {
 
   const setup = await extPage(ctx, id, 'popup.html');
   await injectPasskeys(setup, MOCK_PASSKEYS);
+  await injectTotp(setup, MOCK_TOTP);
+  // Hide the no-recovery warning banner — keep the promo popup clean
+  await setup.evaluate(
+    () => new Promise((r) => chrome.storage.local.set({ vault_warning_dismissed: true }, r))
+  );
   await setup.close();
 
   // ── Small promo 440×280 ───────────────────────────────────────────────────
@@ -927,19 +932,26 @@ body::before {
       </svg>
     </div>
     <div class="brand">Passkey Vault</div>
-    <div class="tagline">Your passkeys.<br>Your device.<br>Nobody else.</div>
+    <div class="tagline">Passkeys + 2FA.<br>On your device.<br>Nobody else.</div>
   </div>
 </body></html>`);
     await p.waitForTimeout(300);
-    const file = path.join(CWS_DIR, 'promo-small.png');
-    await p.screenshot({ path: file, clip: { x: 0, y: 0, width: 440, height: 280 } });
-    console.log(`  ✅ promo-small.png  (440×280)`);
+    const file = path.join(CWS_DIR, 'promo-small.jpg');
+    await p.screenshot({
+      path: file,
+      type: 'jpeg',
+      quality: 95,
+      clip: { x: 0, y: 0, width: 440, height: 280 },
+    });
+    console.log(`  ✅ promo-small.jpg  (440×280, no alpha)`);
     await p.close();
   }
 
   // ── Marquee promo 1400×560 ────────────────────────────────────────────────
   {
     const p = await extPage(ctx, id, 'popup.html');
+    await setTheme(p, 'dark');
+    await p.reload();
     await p.setViewportSize({ width: 1400, height: 560 });
     await waitReady(p);
 
@@ -963,9 +975,12 @@ body::before {
           pointer-events: none !important; z-index: 0 !important;
         }
         .container {
-          zoom: 1.15 !important;
+          width: 360px !important;
+          max-width: 360px !important;
+          flex: 0 0 auto !important;
+          zoom: 0.78 !important;
           position: relative !important; z-index: 1 !important;
-          margin-right: 100px !important;
+          margin-right: 110px !important;
           box-shadow:
             0 32px 120px rgba(0,0,0,0.85),
             0 0 0 1px rgba(252,211,77,0.15),
@@ -999,19 +1014,24 @@ body::before {
         <div style="font-size:11px;font-weight:700;color:#fcd34d;letter-spacing:3px;
           text-transform:uppercase;margin-bottom:22px">Browser Extension</div>
         <div style="font-size:56px;font-weight:700;color:#fff;text-transform:uppercase;
-          letter-spacing:-1px;line-height:1.05">Your<br>Passkeys.</div>
+          letter-spacing:-1px;line-height:1.05">Passkeys</div>
         <div style="font-size:56px;font-weight:700;color:#fcd34d;text-transform:uppercase;
-          letter-spacing:-1px;line-height:1.05;margin-bottom:28px">Your Device.</div>
+          letter-spacing:-1px;line-height:1.05;margin-bottom:28px">&amp; 2FA codes.</div>
         <div style="font-size:13px;font-weight:700;color:#fff;letter-spacing:2px;
-          text-transform:uppercase;opacity:0.45">Nobody else.</div>
+          text-transform:uppercase;opacity:0.45">On your device. Nobody else.</div>
       `;
       document.body.appendChild(text);
     });
 
     await p.waitForTimeout(300);
-    const file = path.join(CWS_DIR, 'promo-marquee.png');
-    await p.screenshot({ path: file, clip: { x: 0, y: 0, width: 1400, height: 560 } });
-    console.log(`  ✅ promo-marquee.png  (1400×560)`);
+    const file = path.join(CWS_DIR, 'promo-marquee.jpg');
+    await p.screenshot({
+      path: file,
+      type: 'jpeg',
+      quality: 95,
+      clip: { x: 0, y: 0, width: 1400, height: 560 },
+    });
+    console.log(`  ✅ promo-marquee.jpg  (1400×560, no alpha)`);
     await p.close();
   }
 
