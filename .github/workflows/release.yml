@@ -160,6 +160,37 @@ jobs:
         id: tag_name
         run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
+      - name: Prepare release notes
+        run: |
+          VER="${GITHUB_REF#refs/tags/v}"
+          # Pull this version's section out of CHANGELOG.md (between its
+          # "## [VER]" heading and the next "## [" heading).
+          awk -v ver="$VER" '
+            $0 ~ "^## \\[" ver "\\]" { p = 1; print; next }
+            p && /^## \[/ { exit }
+            p { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "## Installation"
+            echo ""
+            echo "### Chrome"
+            echo "1. Download \`passkey-vault-chrome.zip\` and extract it"
+            echo "2. Open \`chrome://extensions/\`, enable Developer mode"
+            echo "3. Click \"Load unpacked\" and select the extracted directory"
+            echo ""
+            echo "### Firefox"
+            echo "1. Download \`passkey-vault-firefox.zip\` and extract it"
+            echo "2. Open \`about:debugging#/runtime/this-firefox\`"
+            echo "3. Click \"Load Temporary Add-on...\" and select \`manifest.json\`"
+            echo ""
+            echo "See the [full changelog](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)."
+          } >> RELEASE_NOTES.md
+          echo "---- release notes ----"
+          cat RELEASE_NOTES.md
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
@@ -170,23 +201,4 @@ jobs:
           files: |
             passkey-vault-chrome.zip
             passkey-vault-firefox.zip
-          body: |
-            ## Installation
-
-            ### Chrome
-            1. Download `passkey-vault-chrome.zip`
-            2. Extract the ZIP file
-            3. Open `chrome://extensions/`
-            4. Enable "Developer mode"
-            5. Click "Load unpacked"
-            6. Select the extracted directory
-
-            ### Firefox
-            1. Download `passkey-vault-firefox.zip`
-            2. Extract the ZIP file
-            3. Open `about:debugging#/runtime/this-firefox`
-            4. Click "Load Temporary Add-on..."
-            5. Select the `manifest.json` file in the extracted directory
-
-            ---
-            See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for more information.
+          body_path: RELEASE_NOTES.md

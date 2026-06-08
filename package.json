@@ -1,6 +1,6 @@
 {
   "name": "passkey-vault",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "description": "A browser extension for secure passkey (WebAuthn) storage and management",
   "scripts": {
     "build": "node build-extension.js",

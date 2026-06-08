@@ -123,7 +123,7 @@ npm run capture          # Re-generate screenshots and demo video
 
 ## Chrome Web Store Listing
 
-Use these fields when updating the Chrome Web Store listing for `v0.7.0`.
+Use these fields when updating the Chrome Web Store listing for `v0.9.0`.
 
 **Name**
 
@@ -206,18 +206,21 @@ Passkey Vault stores passkey credential material in local browser extension stor
 ## Releasing
 
 ```bash
+npm run version:bump 0.9.0     # sync version across manifests + lockfile
+# update CHANGELOG.md with the new version's notes
 npm run lint
 npm run typecheck
 npm test
 npm run build:all
 npm run zip:all
 npm run validate:packages
-git tag v0.7.0
+git commit -am "Release Passkey Vault 0.9.0"
+git tag v0.9.0
 git push origin main
-git push origin v0.7.0
+git push origin v0.9.0
 ```
 
-The CI pipeline builds both extensions, publishes to the Chrome Web Store, and creates a GitHub release with both ZIPs attached.
+The CI pipeline builds both extensions, publishes to the Chrome Web Store, and creates a GitHub release. Release notes come from the matching `## [x.y.z]` section in `CHANGELOG.md`.
 
 ---
 
