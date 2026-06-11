@@ -200,6 +200,12 @@ h1 svg {
   color: var(--accent);
 }
 
+h1 .header-logo {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
 h2 {
   margin: 0;
   font-size: 15px;
