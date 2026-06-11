@@ -1,7 +1,7 @@
 {
   "name": "passkey-vault",
   "version": "0.9.0",
-  "description": "A browser extension for secure passkey (WebAuthn) storage and management",
+  "description": "Cross-platform browser extension for passkey (WebAuthn) and MFA/TOTP management with end-to-end encrypted multi-device sync",
   "scripts": {
     "build": "node build-extension.js",
     "build:chrome": "node build-extension.js --target=chrome",

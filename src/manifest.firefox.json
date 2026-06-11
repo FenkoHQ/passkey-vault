@@ -60,7 +60,7 @@
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "passkey-vault@example.com",
+      "id": "passkey-vault@fenko.io",
       "strict_min_version": "109.0"
     }
   }

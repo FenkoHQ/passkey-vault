@@ -135,6 +135,32 @@ jobs:
             exit 1
           fi
 
+  publish-firefox:
+    name: Publish to Firefox Add-ons (AMO)
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Download Firefox build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: passkey-vault-firefox
+          path: dist-firefox
+
+      - name: Sign and submit to AMO (listed channel)
+        run: |
+          npx --yes web-ext@8 sign \
+            --channel=listed \
+            --source-dir=dist-firefox \
+            --api-key="${{ secrets.AMO_JWT_ISSUER }}" \
+            --api-secret="${{ secrets.AMO_JWT_SECRET }}" \
+            --timeout=900000
+
   release:
     name: Create Release
     needs: build
