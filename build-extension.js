@@ -183,6 +183,12 @@ async function buildForTarget(browserTarget) {
     console.log('  ✅ _locales');
   }
 
+  const fontsSourceDir = path.join('src', 'assets', 'fonts');
+  if (fs.existsSync(fontsSourceDir)) {
+    fs.cpSync(fontsSourceDir, path.join(distDir, 'fonts'), { recursive: true });
+    console.log('  ✅ fonts');
+  }
+
   if (fs.existsSync('src/ui/emergency.html')) {
     fs.copyFileSync('src/ui/emergency.html', `${distDir}/emergency.html`);
     console.log('  ✅ emergency.html');
