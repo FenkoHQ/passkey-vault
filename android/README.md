@@ -14,7 +14,9 @@ The signed APK is written to:
 android/dist/passkey-vault-android-signed.apk
 ```
 
-The build is Gradle-free. It uses the Android SDK tools on this machine directly: `aapt2`, `javac`, `d8`, `zipalign`, and `apksigner`. The dev keystore is generated at `android/signing/passkey-vault-dev.jks` (gitignored).
+The build is Gradle-free. It uses the Android SDK tools on this machine directly: `aapt2`, `javac`, `d8`, `zipalign`, and `apksigner`.
+
+Signing uses `android/signing/passkey-vault.jks` (gitignored) with the password from `ANDROID_KEYSTORE_PASSWORD`. The permanent release key (cert SHA-256 `9652babc...adc05ef1`) lives in the GitHub Actions secrets `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD`, with an age-encrypted backup at `~/secrets/fenko-vault-android-signing.tar.age` on the dev machine. CI (`.github/workflows/android.yml`) builds and signs the APK on pushes to main that touch `android/`. If the keystore is missing locally, the script generates a throwaway dev key (password `android`) — fine for hacking, but the APK won't upgrade-install over release-signed builds.
 
 Supported Android versions:
 

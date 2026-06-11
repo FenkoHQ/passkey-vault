@@ -22,7 +22,8 @@ GEN="$OUT/generated"
 COMPILED="$OUT/compiled"
 DIST="$ROOT/android/dist"
 KEY_DIR="$ROOT/android/signing"
-KEYSTORE="$KEY_DIR/passkey-vault-dev.jks"
+KEYSTORE="$KEY_DIR/passkey-vault.jks"
+KS_PASS="${ANDROID_KEYSTORE_PASSWORD:-android}"
 
 rm -rf "$OUT" "$DIST"
 mkdir -p "$ASSETS" "$CLASSES" "$DEX" "$GEN" "$COMPILED" "$DIST" "$KEY_DIR"
@@ -68,8 +69,8 @@ cp "$OUT/passkey-vault-unsigned.apk" "$OUT/passkey-vault-with-dex.apk"
 if [ ! -f "$KEYSTORE" ]; then
   keytool -genkeypair \
     -keystore "$KEYSTORE" \
-    -storepass android \
-    -keypass android \
+    -storepass "$KS_PASS" \
+    -keypass "$KS_PASS" \
     -alias passkey-vault \
     -keyalg RSA \
     -keysize 3072 \
@@ -80,8 +81,8 @@ fi
 "$APKSIGNER" sign \
   --ks "$KEYSTORE" \
   --ks-key-alias passkey-vault \
-  --ks-pass pass:android \
-  --key-pass pass:android \
+  --ks-pass "pass:$KS_PASS" \
+  --key-pass "pass:$KS_PASS" \
   --out "$DIST/passkey-vault-android-signed.apk" \
   "$OUT/passkey-vault-aligned.apk"
 

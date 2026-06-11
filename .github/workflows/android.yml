@@ -42,16 +42,20 @@ jobs:
             "build-tools;35.0.0" "platforms;android-35" > /dev/null
 
       - name: Restore release keystore
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "ANDROID_KEYSTORE_BASE64 secret is not set" >&2
+            exit 1
+          fi
           mkdir -p android/signing
-          printf '%s' "$KEYSTORE_BASE64" | base64 -d > android/signing/passkey-vault-dev.jks
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > android/signing/passkey-vault.jks
 
       - name: Build signed APK
         env:
           VERSION_CODE: ${{ github.run_number }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: ./android/build-android.sh
 
       - name: Upload APK artifact
