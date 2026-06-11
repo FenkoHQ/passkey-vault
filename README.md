@@ -102,6 +102,33 @@ npm run build:all      # Both
 
 ---
 
+## How sync works
+
+Cross-device sync is optional and off by default. When you enable it, your devices exchange end-to-end encrypted messages over public [Nostr](https://github.com/nostr-protocol/nips) relays — there is no Fenko account, no server that holds your vault, and nothing a relay operator can read.
+
+**Setup.** Enabling sync generates a BIP-39 seed phrase (the "sync chain"). You type that phrase into your other devices; every device holding the phrase is on the chain. The phrase never leaves your devices.
+
+**Key derivation.** From the seed, each device derives two things with PBKDF2 (100k iterations, SHA-256): an AES-256-GCM key for encrypting sync payloads, and a secp256k1 keypair for signing Nostr events. Different chains derive different keys.
+
+**Transport.** Sync messages are standard Nostr events (NIP-01): kind `30078` (application data) with a `d` tag of `pksync-<chainId>`, signed with BIP340 Schnorr signatures. The event content is AES-GCM ciphertext. A relay — or anyone watching one — sees ciphertext, the chain tag, and event timing. Passkey IDs, relying-party domains, device names, and counts of what you store are all inside the encrypted payload.
+
+**What gets synced.** Passkeys (including private keys — that's the point of sync) and TOTP entries. Merging is additive: a device adds entries it doesn't have and updates ones with a newer creation time. Sync never deletes local data.
+
+**Receiving.** Devices verify each event's Schnorr signature and ID hash before decrypting, ignore replayed event IDs, and discard anything that doesn't decrypt with the chain key.
+
+**Relays.** Events are published to all configured relays and subscriptions run on all of them, so two devices sync if they share at least one working relay. The defaults:
+
+| Relay | Operator |
+| --- | --- |
+| `wss://vaultsync.fenko.nz` | Fenko (us) — runs [nosflare](https://github.com/Spl0itable/nosflare), accepts only kind 30078 sync events |
+| `wss://relay.damus.io` | Damus |
+| `wss://nos.lol` | nos.lol |
+| `wss://relay.nostr.band` | nostr.band |
+
+You can add or remove relays in the extension options. On restricted networks, whitelisting `vaultsync.fenko.nz` (WebSocket, port 443) is enough for sync to work.
+
+---
+
 ## Scripts
 
 ```bash
@@ -243,7 +270,8 @@ src/
 
 - Passkeys and TOTP secrets live in `chrome.storage.local`. Setting a master PIN adds an AES-GCM encrypted copy and a lock screen, but a raw copy is kept for display — treat the profile as sensitive regardless
 - Export files contain private keys and TOTP secrets — treat them like passwords
-- Sync payloads are end-to-end encrypted; relays never see plaintext
+- Sync payloads are end-to-end encrypted; relays never see plaintext (see [How sync works](#how-sync-works))
+- Anyone who obtains your sync seed phrase can join your chain and receive your vault — protect it like the vault itself
 - This is a research/developer tool, not a production credential manager
 
 ---

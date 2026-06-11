@@ -3,6 +3,7 @@ import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 
 const RECONNECT_DELAY = 5000;
+const MAX_RECONNECT_DELAY = 60000;
 const HEARTBEAT_INTERVAL = 300000; // 5 minutes - relays rate limit aggressively
 const MIN_BROADCAST_INTERVAL = 10000; // Minimum 10s between broadcasts
 const PASSKEY_STORAGE_KEY = 'passkeys';
@@ -11,7 +12,17 @@ const SYNC_DEVICES_KEY = 'sync_devices';
 const MAX_DEBUG_LOGS = 200;
 const MAX_PROCESSED_EVENTS = 1000; // Track last N event IDs for replay protection
 
-const NOSTR_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band'];
+// Fenko-operated relay first (restricted egress environments can whitelist it),
+// public relays for redundancy. Events are published to ALL relays and
+// subscriptions run on ALL relays — relays don't federate, so devices that
+// only share one working relay still sync.
+export const DEFAULT_RELAYS = [
+  'wss://vaultsync.fenko.nz',
+  'wss://relay.damus.io',
+  'wss://nos.lol',
+  'wss://relay.nostr.band',
+];
+const CUSTOM_RELAYS_KEY = 'custom_relays';
 
 // Passkey data structure for sync
 export interface SyncPasskey {
@@ -80,15 +91,20 @@ export interface SyncTotpEntry {
   lastUsed?: number;
 }
 
+// Per-relay state exposed in debug info
+export interface RelayDebugState {
+  url: string;
+  state: 'CONNECTING' | 'OPEN' | 'CLOSING' | 'CLOSED' | 'DISCONNECTED';
+}
+
 // Debug info returned by getDebugInfo
 export interface SyncDebugInfo {
   chainId: string | null;
   deviceId: string | null;
   deviceName: string | null;
   isConnected: boolean;
-  currentRelay: string;
-  currentRelayIndex: number;
-  wsReadyState: number | undefined;
+  relays: RelayDebugState[];
+  connectedRelayCount: number;
   hasEncryptionKey: boolean;
   hasNostrKeys: boolean;
   logsCount: number;
@@ -135,8 +151,17 @@ export interface EncryptedPasskeyBundle {
   totpCount: number; // TOTP entry count (also only inside ciphertext)
 }
 
+// One WebSocket per relay, each with its own subscription and reconnect loop
+interface RelayConnection {
+  url: string;
+  ws: WebSocket | null;
+  subId: string | null;
+  reconnectTimer: ReturnType<typeof setTimeout> | null;
+  reconnectDelay: number;
+}
+
 export class SyncService {
-  private ws: WebSocket | null = null;
+  private relayConnections: RelayConnection[] = [];
   private chainId: string | null = null;
   private deviceId: string | null = null;
   private deviceName: string | null = null;
@@ -146,11 +171,8 @@ export class SyncService {
   private nostrPrivateKey: Uint8Array | null = null;
   private nostrPublicKey: string | null = null;
   private isConnected = false;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private currentRelayIndex = 0;
-  private subId: string | null = null;
-  private connectionPromise: Promise<void> | null = null;
+  private firstConnectResolve: (() => void) | null = null;
   private debugLogs: DebugLogEntry[] = [];
   private lastBroadcastTime = 0;
   private knownDevices = new Set<string>(); // Track devices we've already seen
@@ -228,14 +250,18 @@ export class SyncService {
 
   getDebugInfo(): SyncDebugInfo {
     // SECURITY FIX: Reduced exposure of sensitive data
+    const wsStateNames: RelayDebugState['state'][] = ['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED'];
+    const relays: RelayDebugState[] = this.relayConnections.map((conn) => ({
+      url: conn.url,
+      state: conn.ws ? wsStateNames[conn.ws.readyState] : 'DISCONNECTED',
+    }));
     return {
       chainId: this.chainId ? this.chainId.substring(0, 8) + '...' : null,
       deviceId: this.deviceId ? this.deviceId.substring(0, 8) + '...' : null,
       deviceName: this.deviceName,
       isConnected: this.isConnected,
-      currentRelay: NOSTR_RELAYS[this.currentRelayIndex],
-      currentRelayIndex: this.currentRelayIndex,
-      wsReadyState: this.ws?.readyState,
+      relays,
+      connectedRelayCount: this.openConnections().length,
       hasEncryptionKey: !!this.encryptionKey,
       hasNostrKeys: !!this.nostrPrivateKey && !!this.nostrPublicKey,
       logsCount: this.debugLogs.length,
@@ -272,7 +298,8 @@ export class SyncService {
     await this.deriveKeys(seedHash);
     this.log('info', 'crypto', 'Derived encryption and signing keys');
 
-    await this.connectWithRetry();
+    const relayUrls = await this.loadRelayUrls();
+    await this.connectAll(relayUrls);
 
     this.log('info', 'init', 'Initialized for chain', { chainId: chainId.substring(0, 8) + '...' });
   }
@@ -335,104 +362,121 @@ export class SyncService {
     });
   }
 
-  private async connectWithRetry(): Promise<void> {
-    if (this.connectionPromise) {
-      return this.connectionPromise;
+  // User-managed relay list from options, falling back to defaults
+  private async loadRelayUrls(): Promise<string[]> {
+    try {
+      const result = await chrome.storage.local.get(CUSTOM_RELAYS_KEY);
+      const stored = result[CUSTOM_RELAYS_KEY];
+      if (Array.isArray(stored) && stored.length > 0) {
+        return stored.filter((u): u is string => typeof u === 'string' && u.startsWith('wss://'));
+      }
+    } catch {
+      // Fall through to defaults
     }
-
-    this.connectionPromise = new Promise((resolve) => {
-      const tryConnect = () => {
-        this.connectWebSocket()
-          .then(() => {
-            this.connectionPromise = null;
-            resolve();
-          })
-          .catch((err) => {
-            this.log('warn', 'ws', 'Connection failed, trying next relay', { error: err.message });
-            this.currentRelayIndex = (this.currentRelayIndex + 1) % NOSTR_RELAYS.length;
-            setTimeout(tryConnect, RECONNECT_DELAY);
-          });
-      };
-      tryConnect();
-    });
-
-    return this.connectionPromise;
+    return DEFAULT_RELAYS;
   }
 
-  private connectWebSocket(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        resolve();
-        return;
-      }
+  // Connect to every relay concurrently. Resolves when the FIRST relay opens
+  // (sync is usable); remaining relays keep connecting/retrying in background.
+  private connectAll(urls: string[]): Promise<void> {
+    this.relayConnections = urls.map((url) => ({
+      url,
+      ws: null,
+      subId: null,
+      reconnectTimer: null,
+      reconnectDelay: RECONNECT_DELAY,
+    }));
 
-      if (this.ws) {
-        this.ws.close();
-        this.ws = null;
-      }
+    this.log('info', 'ws', 'Connecting to all relays', { count: urls.length, relays: urls });
 
-      const relayUrl = NOSTR_RELAYS[this.currentRelayIndex];
-      this.log('info', 'ws', 'Connecting to relay', {
-        relay: relayUrl,
-        index: this.currentRelayIndex,
-      });
-
-      const timeoutId = setTimeout(() => {
-        this.log('warn', 'ws', 'Connection timeout after 10s', { relay: relayUrl });
-        if (this.ws) {
-          this.ws.close();
-        }
-        reject(new Error('Connection timeout'));
-      }, 10000);
-
-      try {
-        this.ws = new WebSocket(relayUrl);
-
-        this.ws.onopen = () => {
-          clearTimeout(timeoutId);
-          this.log('info', 'ws', 'WebSocket connected', { relay: relayUrl });
-          this.isConnected = true;
-          this.subscribeToChain();
-          this.announcePresence();
-          this.startHeartbeat();
-          resolve();
-        };
-
-        this.ws.onmessage = (event) => {
-          this.handleWebSocketMessage(event.data);
-        };
-
-        this.ws.onclose = (event) => {
-          clearTimeout(timeoutId);
-          this.log('warn', 'ws', 'WebSocket disconnected', {
-            code: event.code,
-            reason: event.reason,
-          });
-          this.isConnected = false;
-          this.stopHeartbeat();
-          if (this.chainId) {
-            this.scheduleReconnect();
-          }
-        };
-
-        this.ws.onerror = (error) => {
-          clearTimeout(timeoutId);
-          this.log('error', 'ws', 'WebSocket error', { error: String(error) });
-          reject(error);
-        };
-      } catch (error: unknown) {
-        clearTimeout(timeoutId);
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        this.log('error', 'ws', 'Failed to create WebSocket', { error: errorMessage });
-        reject(error);
+    return new Promise((resolve) => {
+      this.firstConnectResolve = resolve;
+      for (const conn of this.relayConnections) {
+        this.connectRelay(conn);
       }
     });
+  }
+
+  private openConnections(): RelayConnection[] {
+    return this.relayConnections.filter((c) => c.ws?.readyState === WebSocket.OPEN);
+  }
+
+  private connectRelay(conn: RelayConnection): void {
+    if (!this.chainId) return; // Disconnected while a reconnect timer was pending
+
+    if (
+      conn.ws &&
+      (conn.ws.readyState === WebSocket.OPEN || conn.ws.readyState === WebSocket.CONNECTING)
+    ) {
+      return;
+    }
+
+    this.log('info', 'ws', 'Connecting to relay', { relay: conn.url });
+
+    const timeoutId = setTimeout(() => {
+      this.log('warn', 'ws', 'Connection timeout after 10s', { relay: conn.url });
+      conn.ws?.close();
+    }, 10000);
+
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(conn.url);
+    } catch (error: unknown) {
+      clearTimeout(timeoutId);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.log('error', 'ws', 'Failed to create WebSocket', {
+        relay: conn.url,
+        error: errorMessage,
+      });
+      this.scheduleRelayReconnect(conn);
+      return;
+    }
+    conn.ws = ws;
+
+    ws.onopen = () => {
+      clearTimeout(timeoutId);
+      this.log('info', 'ws', 'WebSocket connected', { relay: conn.url });
+      conn.reconnectDelay = RECONNECT_DELAY;
+      this.isConnected = true;
+      this.subscribeToChain(conn);
+      this.sendToRelay(conn, this.buildAnnounceMessage());
+      this.startHeartbeat();
+      if (this.firstConnectResolve) {
+        this.firstConnectResolve();
+        this.firstConnectResolve = null;
+      }
+    };
+
+    ws.onmessage = (event) => {
+      this.handleWebSocketMessage(event.data, conn);
+    };
+
+    ws.onclose = (event) => {
+      clearTimeout(timeoutId);
+      if (conn.ws !== ws) return; // A newer socket replaced this one
+      conn.ws = null;
+      this.isConnected = this.openConnections().length > 0;
+      this.log('warn', 'ws', 'WebSocket disconnected', {
+        relay: conn.url,
+        code: event.code,
+        reason: event.reason,
+        stillConnected: this.isConnected,
+      });
+      if (this.chainId) {
+        this.scheduleRelayReconnect(conn);
+      }
+    };
+
+    ws.onerror = () => {
+      // onclose follows with the reconnect; just record it
+      this.log('error', 'ws', 'WebSocket error', { relay: conn.url });
+    };
   }
 
   private startHeartbeat(): void {
-    this.stopHeartbeat();
+    if (this.heartbeatTimer) return; // One global heartbeat across all relays
     this.heartbeatTimer = setInterval(() => {
-      if (this.ws?.readyState === WebSocket.OPEN) {
+      if (this.openConnections().length > 0) {
         this.log('debug', 'heartbeat', 'Sending presence announcement');
         this.announcePresence();
       }
@@ -446,22 +490,24 @@ export class SyncService {
     }
   }
 
-  private scheduleReconnect(): void {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
+  // Per-relay reconnect with exponential backoff (reset on successful open)
+  private scheduleRelayReconnect(conn: RelayConnection): void {
+    if (conn.reconnectTimer) {
+      clearTimeout(conn.reconnectTimer);
     }
-    this.log('info', 'ws', 'Scheduling reconnect in 5s');
-    this.reconnectTimer = setTimeout(() => {
-      this.log('info', 'ws', 'Attempting reconnect...');
-      this.currentRelayIndex = (this.currentRelayIndex + 1) % NOSTR_RELAYS.length;
-      this.connectWithRetry();
-    }, RECONNECT_DELAY);
+    const delay = conn.reconnectDelay;
+    conn.reconnectDelay = Math.min(conn.reconnectDelay * 2, MAX_RECONNECT_DELAY);
+    this.log('info', 'ws', 'Scheduling reconnect', { relay: conn.url, delayMs: delay });
+    conn.reconnectTimer = setTimeout(() => {
+      conn.reconnectTimer = null;
+      this.connectRelay(conn);
+    }, delay);
   }
 
-  private subscribeToChain(): void {
-    if (!this.ws || !this.chainId) return;
+  private subscribeToChain(conn: RelayConnection): void {
+    if (!conn.ws || !this.chainId) return;
 
-    this.subId = `pk_${this.chainId.substring(0, 8)}_${Date.now()}`;
+    conn.subId = `pk_${this.chainId.substring(0, 8)}_${Date.now()}`;
 
     const filter = {
       kinds: [30078],
@@ -470,18 +516,19 @@ export class SyncService {
       limit: 50,
     };
 
-    const subscribeMsg = JSON.stringify(['REQ', this.subId, filter]);
+    const subscribeMsg = JSON.stringify(['REQ', conn.subId, filter]);
 
-    this.ws.send(subscribeMsg);
+    conn.ws.send(subscribeMsg);
     this.log('info', 'nostr', 'Subscribed to chain events', {
-      subId: this.subId,
+      relay: conn.url,
+      subId: conn.subId,
       filter,
       chainId: this.chainId.substring(0, 8) + '...',
     });
   }
 
-  private async announcePresence(): Promise<void> {
-    const announcement: SyncMessage = {
+  private buildAnnounceMessage(): SyncMessage {
+    return {
       type: 'announce',
       chainId: this.chainId!,
       deviceId: this.deviceId!,
@@ -493,13 +540,37 @@ export class SyncService {
         action: 'online',
       },
     };
+  }
 
+  private async announcePresence(): Promise<void> {
     this.log('debug', 'msg', 'Broadcasting presence announcement', {
       deviceId: this.deviceId?.substring(0, 8),
       deviceName: this.deviceName,
     });
 
-    await this.broadcastMessage(announcement);
+    await this.broadcastMessage(this.buildAnnounceMessage());
+  }
+
+  // Send one message to one relay, bypassing the global broadcast rate limit.
+  // Used to announce on a relay the moment its socket opens.
+  private async sendToRelay(conn: RelayConnection, msg: SyncMessage): Promise<void> {
+    if (!conn.ws || conn.ws.readyState !== WebSocket.OPEN) return;
+    try {
+      const encrypted = await this.encryptMessage(msg);
+      const event = await this.createNostrEvent(encrypted);
+      conn.ws.send(JSON.stringify(['EVENT', event]));
+      this.log('debug', 'nostr', 'Sent event to relay', {
+        relay: conn.url,
+        eventId: event.id?.substring(0, 8),
+        msgType: msg.type,
+      });
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.log('error', 'nostr', 'Failed to send to relay', {
+        relay: conn.url,
+        error: errorMessage,
+      });
+    }
   }
 
   private getDeviceType(): string {
@@ -511,7 +582,7 @@ export class SyncService {
     return 'Desktop';
   }
 
-  private async handleWebSocketMessage(data: string): Promise<void> {
+  private async handleWebSocketMessage(data: string, conn: RelayConnection): Promise<void> {
     try {
       const parsed = JSON.parse(data);
       const msgType = parsed[0];
@@ -528,10 +599,12 @@ export class SyncService {
           return;
         }
 
-        // SECURITY FIX: Replay protection - check if we've seen this event
+        // SECURITY FIX: Replay protection - check if we've seen this event.
+        // Also dedups the same event arriving from multiple relays.
         if (this.processedEventIds.has(event.id)) {
           this.log('debug', 'nostr', 'Ignoring already processed event', {
             eventId: event.id?.substring(0, 8),
+            relay: conn.url,
           });
           return;
         }
@@ -548,6 +621,7 @@ export class SyncService {
           eventId: event.id?.substring(0, 8),
           pubkey: event.pubkey?.substring(0, 8),
           kind: event.kind,
+          relay: conn.url,
         });
 
         if (event?.content) {
@@ -575,17 +649,19 @@ export class SyncService {
         if (success) {
           this.log('info', 'nostr', 'Event published successfully', {
             eventId: eventId?.substring(0, 8),
+            relay: conn.url,
           });
         } else {
           this.log('warn', 'nostr', 'Event rejected by relay', {
             eventId: eventId?.substring(0, 8),
+            relay: conn.url,
             message,
           });
         }
       } else if (msgType === 'EOSE') {
-        this.log('info', 'nostr', 'End of stored events');
+        this.log('info', 'nostr', 'End of stored events', { relay: conn.url });
       } else if (msgType === 'NOTICE') {
-        this.log('info', 'nostr', 'Relay notice', { notice: parsed[1] });
+        this.log('info', 'nostr', 'Relay notice', { relay: conn.url, notice: parsed[1] });
       } else {
         this.log('debug', 'nostr', 'Unknown message type', {
           msgType,
@@ -858,10 +934,13 @@ export class SyncService {
     this.log('info', 'sync', 'Broadcasted passkey update', { passkeyCount: passkeys.length });
   }
 
+  // Sign the event once, send the same frame to every open relay.
+  // Receivers dedup by event ID, so multi-relay delivery is idempotent.
   private async broadcastMessage(msg: SyncMessage, bypassRateLimit = false): Promise<void> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      this.log('warn', 'ws', 'WebSocket not ready for broadcast', {
-        readyState: this.ws?.readyState,
+    const openConns = this.openConnections();
+    if (openConns.length === 0) {
+      this.log('warn', 'ws', 'No open relay connections for broadcast', {
+        relayCount: this.relayConnections.length,
       });
       return;
     }
@@ -880,12 +959,24 @@ export class SyncService {
     try {
       const encrypted = await this.encryptMessage(msg);
       const event = await this.createNostrEvent(encrypted);
-      this.log('debug', 'nostr', 'Sending Nostr event', {
+      const frame = JSON.stringify(['EVENT', event]);
+      let sentCount = 0;
+      for (const conn of openConns) {
+        try {
+          conn.ws!.send(frame);
+          sentCount++;
+        } catch (error: unknown) {
+          this.log('warn', 'nostr', 'Send failed on relay', {
+            relay: conn.url,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      this.log('debug', 'nostr', 'Broadcast Nostr event', {
         eventId: event.id?.substring(0, 8),
-        pubkey: event.pubkey?.substring(0, 8),
         msgType: msg.type,
+        relayCount: sentCount,
       });
-      this.ws.send(JSON.stringify(['EVENT', event]));
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.log('error', 'nostr', 'Failed to broadcast message', {
@@ -1171,22 +1262,29 @@ export class SyncService {
     this.log('info', 'ws', 'Disconnecting...');
     this.stopHeartbeat();
 
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    // chainId is cleared below, which stops onclose handlers from reconnecting,
+    // but clear it before closing sockets so no handler races us
+    this.chainId = null;
 
-    if (this.ws) {
-      if (this.subId && this.ws.readyState === WebSocket.OPEN) {
-        try {
-          this.ws.send(JSON.stringify(['CLOSE', this.subId]));
-        } catch {
-          // Ignore errors when closing subscription - socket may already be closing
-        }
+    for (const conn of this.relayConnections) {
+      if (conn.reconnectTimer) {
+        clearTimeout(conn.reconnectTimer);
+        conn.reconnectTimer = null;
       }
-      this.ws.close();
-      this.ws = null;
+      if (conn.ws) {
+        if (conn.subId && conn.ws.readyState === WebSocket.OPEN) {
+          try {
+            conn.ws.send(JSON.stringify(['CLOSE', conn.subId]));
+          } catch {
+            // Ignore errors when closing subscription - socket may already be closing
+          }
+        }
+        conn.ws.close();
+        conn.ws = null;
+      }
     }
+    this.relayConnections = [];
+    this.firstConnectResolve = null;
 
     // SECURITY FIX: Wipe sensitive keys from memory
     if (this.nostrPrivateKey) {
@@ -1198,10 +1296,8 @@ export class SyncService {
     this.seedHash = null;
     this.syncSalt = null;
 
-    this.chainId = null;
     this.deviceId = null;
     this.isConnected = false;
-    this.connectionPromise = null;
     this.processedEventIds.clear();
     this.messageSequence = 0;
 

@@ -9,7 +9,12 @@ import {
 } from '../i18n';
 import { SUPPORTED_THEMES, getStoredTheme, initTheme, setStoredTheme } from '../theme';
 
-const DEFAULT_RELAYS = ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.nostr.band'];
+const DEFAULT_RELAYS = [
+  'wss://vaultsync.fenko.nz',
+  'wss://relay.damus.io',
+  'wss://nos.lol',
+  'wss://relay.nostr.band',
+];
 
 interface DomainRules {
   mode: 'disabled' | 'all' | 'allowlist' | 'blocklist';
@@ -335,11 +340,12 @@ async function loadRelayList(): Promise<void> {
   const result = await chrome.storage.local.get('custom_relays');
   const relays: string[] = result.custom_relays || DEFAULT_RELAYS;
 
-  // Get current connected relay from debug info
+  // Mark relays with an open connection from debug info
   const debugInfo = await sendMessage('GET_SYNC_DEBUG_INFO');
-  const currentRelay = debugInfo.debugInfo?.currentRelay || '';
+  const relayStates: Array<{ url: string; state: string }> = debugInfo.debugInfo?.relays || [];
+  const connectedRelays = new Set(relayStates.filter((r) => r.state === 'OPEN').map((r) => r.url));
 
-  renderRelayList(relays, currentRelay);
+  renderRelayList(relays, connectedRelays);
 
   const addBtn = document.getElementById('add-relay-btn')!;
   const relayInput = document.getElementById('relay-input') as HTMLInputElement;
@@ -350,13 +356,13 @@ async function loadRelayList(): Promise<void> {
   });
 }
 
-function renderRelayList(relays: string[], currentRelay: string): void {
+function renderRelayList(relays: string[], connectedRelays: Set<string>): void {
   const list = document.getElementById('relay-list')!;
   list.innerHTML = relays
     .map(
       (url) => `
     <div class="relay-item">
-      <span class="relay-status ${url === currentRelay ? 'active' : ''}"></span>
+      <span class="relay-status ${connectedRelays.has(url) ? 'active' : ''}"></span>
       <span class="relay-url">${escapeHtml(url)}</span>
       <button data-relay="${escapeHtml(url)}" title="${escapeHtml(t('commonRemove'))}">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -375,7 +381,7 @@ function renderRelayList(relays: string[], currentRelay: string): void {
       const updated = current.filter((r) => r !== relay);
       if (updated.length === 0) return; // keep at least one
       await chrome.storage.local.set({ custom_relays: updated });
-      renderRelayList(updated, currentRelay);
+      renderRelayList(updated, connectedRelays);
     });
   });
 }
@@ -395,7 +401,7 @@ async function addRelay(input: HTMLInputElement): Promise<void> {
   relays.push(url);
   await chrome.storage.local.set({ custom_relays: relays });
   input.value = '';
-  renderRelayList(relays, '');
+  renderRelayList(relays, new Set());
 }
 
 // ==================== SECURITY ====================

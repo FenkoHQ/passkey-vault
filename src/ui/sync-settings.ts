@@ -39,9 +39,8 @@ interface SyncDebugInfo {
   deviceName?: string;
   seedHashPrefix?: string;
   isConnected?: boolean;
-  currentRelay?: string;
-  currentRelayIndex?: number;
-  wsReadyState?: number;
+  relays?: Array<{ url: string; state: string }>;
+  connectedRelayCount?: number;
   subId?: string;
   hasEncryptionKey?: boolean;
   hasSigningKey?: boolean;
@@ -515,12 +514,7 @@ async function loadDebugInfo(): Promise<void> {
 }
 
 function formatDebugInfo(info: SyncDebugInfo): string {
-  const wsStateMap: Record<number, string> = {
-    0: 'CONNECTING',
-    1: 'OPEN',
-    2: 'CLOSING',
-    3: 'CLOSED',
-  };
+  const relayLines = (info.relays || []).map((r) => `  ${r.state.padEnd(12)} ${r.url}`);
 
   const lines = [
     `Chain ID:        ${info.chainId || 'Not set'}`,
@@ -528,11 +522,9 @@ function formatDebugInfo(info: SyncDebugInfo): string {
     `Device Name:     ${info.deviceName || 'Not set'}`,
     `Seed Hash:       ${info.seedHashPrefix || 'Not set'}`,
     ``,
-    `Connected:       ${info.isConnected ? 'YES' : 'NO'}`,
-    `Current Relay:   ${info.currentRelay || 'None'}`,
-    `Relay Index:     ${info.currentRelayIndex}`,
-    `WebSocket State: ${wsStateMap[info.wsReadyState] || info.wsReadyState}`,
-    `Subscription ID: ${info.subId || 'None'}`,
+    `Connected:       ${info.isConnected ? 'YES' : 'NO'} (${info.connectedRelayCount ?? 0}/${info.relays?.length ?? 0} relays)`,
+    `Relays:`,
+    ...(relayLines.length > 0 ? relayLines : ['  None']),
     ``,
     `Encryption Key:  ${info.hasEncryptionKey ? 'Derived' : 'Not derived'}`,
     `Signing Key:     ${info.hasSigningKey ? 'Derived' : 'Not derived'}`,
