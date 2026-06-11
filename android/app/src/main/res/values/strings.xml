@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Fenko Vault</string>
+    <string name="credential_provider_subtitle">Offline passkeys and 2FA codes</string>
+</resources>

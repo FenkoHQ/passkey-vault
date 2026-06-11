@@ -1,0 +1,6 @@
+<resources>
+    <color name="surface">#0D1117</color>
+    <color name="status_bar">#0D1117</color>
+    <!-- Launcher icon tile; flips via values-night. -->
+    <color name="icon_background">#F6F8FA</color>
+</resources>
