@@ -1,5 +1,5 @@
 /**
- * Secure Storage Module for Passkey Vault
+ * Secure Storage Module for Fenko Vault
  * Provides encrypted storage for sensitive data like seed hashes and passkeys
  */
 

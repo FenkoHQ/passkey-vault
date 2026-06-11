@@ -1,5 +1,5 @@
 /**
- * Import Page for Passkey Vault
+ * Import Page for Fenko Vault
  *
  * Handles importing passkeys from backup files
  */

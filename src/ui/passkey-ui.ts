@@ -4,7 +4,7 @@ import { initTheme } from '../theme';
 void Promise.all([initI18n(), initTheme()]);
 
 /**
- * Passkey Vault In-Page UI Components
+ * Fenko Vault In-Page UI Components
  *
  * Provides toast notifications and modal dialogs for passkey operations.
  * These are injected into web pages via the content script.

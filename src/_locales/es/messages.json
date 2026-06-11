@@ -1,11 +1,11 @@
 {
   "appName": {
-    "message": "Passkey Vault"
+    "message": "Fenko Vault"
   },
   "appDesc": {
     "message": "Almacenamiento y gestión segura de passkeys"
   },
   "actionTitle": {
-    "message": "Passkey Vault"
+    "message": "Fenko Vault"
   }
 }

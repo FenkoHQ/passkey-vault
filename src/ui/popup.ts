@@ -1,5 +1,5 @@
 /**
- * Popup UI for Passkey Vault
+ * Popup UI for Fenko Vault
  *
  * Displays and manages stored passkeys with full export/import support
  */

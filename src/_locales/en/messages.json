@@ -1,11 +1,11 @@
 {
   "appName": {
-    "message": "Passkey Vault"
+    "message": "Fenko Vault"
   },
   "appDesc": {
-    "message": "Secure passkey storage and management"
+    "message": "Cross-platform passkey & MFA manager — sync passkeys and 2FA codes across your devices, end-to-end encrypted, no cloud account."
   },
   "actionTitle": {
-    "message": "Passkey Vault"
+    "message": "Fenko Vault"
   }
 }

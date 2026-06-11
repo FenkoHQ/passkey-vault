@@ -1,4 +1,4 @@
-# Passkey Vault
+# Fenko Vault
 
 A browser extension that intercepts WebAuthn API calls and stores passkeys locally, bypassing the browser's native passkey UI. Works on **Chrome** (MV3) and **Firefox** (MV2).
 
@@ -61,7 +61,7 @@ A browser extension that intercepts WebAuthn API calls and stores passkeys local
 
 ### Chrome Web Store
 
-[Download Passkey Vault](https://chromewebstore.google.com/detail/passkey-vault/lopekoolgoijpmaidblgfgelbkfkgmod)
+[Download Fenko Vault](https://chromewebstore.google.com/detail/passkey-vault/lopekoolgoijpmaidblgfgelbkfkgmod)
 
 ### Build from source
 
@@ -154,7 +154,7 @@ Use these fields when updating the Chrome Web Store listing for `v0.9.0`.
 
 **Name**
 
-Passkey Vault
+Fenko Vault
 
 **Summary**
 
@@ -170,7 +170,7 @@ English
 
 **Detailed Description**
 
-Passkey Vault is a local-first WebAuthn passkey tool for developers, testers, and advanced users who want direct control over passkey creation, storage, backup, sync, and browser fallback behavior.
+Fenko Vault is a local-first WebAuthn passkey tool for developers, testers, and advanced users who want direct control over passkey creation, storage, backup, sync, and browser fallback behavior.
 
 The extension intercepts WebAuthn credential creation and sign-in requests, stores passkeys in the browser's local extension storage, and lets you inspect, search, export, import, and sync credentials without depending on a third-party cloud account.
 
@@ -186,7 +186,7 @@ Key features:
 - Optional cross-device sync using a Nostr-based sync chain
 - Developer tools for console logging, storage inspection, sync protocol logs, and WebAuthn event logs
 
-Important: Passkey Vault is intended as a research and developer tool. Private key material is stored in local browser extension storage. Treat extension data and exported backups as sensitive credential material.
+Important: Fenko Vault is intended as a research and developer tool. Private key material is stored in local browser extension storage. Treat extension data and exported backups as sensitive credential material.
 
 What's new:
 
@@ -222,11 +222,11 @@ https://github.com/FenkoHQ/passkey-vault/issues
 
 **Privacy / Single Purpose**
 
-Passkey Vault stores and manages WebAuthn passkeys locally so users can create, retrieve, inspect, backup, sync, and control browser fallback behavior for passkeys in supported browsers.
+Fenko Vault stores and manages WebAuthn passkeys locally so users can create, retrieve, inspect, backup, sync, and control browser fallback behavior for passkeys in supported browsers.
 
 **Privacy / Data Use**
 
-Passkey Vault stores passkey credential material in local browser extension storage. It does not sell user data and does not send credential material to a central service. Optional sync sends encrypted sync payloads through configured Nostr relays. Because the extension intercepts WebAuthn calls on visited sites, the Chrome Web Store privacy form should disclose authentication-related data and website interaction needed for the extension's single purpose.
+Fenko Vault stores passkey credential material in local browser extension storage. It does not sell user data and does not send credential material to a central service. Optional sync sends encrypted sync payloads through configured Nostr relays. Because the extension intercepts WebAuthn calls on visited sites, the Chrome Web Store privacy form should disclose authentication-related data and website interaction needed for the extension's single purpose.
 
 ---
 
@@ -241,7 +241,7 @@ npm test
 npm run build:all
 npm run zip:all
 npm run validate:packages
-git commit -am "Release Passkey Vault 0.9.0"
+git commit -am "Release Fenko Vault 0.9.0"
 git tag v0.9.0
 git push origin main
 git push origin v0.9.0

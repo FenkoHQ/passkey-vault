@@ -18,12 +18,12 @@ export const SUPPORTED_LANGUAGES: Array<{ code: SupportedLanguage; label: string
 ];
 
 const en: TranslationMap = {
-  appName: 'Passkey Vault',
-  settingsTitle: 'Passkey Vault — Settings',
-  importTitle: 'Import Passkeys - Passkey Vault',
-  syncSetupTitle: 'Sync Setup - Passkey Vault',
-  syncSettingsTitle: 'Sync Settings - Passkey Vault',
-  emergencyTitle: 'Emergency Access — Passkey Vault',
+  appName: 'Fenko Vault',
+  settingsTitle: 'Fenko Vault — Settings',
+  importTitle: 'Import Passkeys - Fenko Vault',
+  syncSetupTitle: 'Sync Setup - Fenko Vault',
+  syncSettingsTitle: 'Sync Settings - Fenko Vault',
+  emergencyTitle: 'Emergency Access — Fenko Vault',
 
   commonCancel: 'Cancel',
   commonConfirm: 'Confirm',
@@ -157,7 +157,7 @@ const en: TranslationMap = {
   themeLight: 'Light',
   themeDark: 'Dark',
   optionsInterceptionTitle: 'WebAuthn Interception',
-  optionsInterceptionDesc: 'Control which domains Passkey Vault intercepts WebAuthn requests on.',
+  optionsInterceptionDesc: 'Control which domains Fenko Vault intercepts WebAuthn requests on.',
   optionsInterceptionMode: 'Interception Mode',
   optionsDisabled: 'Disabled',
   optionsDisabledDesc: 'No interception — browser handles WebAuthn natively',
@@ -432,7 +432,7 @@ const en: TranslationMap = {
 };
 
 const ru: TranslationMap = {
-  appName: 'Passkey Vault',
+  appName: 'Fenko Vault',
   commonCancel: 'Отмена',
   commonConfirm: 'Подтвердить',
   commonDelete: 'Удалить',
@@ -489,7 +489,7 @@ const ru: TranslationMap = {
   optionsLanguageHelp: 'Автоматически — язык браузера, если он поддерживается.',
   optionsLanguageSaved: 'Язык сохранён. Перезагрузка…',
   optionsInterceptionTitle: 'Перехват WebAuthn',
-  optionsInterceptionDesc: 'Управляйте доменами, где Passkey Vault перехватывает WebAuthn-запросы.',
+  optionsInterceptionDesc: 'Управляйте доменами, где Fenko Vault перехватывает WebAuthn-запросы.',
   optionsInterceptionMode: 'Режим перехвата',
   optionsDisabled: 'Отключено',
   optionsAllSites: 'Все сайты',
@@ -767,7 +767,7 @@ const ar: TranslationMap = {
 };
 
 const fa: TranslationMap = {
-  appName: 'Passkey Vault',
+  appName: 'Fenko Vault',
   commonCancel: 'لغو',
   commonConfirm: 'تأیید',
   commonDelete: 'حذف',
@@ -839,7 +839,7 @@ const fa: TranslationMap = {
   themeDark: 'تاریک',
   optionsInterceptionTitle: 'رهگیری WebAuthn',
   optionsInterceptionDesc:
-    'کنترل کنید Passkey Vault روی کدام دامنه‌ها درخواست‌های WebAuthn را رهگیری کند.',
+    'کنترل کنید Fenko Vault روی کدام دامنه‌ها درخواست‌های WebAuthn را رهگیری کند.',
   optionsInterceptionMode: 'حالت رهگیری',
   optionsDisabled: 'غیرفعال',
   optionsDisabledDesc: 'بدون رهگیری — مرورگر WebAuthn را به‌صورت بومی مدیریت می‌کند',

@@ -1,11 +1,11 @@
 {
   "appName": {
-    "message": "Passkey Vault"
+    "message": "Fenko Vault"
   },
   "appDesc": {
     "message": "تخزين وإدارة مفاتيح المرور بأمان"
   },
   "actionTitle": {
-    "message": "Passkey Vault"
+    "message": "Fenko Vault"
   }
 }

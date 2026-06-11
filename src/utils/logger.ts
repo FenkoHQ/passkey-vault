@@ -1,5 +1,5 @@
 /**
- * Configurable logging utility for Passkey Vault
+ * Configurable logging utility for Fenko Vault
  *
  * By default, only errors are logged to the console.
  * Enable debug mode in the extension settings to see all logs.
@@ -40,25 +40,25 @@ class Logger {
 
   // Always log errors
   error(message: string, ...args: unknown[]): void {
-    console.error(`Passkey Vault: ${message}`, ...args);
+    console.error(`Fenko Vault: ${message}`, ...args);
   }
 
   // Only log warnings, info, and debug messages if debug mode is enabled
   warn(message: string, ...args: unknown[]): void {
     if (this.debugEnabled) {
-      console.warn(`Passkey Vault: ${message}`, ...args);
+      console.warn(`Fenko Vault: ${message}`, ...args);
     }
   }
 
   info(message: string, ...args: unknown[]): void {
     if (this.debugEnabled) {
-      console.log(`Passkey Vault: ${message}`, ...args);
+      console.log(`Fenko Vault: ${message}`, ...args);
     }
   }
 
   debug(message: string, ...args: unknown[]): void {
     if (this.debugEnabled) {
-      console.debug(`Passkey Vault: ${message}`, ...args);
+      console.debug(`Fenko Vault: ${message}`, ...args);
     }
   }
 }

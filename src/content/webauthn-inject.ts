@@ -125,7 +125,7 @@
           }
           resolve(credential || result);
         } else if (result.passthrough) {
-          if (DEBUG) console.log('Passkey Vault: Passing WebAuthn request to native browser UI');
+          if (DEBUG) console.log('Fenko Vault: Passing WebAuthn request to native browser UI');
           if (!nativeFallback) {
             reject(new DOMException('Native WebAuthn fallback is unavailable.', 'NotAllowedError'));
             return;
@@ -152,7 +152,7 @@
 
     // Override create: fully intercept and handle passkey creation internally
     navigator.credentials.create = async function (options?: CredentialCreationOptions) {
-      if (DEBUG) console.log('Passkey Vault: Intercepted create request', options);
+      if (DEBUG) console.log('Fenko Vault: Intercepted create request', options);
 
       // Only intercept publicKey (WebAuthn) requests
       if (!options?.publicKey) {
@@ -205,7 +205,7 @@
         };
 
         if (DEBUG)
-          console.log('Passkey Vault: Sending CREATE_PASSKEY request', serializablePayload);
+          console.log('Fenko Vault: Sending CREATE_PASSKEY request', serializablePayload);
 
         window.postMessage(
           {
@@ -221,7 +221,7 @@
 
     // Override get: try extension-managed passkeys, fall back to native WebAuthn on failure.
     navigator.credentials.get = async function (options?: CredentialRequestOptions) {
-      if (DEBUG) console.log('Passkey Vault: Intercepted get request', options);
+      if (DEBUG) console.log('Fenko Vault: Intercepted get request', options);
 
       // Only intercept publicKey (WebAuthn) requests
       if (!options?.publicKey) {
@@ -267,7 +267,7 @@
             origin: window.location.origin,
           };
 
-          if (DEBUG) console.log('Passkey Vault: Sending GET_PASSKEY request', serializablePayload);
+          if (DEBUG) console.log('Fenko Vault: Sending GET_PASSKEY request', serializablePayload);
 
           window.postMessage(
             {
@@ -291,7 +291,7 @@
 
         if (DEBUG) {
           console.warn(
-            'Passkey Vault: Extension get failed, falling back to native WebAuthn',
+            'Fenko Vault: Extension get failed, falling back to native WebAuthn',
             errorMessage
           );
         }
@@ -300,14 +300,14 @@
       }
     };
 
-    if (DEBUG) console.log('Passkey Vault: WebAuthn API hooked successfully');
+    if (DEBUG) console.log('Fenko Vault: WebAuthn API hooked successfully');
   } else {
     // navigator.credentials is only exposed in secure contexts (HTTPS or
     // http://localhost). On plain-HTTP origins the API is absent and there is
     // nothing to hook — not an error, just a no-op for this page.
     if (DEBUG) {
       console.log(
-        'Passkey Vault: navigator.credentials unavailable (non-secure context), skipping hook'
+        'Fenko Vault: navigator.credentials unavailable (non-secure context), skipping hook'
       );
     }
   }

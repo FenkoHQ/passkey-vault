@@ -1,4 +1,4 @@
-// Passkey Vault — Options Page
+// Fenko Vault — Options Page
 
 import {
   SUPPORTED_LANGUAGES,

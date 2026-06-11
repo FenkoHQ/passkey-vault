@@ -1,5 +1,5 @@
 /**
- * Content Script for Passkey Vault
+ * Content Script for Fenko Vault
  *
  * This script is injected into web pages to intercept WebAuthn API calls
  * and communicate with the background script.
@@ -408,7 +408,7 @@ class ContentScript {
   private setupActivationListeners(): void {
     // Listen for custom activation events
     window.addEventListener('vault-activate', () => {
-      console.log('Passkey Vault: Activation event received');
+      console.log('Fenko Vault: Activation event received');
       this.activateEmergencyUI();
     });
 
