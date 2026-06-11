@@ -171,8 +171,7 @@ code,
   width: 32px;
   height: 32px;
   flex-shrink: 0;
-  color: var(--accent);
-  stroke: currentColor;
+  border-radius: var(--radius-sm);
 }
 
 .sidebar-header h1 {
