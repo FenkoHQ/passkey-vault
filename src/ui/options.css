@@ -1184,3 +1184,63 @@ textarea:focus {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- About section ---------- */
+a.btn {
+  text-decoration: none;
+}
+
+.about-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.about-identity h3 {
+  margin: 0;
+}
+
+.about-logo {
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+}
+
+.about-text p {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  margin: 0 0 10px;
+}
+
+.about-text p:last-child {
+  margin-bottom: 0;
+}
+
+.about-text strong {
+  color: var(--text);
+}
+
+.about-text a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.about-text a:hover {
+  text-decoration: underline;
+}
+
+.about-notice {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text);
+  background: var(--warning-soft);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.about-notice strong {
+  color: var(--warning);
+}

@@ -671,6 +671,7 @@ async function loadWebAuthnLog(): Promise<void> {
 function loadExtensionInfo(): void {
   const manifest = chrome.runtime.getManifest();
   setText('version', `v${manifest.version_name || manifest.version}`);
+  setText('about-version', `v${manifest.version_name || manifest.version}`);
   setText('ext-version', manifest.version_name || manifest.version);
   setText('ext-manifest-version', `MV${manifest.manifest_version}`);
   setText('ext-id', chrome.runtime.id);

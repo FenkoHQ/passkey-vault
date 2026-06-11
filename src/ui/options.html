@@ -101,6 +101,25 @@
             </svg>
             <span data-i18n="navDeveloper">Developer</span>
           </button>
+          <button class="nav-item" data-section="about">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+              <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+              <path d="M10 9H8" />
+              <path d="M16 13H8" />
+              <path d="M16 17H8" />
+            </svg>
+            <span data-i18n="navAbout">About</span>
+          </button>
         </nav>
 
         <div class="sidebar-warning" role="alert">
@@ -602,6 +621,139 @@
                   <span data-i18n="optionsFactoryReset">Reset</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- About Section -->
+        <section id="section-about" class="section">
+          <div class="section-header">
+            <h2 data-i18n="optionsAboutTitle">About</h2>
+            <p class="section-desc" data-i18n="optionsAboutDesc">
+              Project information, privacy policy, and terms of use.
+            </p>
+          </div>
+
+          <div class="card">
+            <div class="about-identity">
+              <img src="icons/icon128.png" width="40" height="40" alt="" class="about-logo" />
+              <div>
+                <h3 data-i18n="appName">Fenko Vault</h3>
+                <span id="about-version" class="version">--</span>
+              </div>
+            </div>
+            <p class="card-hint">
+              Fenko Vault is an open-source project by Fenko (FENKO LIMITED), offered free of
+              charge to help the community. The source code, issue tracker, and release history
+              are public.
+            </p>
+            <div class="card-actions">
+              <a
+                class="btn btn-secondary btn-sm"
+                href="https://github.com/FenkoHQ/passkey-vault"
+                target="_blank"
+                rel="noopener"
+                >Source code</a
+              >
+              <a
+                class="btn btn-secondary btn-sm"
+                href="https://github.com/FenkoHQ/passkey-vault/blob/main/LICENSE"
+                target="_blank"
+                rel="noopener"
+                >MIT License</a
+              >
+              <a
+                class="btn btn-secondary btn-sm"
+                href="https://chromewebstore.google.com/detail/passkey-vault/lopekoolgoijpmaidblgfgelbkfkgmod"
+                target="_blank"
+                rel="noopener"
+                >Chrome Web Store</a
+              >
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Privacy policy</h3>
+            <div class="about-text">
+              <p>
+                <strong>Your data stays on your device.</strong> Passkeys, 2FA secrets, and
+                settings are stored in your browser's local extension storage. There is no
+                account, no server-side vault, and no copy we could access, recover, or hand
+                over.
+              </p>
+              <p>
+                <strong>No tracking.</strong> The extension contains no telemetry, analytics,
+                or advertising, and makes no network requests of its own — with one exception:
+                the optional cross-device sync described below. If you never enable sync, the
+                extension never talks to the network.
+              </p>
+              <p>
+                <strong>Sync, if you enable it.</strong> Sync exchanges your vault between your
+                own devices through Nostr relays, including one we operate
+                (<code>vaultsync.fenko.nz</code>). Everything is encrypted on your device with
+                keys derived from your seed phrase before it is sent. Relays — ours included —
+                see only ciphertext, a random chain identifier, and ordinary connection metadata
+                (IP address, timing) that any server you connect to can see. We cannot read your
+                vault, and neither can the relay operators.
+              </p>
+              <p>
+                <strong>Deleting your data.</strong> Uninstalling the extension removes all
+                locally stored data. Sync messages on relays are replaceable events that hold
+                only ciphertext and are overwritten by newer ones.
+              </p>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Terms of use — no warranty</h3>
+            <div class="about-text">
+              <div class="about-notice" role="note">
+                <strong>This software comes with no warranty of any kind.</strong> Fenko Vault
+                is provided "as is", without warranty of any kind, express or implied, including
+                but not limited to the warranties of merchantability, fitness for a particular
+                purpose, and noninfringement. In no event shall the authors, contributors, or
+                Fenko (FENKO LIMITED) be liable for any claim, damages, or other liability —
+                including loss of credentials or data — arising from the use of this software.
+              </div>
+              <p>
+                Fenko Vault is a community project, not a commercial credential-management
+                service. There is no guaranteed support, no service-level commitment, and no
+                paid tier. You are responsible for keeping backups of your vault and for
+                protecting your seed phrase, PIN, and exported files — if they are lost or
+                exposed, nobody (including us) can recover or revoke them for you.
+              </p>
+              <p>
+                Use of the software is governed by the
+                <a
+                  href="https://github.com/FenkoHQ/passkey-vault/blob/main/LICENSE"
+                  target="_blank"
+                  rel="noopener"
+                  >MIT License</a
+                >, which also permits you to study, modify, and redistribute it.
+              </p>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Contact</h3>
+            <div class="about-text">
+              <p>
+                Bug reports and feature requests:
+                <a
+                  href="https://github.com/FenkoHQ/passkey-vault/issues"
+                  target="_blank"
+                  rel="noopener"
+                  >GitHub issues</a
+                >. For security vulnerabilities, please use
+                <a
+                  href="https://github.com/FenkoHQ/passkey-vault/security/advisories/new"
+                  target="_blank"
+                  rel="noopener"
+                  >GitHub private vulnerability reporting</a
+                >
+                instead of a public issue.
+              </p>
+              <p>Fenko Vault is maintained by Fenko (FENKO LIMITED), New Zealand.</p>
             </div>
           </div>
         </section>
