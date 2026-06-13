@@ -91,6 +91,14 @@ function main() {
     allowedEntries.add(`_locales/${locale}/`);
     allowedEntries.add(`_locales/${locale}/messages.json`);
   }
+
+  const sourceFontsDir = path.join(root, 'src', 'assets', 'fonts');
+  if (fs.existsSync(sourceFontsDir)) {
+    allowedEntries.add('fonts/');
+    for (const font of fs.readdirSync(sourceFontsDir)) {
+      allowedEntries.add(`fonts/${font}`);
+    }
+  }
   for (const entry of entries) {
     assert(allowedEntries.has(entry), `Unexpected package file: ${entry}`);
   }
@@ -109,7 +117,7 @@ function main() {
   );
   assert(manifest.name === '__MSG_appName__', `Unexpected manifest name: ${manifest.name}`);
   assert(
-    enMessages.appName?.message === 'Passkey Vault',
+    enMessages.appName?.message === 'Fenko Vault',
     `Unexpected localized app name: ${enMessages.appName?.message}`
   );
   assert(manifest.icons?.['16'] === 'icons/icon16.png', 'Manifest icon16 path mismatch');
