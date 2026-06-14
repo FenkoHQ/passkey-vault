@@ -204,8 +204,7 @@
           origin: window.location.origin,
         };
 
-        if (DEBUG)
-          console.log('Fenko Vault: Sending CREATE_PASSKEY request', serializablePayload);
+        if (DEBUG) console.log('Fenko Vault: Sending CREATE_PASSKEY request', serializablePayload);
 
         window.postMessage(
           {
