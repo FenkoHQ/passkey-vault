@@ -1,0 +1,50 @@
+# XcodeGen spec. Generate the Xcode project on a Mac with:  xcodegen generate
+# (brew install xcodegen). The .xcodeproj is intentionally NOT committed — it is
+# generated from this declarative spec so the repo stays diff-friendly.
+name: FenkoVault
+
+options:
+  bundleIdPrefix: nz.fenko
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    CODE_SIGN_STYLE: Automatic
+    # Override on the build machine / CI:  DEVELOPMENT_TEAM=XXXXXXXXXX xcodegen ...
+    DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
+    TARGETED_DEVICE_FAMILY: "1,2"
+
+targets:
+  FenkoVault:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: nz.fenko.passkeyvault
+        INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/FenkoVault.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+    dependencies:
+      - target: CredentialProvider
+
+  CredentialProvider:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: CredentialProvider
+      - path: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: nz.fenko.passkeyvault.CredentialProvider
+        INFOPLIST_FILE: CredentialProvider/Info.plist
+        CODE_SIGN_ENTITLEMENTS: CredentialProvider/CredentialProvider.entitlements
+        GENERATE_INFOPLIST_FILE: NO
