@@ -457,7 +457,9 @@ import { initTheme } from '../theme';
   }
 
   function setupEventListeners(): void {
-    refreshBtn.addEventListener('click', loadVault);
+    refreshBtn.addEventListener('click', () => {
+      chrome.tabs.create({ url: chrome.runtime.getURL('sync-settings.html') });
+    });
     exportFullBtn.addEventListener('click', exportPasskeysFull);
 
     searchInput.addEventListener('input', handleSearch);

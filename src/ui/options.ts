@@ -263,6 +263,13 @@ async function loadSyncSettings(): Promise<void> {
   if (!response.enabled) {
     notConfigured.style.display = 'block';
     configured.style.display = 'none';
+    const setupBtn = document.getElementById('sync-setup-btn');
+    if (setupBtn && !setupBtn.dataset.wired) {
+      setupBtn.dataset.wired = '1';
+      setupBtn.addEventListener('click', () => {
+        window.open(chrome.runtime.getURL('sync-setup.html'));
+      });
+    }
     return;
   }
 
