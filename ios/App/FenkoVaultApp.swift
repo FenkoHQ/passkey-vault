@@ -4,7 +4,8 @@ import SwiftUI
 struct FenkoVaultApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            WebVaultView()
+                .ignoresSafeArea(.keyboard)
         }
     }
 }

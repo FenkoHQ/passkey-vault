@@ -32,6 +32,16 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Build shared web bundle
+        run: |
+          npm ci
+          bash ios/build-web.sh
+
       - name: Resolve version
         id: ver
         run: |

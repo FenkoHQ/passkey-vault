@@ -1,38 +1,49 @@
 # Fenko Vault for iOS
 
-Native iOS app + **AutoFill credential provider extension** that serves passkeys
-(and shows 2FA codes) system-wide, the iOS counterpart to the Android provider.
-Same vault model and WebAuthn wire format, so passkeys sync and verify identically
-across web, Android, and iOS.
+iOS port of Fenko Vault, mirroring the Android architecture: a **WKWebView host
+app** running the shared web engine (the same `app.ts` the browser extensions and
+Android app use — vault UI, TOTP, and cross-device **sync**) plus a native
+**AutoFill credential provider extension** (iOS 17+) that serves passkeys
+system-wide. Same vault model and WebAuthn wire format across web, Android, iOS.
 
-> **Status: compiles + crypto verified; not yet device-tested.** Both targets build
-> clean on Xcode 26.4 / iOS 26 SDK (simulator, unsigned). The WebAuthn crypto is
-> verified by a cross-platform test: our keys round-trip a full sign/verify, and a
-> named-curve PKCS8 key (the canonical WebCrypto/Java format) imports to the correct
-> public key. What's left is signing config + running the provider on a real device.
-> See [Known gaps](#known-gaps).
+> **Status: runs in the simulator; sync transport verified; provider not yet
+> device-tested.** Builds clean on Xcode 26.4 / iOS 26 SDK. The web app loads and
+> the WKWebView connects to the Nostr relay `wss://vaultsync.fenko.nz`, so iOS runs
+> the identical, proven sync engine. The passkey crypto is checked by a
+> cross-platform test (named-curve PKCS8 import + sign/verify round-trip). What's
+> left: signing config + running the credential provider on a real device (needs
+> paid Apple membership). See [Known gaps](#known-gaps).
 
 ## Architecture
 
 ```
 ios/
 ├── project.yml                  XcodeGen spec — the .xcodeproj is generated, not committed
+├── build-web.sh                 esbuild android/web/src/app.ts -> ios/web (the shared engine)
+├── web/                         generated bundle (gitignored): app.js, index.html, assets
+├── App/
+│   ├── FenkoVaultApp.swift      app entry
+│   └── WebVaultView.swift       WKWebView host + window.AndroidBridge shim
 ├── Shared/                      compiled into BOTH targets
 │   ├── WebAuthn.swift           COSE key, authData, attestation, ES256, PKCS8 <-> raw P-256
-│   ├── VaultStore.swift         App Group store + ASCredentialIdentityStore registration
+│   ├── VaultStore.swift         App Group store, snapshot in/out, identity registration
 │   ├── PasskeyRecord.swift      vault model (matches the browser/Android JSON shape)
-│   ├── TOTP.swift               RFC 6238 codes
+│   ├── TOTP.swift               RFC 6238 codes (for the native provider side)
 │   └── Base64.swift
-├── App/                         host app (SwiftUI): onboarding, list, backup import
 └── CredentialProvider/          ASCredentialProviderExtension (iOS 17+ passkey provider)
 ```
 
-- **App ↔ extension data sharing:** App Group `group.nz.fenko.passkeyvault`
-  (separate processes, so this replaces Android's in-process SharedPreferences).
-- **Crypto:** CryptoKit `P256` (ES256). Private keys use the canonical **PKCS8
-  base64** encoding the other platforms use; CryptoKit has no PKCS8 API, so
-  `WebAuthn.swift` carries a small PKCS8 ↔ raw-scalar shim.
-- **AAGUID** matches the Android provider so attestations look identical.
+- **UI + sync run in the WebView** — the entire sync stack (Nostr over WebSocket,
+  BIP39 key derivation, AES-GCM, secp256k1 Schnorr) is the shared JS, so iOS is
+  byte-compatible with every other platform. No native sync reimplementation.
+- **JS ↔ native bridge:** `WebVaultView` injects a `window.AndroidBridge` shim
+  (the contract `app.ts` expects) over `WKScriptMessageHandler`. It mirrors the
+  vault into the App Group so the credential provider can read it; sync data lives
+  in the WebView's persistent localStorage.
+- **App ↔ extension sharing:** App Group `group.nz.fenko.passkeyvault`.
+- **Passkey crypto (native side):** CryptoKit `P256` (ES256), canonical **PKCS8
+  base64** keys via a small PKCS8 ↔ raw-scalar shim in `WebAuthn.swift`. AAGUID
+  matches the Android provider.
 
 ## Apple-side prerequisites (one-time)
 
@@ -49,15 +60,19 @@ ios/
 
 ```bash
 brew install xcodegen
+npm ci                              # from repo root, for esbuild
+bash ios/build-web.sh               # bundles the shared web engine into ios/web
 cd ios
 DEVELOPMENT_TEAM=YOURTEAMID xcodegen generate
 open FenkoVault.xcodeproj
-# select your team on both targets if needed, run on a device (iOS 17+)
+# select your team on both targets if needed
 ```
 
-Enable it on the device: **Settings → General → AutoFill & Passwords → Fenko
-Vault**. Import a vault backup (the extension's exported JSON) from the app's
-import button to populate passkeys, then test a passkey sign-in in Safari/an app.
+Run in the **Simulator** to exercise the app UI and **sync** (no signing needed) —
+open the Sync tab, generate or enter a seed phrase, and it joins the chain over the
+relays. To test the passkey provider you need a real device (iOS 17+) and a paid
+membership: enable it under **Settings → General → AutoFill & Passwords → Fenko
+Vault**, then test a passkey sign-in in Safari.
 
 ## Ship to TestFlight (CI)
 
@@ -76,18 +91,20 @@ testers in App Store Connect → TestFlight.
 
 ## Known gaps
 
-Verified already: full build of both targets (Xcode 26.4), the `ASPasskey*`
-provider API signatures, and the PKCS8 import/sign path (cross-platform test).
-Still to do:
+Verified already: full build of both targets (Xcode 26.4); the web app loads in the
+WKWebView; the WebView connects to the sync relay (`wss://vaultsync.fenko.nz`); the
+`ASPasskey*` provider API signatures; and the PKCS8 import/sign path (cross-platform
+test). Still to do:
 
-- **On-device functional test** — run the provider on a real iOS 17+ device:
-  enable it in Settings, import a backup, and complete an actual passkey
-  registration + sign-in. The simulator can't exercise system AutoFill.
-- **`prepareCredentialList` UI** — currently auto-selects the first matching
-  passkey. A real picker (list multiple candidates) is nicer.
+- **Full 4-way sync round-trip** — connectivity + identical engine are proven, but
+  run iOS alongside Chrome/Firefox/Android on one seed phrase to confirm end-to-end
+  merge. (iOS-only round-trip can be checked with two simulators.)
+- **On-device provider test** — enable as AutoFill provider on a real iOS 17+ device
+  and complete a passkey register + sign-in. Needs paid Apple membership (App Groups
+  + AutoFill entitlements don't sign on a free account); the simulator can't exercise
+  system AutoFill.
+- **Bridge cosmetics** — the shim is named `AndroidBridge` and sync device labels
+  read "Mobile (Android)". Functional, but rename to a neutral bridge + iOS label.
+- **`prepareCredentialList` UI** — auto-selects the first matching passkey; a real
+  multi-candidate picker is nicer.
 - **App icon / launch screen** — placeholder; add real assets.
-- **Sync** — the app imports backups but does not yet run the Nostr sync client
-  the extension/Android app use. Future work.
-- **No code reuse from the web UI** — this is a native SwiftUI app, by design
-  (the chosen "native AutoFill provider" approach), unlike the WebView Android app.
-```

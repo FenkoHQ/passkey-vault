@@ -15,6 +15,7 @@ final class VaultStore {
         static let passkeys = "passkeys"
         static let totp = "totp_entries"
         static let syncConfig = "sync_config"
+        static let syncDevices = "sync_devices"
         static let customRelays = "custom_relays"
     }
 
@@ -105,6 +106,31 @@ final class VaultStore {
             defaults.set(totpString, forKey: Key.totp)
         }
         return imported
+    }
+
+    // MARK: WebView bridge (snapshot in/out, mirrors Android's ProviderVaultStore)
+
+    /// JSON string the web app's `loadVaultSnapshot()` consumes. Keys must match
+    /// what app.ts reads: passkeys, totpEntries, syncConfig, syncDevices, customRelays.
+    func snapshotJSON() -> String {
+        let passkeys = defaults.string(forKey: Key.passkeys) ?? "[]"
+        let totp = defaults.string(forKey: Key.totp) ?? "[]"
+        let syncConfig = defaults.string(forKey: Key.syncConfig) ?? "{}"
+        let syncDevices = defaults.string(forKey: Key.syncDevices) ?? "null"
+        let customRelays = defaults.string(forKey: Key.customRelays) ?? "[]"
+        return "{\"passkeys\":\(passkeys),\"totpEntries\":\(totp),\"syncConfig\":\(syncConfig),\"syncDevices\":\(syncDevices),\"customRelays\":\(customRelays)}"
+    }
+
+    /// Persists what the web app mirrors out, so the credential provider can read
+    /// the same vault. Each argument is a JSON string (or nil to leave unchanged).
+    func saveSnapshotFromWeb(passkeys: String?, totp: String?, syncConfig: String?,
+                             syncDevices: String?, customRelays: String?) {
+        if let passkeys { defaults.set(passkeys, forKey: Key.passkeys) }
+        if let totp { defaults.set(totp, forKey: Key.totp) }
+        if let syncConfig { defaults.set(syncConfig, forKey: Key.syncConfig) }
+        if let syncDevices { defaults.set(syncDevices, forKey: Key.syncDevices) }
+        if let customRelays { defaults.set(customRelays, forKey: Key.customRelays) }
+        if passkeys != nil { updateCredentialIdentities() }
     }
 
     // MARK: Credential identity registration (QuickType / matching)

@@ -27,6 +27,9 @@ targets:
     sources:
       - path: App
       - path: Shared
+      - path: web
+        type: folder
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: nz.fenko.passkeyvault
