@@ -4,6 +4,23 @@ All notable changes to Passkey Vault are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [0.9.1] - 2026-06-14
+
+A fix for sync being hard to reach, plus a Firefox store requirement.
+
+### Fixed
+
+- **Sync is reachable again.** Settings → Sync pointed you to the popup to set
+  it up, but the popup had no sync entry — a dead end. There's now a **Set up
+  sync** button in Settings → Sync, and the popup's top-bar icon opens sync
+  settings directly.
+
+### Changed
+
+- **Firefox:** the manifest now declares its data collection (none) — newly
+  required by addons.mozilla.org. Fenko Vault is offline and end-to-end
+  encrypted, so it reports collecting no data.
+
 ## [0.9.0] - 2026-06-08
 
 The big one: Passkey Vault is now a 2FA authenticator too, everything lives in

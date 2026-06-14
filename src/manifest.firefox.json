@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_appName__",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "default_locale": "en",
   "description": "__MSG_appDesc__",
   "permissions": [
@@ -63,7 +63,9 @@
       "id": "security@fenko.nz",
       "strict_min_version": "109.0",
       "data_collection_permissions": {
-        "required": ["none"]
+        "required": [
+          "none"
+        ]
       }
     }
   }
