@@ -1,8 +1,16 @@
 # Fenko Vault
 
-A browser extension that intercepts WebAuthn API calls and stores passkeys locally, bypassing the browser's native passkey UI. Works on **Chrome** (MV3) and **Firefox** (MV2).
+Intercepts WebAuthn API calls and stores passkeys locally, bypassing the browser's native passkey UI. Available as a browser extension for Chromium browsers and Firefox, and as an Android passkey provider app.
 
-[Install from Chrome Web Store](https://chromewebstore.google.com/detail/passkey-vault/lopekoolgoijpmaidblgfgelbkfkgmod)
+## Download
+
+| Platform | Get it | Status |
+| --- | --- | --- |
+| **Chrome · Edge · Brave · Opera** | [Chrome Web Store](https://chromewebstore.google.com/detail/passkey-vault/lopekoolgoijpmaidblgfgelbkfkgmod) | Available |
+| **Firefox** | [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/fenko-vault/) | Submitted — pending Mozilla approval, not yet live |
+| **Android** | [Latest APK](https://github.com/FenkoHQ/passkey-vault/releases) | Pre-release — sideload the signed APK, [feedback welcome](https://github.com/FenkoHQ/passkey-vault/issues) |
+
+> The Android build is an early pre-release we're shipping for testing. Expect rough edges, and please [open an issue](https://github.com/FenkoHQ/passkey-vault/issues) with bugs or suggestions. The Firefox listing is awaiting Mozilla review — the link will go live once approved.
 
 ---
 
@@ -53,15 +61,25 @@ A browser extension that intercepts WebAuthn API calls and stores passkeys local
 - **Backup & import** — export all passkeys (including private keys) and TOTP entries as a JSON file, import on another device
 - **Cross-device sync** — optional Nostr-based sync chain using a BIP-39 seed phrase; passkeys and 2FA codes sync end-to-end encrypted
 - **Emergency access** — standalone recovery page for vault management without the extension popup
-- **Chrome + Firefox** — single codebase, separate manifests
+- **Chrome, Firefox & Android** — one codebase; browser extension plus a native Android passkey provider
 
 ---
 
 ## Installation
 
-### Chrome Web Store
+### Chrome, Edge, Brave, Opera
 
-[Download Fenko Vault](https://chromewebstore.google.com/detail/passkey-vault/lopekoolgoijpmaidblgfgelbkfkgmod)
+[Install from the Chrome Web Store](https://chromewebstore.google.com/detail/passkey-vault/lopekoolgoijpmaidblgfgelbkfkgmod). The same listing covers all Chromium-based browsers.
+
+### Firefox
+
+[Fenko Vault on Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/fenko-vault/). The listing is submitted and pending Mozilla review — the install button appears once it's approved. Until then, build from source (below) and load it as a temporary add-on.
+
+### Android (pre-release)
+
+Grab the signed APK from the [latest GitHub release](https://github.com/FenkoHQ/passkey-vault/releases), open it on your device to install (you may need to allow installs from your browser/file manager), then enable Fenko Vault under **Settings → Passwords & accounts → Passkeys** as a credential provider.
+
+This is an early pre-release for testing — [bug reports and feedback](https://github.com/FenkoHQ/passkey-vault/issues) are very welcome.
 
 ### Build from source
 
