@@ -814,7 +814,7 @@ class AndroidSync {
       chainId: this.config.chainId!,
       deviceId: this.config.deviceId!,
       deviceName: this.config.deviceName || undefined,
-      deviceType: 'Mobile (Android)',
+      deviceType: deviceTypeLabel(),
       timestamp: Date.now(),
       sequence: ++this.sequence,
       payload: { action: 'online' },
@@ -827,7 +827,7 @@ class AndroidSync {
       chainId: this.config.chainId!,
       deviceId: this.config.deviceId!,
       deviceName: this.config.deviceName || undefined,
-      deviceType: 'Mobile (Android)',
+      deviceType: deviceTypeLabel(),
       timestamp: Date.now(),
       sequence: ++this.sequence,
       payload: { action: 'sync', requestId: uuid() },
@@ -842,7 +842,7 @@ class AndroidSync {
       chainId: this.config.chainId!,
       deviceId: this.config.deviceId!,
       deviceName: this.config.deviceName || undefined,
-      deviceType: 'Mobile (Android)',
+      deviceType: deviceTypeLabel(),
       timestamp: Date.now(),
       sequence: ++this.sequence,
       payload: { bundle },
@@ -973,7 +973,7 @@ class AndroidSync {
         chainId: this.config.chainId!,
         deviceId: this.config.deviceId!,
         deviceName: this.config.deviceName || undefined,
-        deviceType: 'Mobile (Android)',
+        deviceType: deviceTypeLabel(),
         timestamp: Date.now(),
         sequence: ++this.sequence,
         payload: {
@@ -1026,18 +1026,48 @@ class AndroidSync {
   }
 }
 
+// The 12-word phrase from the most recent chain creation, held in memory only so
+// it can be shown once for the user to save. Never persisted.
+let pendingMnemonic: string | null = null;
+
+function isIOSPlatform(): boolean {
+  const ua = navigator.userAgent || '';
+  return (
+    /iPhone|iPad|iPod/i.test(ua) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  );
+}
+
+function defaultDeviceName(): string {
+  return isIOSPlatform() ? 'iPhone' : 'Android phone';
+}
+
+function deviceTypeLabel(): string {
+  return isIOSPlatform() ? 'Mobile (iOS)' : 'Mobile (Android)';
+}
+
 async function createSyncChain(form: HTMLFormElement): Promise<void> {
+  if (getSyncConfig().enabled) {
+    setStatus('You are already in a sync chain. Leave it before creating a new one.', 'bad');
+    return;
+  }
   const data = new FormData(form);
-  const deviceName = String(data.get('deviceName') || 'Android phone').trim();
+  const deviceName = String(data.get('deviceName') || defaultDeviceName()).trim();
   const mnemonic = await generateMnemonic(12);
   await configureSync(deviceName, mnemonic, true);
+  pendingMnemonic = mnemonic;
   copyText(mnemonic);
-  setStatus('Sync chain created. Recovery phrase copied.');
+  setStatus('Sync chain created. Save your recovery phrase below.');
+  render();
 }
 
 async function joinSyncChain(form: HTMLFormElement): Promise<void> {
+  if (getSyncConfig().enabled) {
+    setStatus('You are already in a sync chain. Leave it before joining another.', 'bad');
+    return;
+  }
   const data = new FormData(form);
-  const deviceName = String(data.get('deviceName') || 'Android phone').trim();
+  const deviceName = String(data.get('deviceName') || defaultDeviceName()).trim();
   const mnemonic = String(data.get('mnemonic') || '').trim().toLowerCase();
   if (!validateMnemonic(mnemonic)) {
     setStatus('Recovery phrase is invalid.', 'bad');
@@ -1046,6 +1076,7 @@ async function joinSyncChain(form: HTMLFormElement): Promise<void> {
   await configureSync(deviceName, mnemonic, false);
   await state.sync?.requestSync();
   setStatus('Joined sync chain.');
+  render();
 }
 
 async function configureSync(deviceName: string, mnemonic: string, created: boolean): Promise<void> {
@@ -1059,7 +1090,7 @@ async function configureSync(deviceName: string, mnemonic: string, created: bool
   const device: SyncDevice = {
     id: deviceId,
     name: deviceName,
-    deviceType: 'Mobile (Android)',
+    deviceType: deviceTypeLabel(),
     publicKey,
     createdAt: Date.now(),
     lastSeen: Date.now(),
@@ -1107,7 +1138,9 @@ function leaveSync(): void {
     syncSalt: null,
   });
   localStorage.removeItem(SYNC_DEVICES_KEY);
+  pendingMnemonic = null;
   setStatus('Sync disabled.');
+  render();
 }
 
 async function startScanner(): Promise<void> {
@@ -1414,17 +1447,40 @@ function renderSync(): string {
           }
         </div>
       </div>
+      ${
+        pendingMnemonic
+          ? `
+      <div class="panel stack" id="recovery-phrase-panel">
+        <h2>Save your recovery phrase</h2>
+        <p class="muted">Write these 12 words down and keep them somewhere safe. You'll enter them on your other devices to join this chain. Anyone with them can access your vault, and they won't be shown again.</p>
+        <div class="small-code" style="user-select:all; line-height:1.9; word-spacing:0.4em;">${escapeHtml(pendingMnemonic)}</div>
+        <div class="row">
+          <button id="copy-phrase" class="primary" type="button">Copy phrase</button>
+          <button id="ack-phrase" type="button">I've saved it</button>
+        </div>
+      </div>`
+          : ''
+      }
+      ${
+        config.enabled
+          ? `
+      <div class="panel stack">
+        <h2>Add another device</h2>
+        <p class="muted">This device is already in a sync chain. To add another device, open this app there and join with your recovery phrase. To start over, leave the current chain first.</p>
+      </div>`
+          : `
       <form id="create-sync-form" class="panel stack">
         <h2>Create chain</h2>
-        <input name="deviceName" value="Android phone" />
-        <button class="primary" type="submit">Create and copy phrase</button>
+        <input name="deviceName" value="${escapeHtml(defaultDeviceName())}" />
+        <button class="primary" type="submit">Create chain</button>
       </form>
       <form id="join-sync-form" class="panel stack">
         <h2>Join chain</h2>
-        <input name="deviceName" value="Android phone" />
+        <input name="deviceName" value="${escapeHtml(defaultDeviceName())}" />
         <textarea name="mnemonic" placeholder="12-word recovery phrase"></textarea>
         <button class="primary" type="submit">Join</button>
-      </form>
+      </form>`
+      }
       <div class="panel stack">
         <h2>Compatibility</h2>
         <p class="muted">Default mode matches the extension's current salt field. Deterministic mode is useful for Android-to-Android tests.</p>
@@ -1655,6 +1711,16 @@ function bindSync(): void {
     void state.sync?.requestSync().then(() => setStatus('Sync requested.'))
   );
   document.getElementById('leave-sync')?.addEventListener('click', leaveSync);
+  document.getElementById('copy-phrase')?.addEventListener('click', () => {
+    if (pendingMnemonic) {
+      copyText(pendingMnemonic);
+      setStatus('Recovery phrase copied.');
+    }
+  });
+  document.getElementById('ack-phrase')?.addEventListener('click', () => {
+    pendingMnemonic = null;
+    render();
+  });
   document.getElementById('deterministic-salt')?.addEventListener('change', (event) => {
     const checked = (event.currentTarget as HTMLInputElement).checked;
     if (checked) localStorage.setItem('android_sync_deterministic_salt', '1');
