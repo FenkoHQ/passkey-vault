@@ -1,4 +1,4 @@
-name: Build and Release Extension
+name: Build and Release
 
 on:
   push:
@@ -84,6 +84,58 @@ jobs:
           name: passkey-vault-firefox-zip
           path: passkey-vault-firefox.zip
 
+  build-android:
+    name: Build signed Android APK
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Android build tools
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "build-tools;35.0.0" "platforms;android-35" > /dev/null
+
+      - name: Restore release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "ANDROID_KEYSTORE_BASE64 secret is not set" >&2
+            exit 1
+          fi
+          mkdir -p android/signing
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > android/signing/passkey-vault.jks
+
+      - name: Build and sign APK
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          export VERSION_NAME="${GITHUB_REF#refs/tags/v}"
+          ./android/build-android.sh
+          cp android/dist/passkey-vault-android-signed.apk \
+            "android/dist/fenko-vault-${VERSION_NAME}.apk"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fenko-vault-apk
+          path: android/dist/fenko-vault-*.apk
+          if-no-files-found: error
+
   publish-chrome:
     name: Publish to Chrome Web Store
     needs: build
@@ -163,7 +215,7 @@ jobs:
 
   release:
     name: Create Release
-    needs: build
+    needs: [build, build-android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -181,6 +233,11 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: passkey-vault-firefox-zip
+
+      - name: Download Android APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: fenko-vault-apk
 
       - name: Extract tag name
         id: tag_name
@@ -212,6 +269,11 @@ jobs:
             echo "2. Open \`about:debugging#/runtime/this-firefox\`"
             echo "3. Click \"Load Temporary Add-on...\" and select \`manifest.json\`"
             echo ""
+            echo "### Android"
+            echo "1. Download \`fenko-vault-${VER}.apk\`"
+            echo "2. Allow installs from unknown sources, then open the APK to install"
+            echo "3. Enable Fenko Vault under Settings → Passwords & accounts → passkey provider"
+            echo ""
             echo "See the [full changelog](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)."
           } >> RELEASE_NOTES.md
           echo "---- release notes ----"
@@ -227,4 +289,5 @@ jobs:
           files: |
             passkey-vault-chrome.zip
             passkey-vault-firefox.zip
+            fenko-vault-*.apk
           body_path: RELEASE_NOTES.md

@@ -1,4 +1,6 @@
 build/
+build-aab/
+bundletool.jar
 dist/
 signing/*.jks
 signing/*.keystore
