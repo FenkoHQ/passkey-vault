@@ -1,0 +1,112 @@
+name: Publish to Google Play
+
+# DISABLED until the Play listing is live and credentials exist.
+#
+# Prerequisites (one-time, after the first manual release is published & approved):
+#   1. Create a Google Cloud service account, link it in Play Console
+#      (Users & permissions) and grant it release access for the app.
+#   2. Add its JSON key as the repo secret  PLAY_SERVICE_ACCOUNT_JSON.
+#      (ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD are already set.)
+#
+# To ENABLE: change the job-level `if:` below from `false` to `true`.
+# Until then the job is skipped even if manually dispatched, so nothing can publish.
+#
+# This workflow only ever runs on manual dispatch — it never fires on a tag/push.
+
+on:
+  workflow_dispatch:
+    inputs:
+      track:
+        description: 'Play track'
+        type: choice
+        options: [internal, alpha, beta, production]
+        default: internal
+      status:
+        description: 'Release status'
+        type: choice
+        options: [completed, draft, inProgress, halted]
+        default: completed
+      version_code:
+        description: 'versionCode (must be > last uploaded, i.e. > 902). Blank = 1000 + run number.'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build AAB and publish to Play
+    runs-on: ubuntu-latest
+    # ---- DISABLED. Flip to `true` once PLAY_SERVICE_ACCOUNT_JSON is set. ----
+    if: ${{ false }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Android build tools
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "build-tools;35.0.0" "platforms;android-35" > /dev/null
+
+      - name: Verify credentials are present
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          SA_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          [ -n "$KEYSTORE_BASE64" ] || { echo "ANDROID_KEYSTORE_BASE64 secret is not set" >&2; exit 1; }
+          [ -n "$SA_JSON" ] || { echo "PLAY_SERVICE_ACCOUNT_JSON secret is not set" >&2; exit 1; }
+
+      - name: Restore release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p android/signing
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > android/signing/passkey-vault.jks
+
+      - name: Compute versionCode
+        id: vc
+        run: |
+          if [ -n "${{ inputs.version_code }}" ]; then
+            VC="${{ inputs.version_code }}"
+          else
+            VC=$(( 1000 + ${{ github.run_number }} ))
+          fi
+          echo "code=$VC" >> "$GITHUB_OUTPUT"
+          echo "Using versionCode $VC"
+
+      - name: Build signed AAB
+        env:
+          VERSION_CODE: ${{ steps.vc.outputs.code }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: ./android/build-aab.sh
+
+      - name: Resolve AAB path
+        id: aab
+        run: echo "path=$(ls android/dist/fenko-vault-*.aab | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Write service account key
+        env:
+          SA_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: printf '%s' "$SA_JSON" > "$RUNNER_TEMP/play-sa.json"
+
+      - name: Upload to Google Play
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJson: ${{ runner.temp }}/play-sa.json
+          packageName: nz.fenko.passkeyvault
+          releaseFiles: ${{ steps.aab.outputs.path }}
+          track: ${{ inputs.track }}
+          status: ${{ inputs.status }}
+          whatsNewDirectory: android/play/whatsnew
