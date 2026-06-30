@@ -25,6 +25,7 @@ declare global {
     AndroidBridge?: {
       copyText(value: string): void;
       toast(value: string): void;
+      saveFile?(suggestedName: string, mimeType: string, content: string): void;
       loadVaultSnapshot?(): string;
       saveVaultSnapshot?(
         passkeysJson: string,
@@ -156,6 +157,12 @@ const state = {
   sync: null as AndroidSync | null,
   scannerStop: null as (() => void) | null,
   expanded: new Set<string>(),
+  // Backup form fields, kept in state so they survive re-renders (the status
+  // timer and auto-lock both re-render). Passwords are cleared after use.
+  exportPassword: '',
+  exportPasswordConfirm: '',
+  importJson: '',
+  importPassword: '',
 };
 
 const app = document.getElementById('app') as HTMLElement;
@@ -350,6 +357,30 @@ function copyText(value: string): void {
     return;
   }
   void navigator.clipboard?.writeText(value);
+}
+
+// Writes the backup to a file. On Android the native bridge opens the system
+// "Save to..." dialog; elsewhere (or if the bridge is missing) it falls back to
+// a normal browser download.
+function saveBackupFile(suggestedName: string, content: string): void {
+  if (window.AndroidBridge?.saveFile) {
+    window.AndroidBridge.saveFile(suggestedName, 'application/json', content);
+    return;
+  }
+  const blob = new Blob([content], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = suggestedName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function backupFileName(prefix: string): string {
+  const stamp = new Date().toISOString().slice(0, 10);
+  return `${prefix}-${stamp}.json`;
 }
 
 async function sha256Hex(data: Uint8Array | string): Promise<string> {
@@ -621,6 +652,24 @@ function startBiometricUnlock(): void {
   window.AndroidBridge?.requestBiometricUnlock?.();
 }
 
+// Driven by the inline Backup form. A password means an encrypted export;
+// blank means plain JSON. No popups — Google Play flags password dialogs.
+async function exportBackup(): Promise<void> {
+  const password = state.exportPassword;
+  const confirm = state.exportPasswordConfirm;
+  if (password && password !== confirm) {
+    setStatus('Backup passwords do not match.', 'bad');
+    return;
+  }
+  state.exportPassword = '';
+  state.exportPasswordConfirm = '';
+  if (password) {
+    await exportEncryptedVault(password);
+  } else {
+    exportVault();
+  }
+}
+
 function exportVault(): void {
   const payload = {
     version: 'fenko-vault-android-0.1.0',
@@ -632,19 +681,13 @@ function exportVault(): void {
     syncDevices: loadJson<SyncChain | null>(SYNC_DEVICES_KEY, null),
     customRelays: getRelays(),
   };
-  copyText(JSON.stringify(payload, null, 2));
-  setStatus('Backup JSON copied.');
+  const json = JSON.stringify(payload, null, 2);
+  copyText(json);
+  saveBackupFile(backupFileName('fenko-vault-backup'), json);
+  setStatus('Backup copied and saving to file…');
 }
 
-async function exportEncryptedVault(): Promise<void> {
-  const password = prompt('Backup password');
-  if (!password) return;
-  const confirm = prompt('Confirm backup password');
-  if (password !== confirm) {
-    setStatus('Backup passwords do not match.', 'bad');
-    return;
-  }
-
+async function exportEncryptedVault(password: string): Promise<void> {
   const payload = {
     version: 'fenko-vault-android-0.1.0',
     exportType: 'full',
@@ -672,22 +715,43 @@ async function exportEncryptedVault(): Promise<void> {
     salt: bytesToBase64(salt),
     algorithm: 'AES-256-GCM',
   };
-  copyText(JSON.stringify(backup, null, 2));
-  setStatus('Encrypted backup JSON copied.');
+  const json = JSON.stringify(backup, null, 2);
+  copyText(json);
+  saveBackupFile(backupFileName('fenko-vault-backup-encrypted'), json);
+  setStatus('Encrypted backup copied and saving to file…');
 }
 
 async function importVault(raw: string): Promise<void> {
-  let payload = JSON.parse(raw);
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    setStatus('Paste a backup into the box first.', 'bad');
+    return;
+  }
+  let payload;
+  try {
+    payload = JSON.parse(trimmed);
+  } catch {
+    setStatus("That doesn't look like backup JSON.", 'bad');
+    return;
+  }
   if (payload.encrypted === true && payload.data && payload.iv && payload.salt) {
-    const password = prompt('Backup password');
-    if (!password) return;
-    const key = await deriveBackupKey(password, base64ToBytes(payload.salt));
-    const decrypted = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: base64ToBytes(payload.iv) },
-      key,
-      base64ToBytes(payload.data)
-    );
-    payload = JSON.parse(new TextDecoder().decode(decrypted));
+    const password = state.importPassword;
+    if (!password) {
+      setStatus('This backup is encrypted — enter its password above.', 'bad');
+      return;
+    }
+    try {
+      const key = await deriveBackupKey(password, base64ToBytes(payload.salt));
+      const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: base64ToBytes(payload.iv) },
+        key,
+        base64ToBytes(payload.data)
+      );
+      payload = JSON.parse(new TextDecoder().decode(decrypted));
+    } catch {
+      setStatus('Wrong password or corrupted backup.', 'bad');
+      return;
+    }
   }
   const passkeys = Array.isArray(payload.passkeys) ? payload.passkeys : [];
   const totpEntries = Array.isArray(payload.totpEntries)
@@ -704,9 +768,18 @@ async function importVault(raw: string): Promise<void> {
   if (payload.syncConfig) setSyncConfig(payload.syncConfig);
   if (payload.syncDevices) saveJson(SYNC_DEVICES_KEY, payload.syncDevices);
   if (Array.isArray(payload.customRelays)) saveJson(CUSTOM_RELAYS_KEY, payload.customRelays);
-  await bootSync();
-  await state.sync?.broadcastUpdate();
-  setStatus('Backup imported.');
+  // The vault is already saved and mirrored to native above. Sync is a
+  // best-effort side effect — a relay or connection error must not make a
+  // successful import report as a failure.
+  try {
+    await bootSync();
+    await state.sync?.broadcastUpdate();
+  } catch (error) {
+    console.warn('Post-import sync failed (import still succeeded)', error);
+  }
+  state.importJson = '';
+  state.importPassword = '';
+  setStatus(`Imported ${passkeys.length} passkeys and ${totpEntries.length} 2FA codes.`);
 }
 
 class AndroidSync {
@@ -1521,9 +1594,17 @@ function renderTools(): string {
       </div>
       <div class="panel stack">
         <h2>Backup</h2>
-        <button id="export-encrypted-vault">Copy encrypted backup</button>
-        <button id="export-vault">Copy backup JSON</button>
-        <textarea id="import-json" placeholder="Paste backup JSON"></textarea>
+        <h3>Export</h3>
+        <p class="muted">Set a password to export an encrypted backup, or leave it blank to export plain JSON. Exports copy to the clipboard and save to a file you choose.</p>
+        <input type="password" id="export-password" placeholder="Backup password (optional)"
+          autocomplete="new-password" autocapitalize="off" value="${escapeHtml(state.exportPassword)}" />
+        <input type="password" id="export-password-confirm" placeholder="Confirm password"
+          autocomplete="new-password" autocapitalize="off" value="${escapeHtml(state.exportPasswordConfirm)}" />
+        <button class="primary" id="export-vault">Export backup</button>
+        <h3>Import</h3>
+        <textarea id="import-json" placeholder="Paste backup JSON">${escapeHtml(state.importJson)}</textarea>
+        <input type="password" id="import-password" placeholder="Backup password (if encrypted)"
+          autocomplete="off" autocapitalize="off" value="${escapeHtml(state.importPassword)}" />
         <button class="primary" id="import-vault">Import backup</button>
       </div>
       <div class="panel stack">
@@ -1747,13 +1828,29 @@ function bindTools(): void {
     localStorage.setItem(AUTOLOCK_KEY, minutes);
     setStatus(minutes === '0' ? 'Auto-lock off.' : `Auto-lock after ${minutes} min.`);
   });
+  const exportPw = document.getElementById('export-password') as HTMLInputElement | null;
+  exportPw?.addEventListener('input', () => {
+    state.exportPassword = exportPw.value;
+  });
+  const exportPwConfirm = document.getElementById('export-password-confirm') as HTMLInputElement | null;
+  exportPwConfirm?.addEventListener('input', () => {
+    state.exportPasswordConfirm = exportPwConfirm.value;
+  });
+  const importJson = document.getElementById('import-json') as HTMLTextAreaElement | null;
+  importJson?.addEventListener('input', () => {
+    state.importJson = importJson.value;
+  });
+  const importPw = document.getElementById('import-password') as HTMLInputElement | null;
+  importPw?.addEventListener('input', () => {
+    state.importPassword = importPw.value;
+  });
   document
-    .getElementById('export-encrypted-vault')
-    ?.addEventListener('click', () => void exportEncryptedVault().catch((error) => setStatus(String(error), 'bad')));
-  document.getElementById('export-vault')?.addEventListener('click', exportVault);
+    .getElementById('export-vault')
+    ?.addEventListener('click', () => void exportBackup().catch((error) => setStatus(String(error), 'bad')));
   document.getElementById('import-vault')?.addEventListener('click', () => {
-    const raw = (document.getElementById('import-json') as HTMLTextAreaElement).value;
-    void importVault(raw).catch((error) => setStatus(String(error), 'bad'));
+    void importVault(importJson?.value ?? state.importJson).catch((error) =>
+      setStatus(String(error), 'bad')
+    );
   });
   document.getElementById('wipe-vault')?.addEventListener('click', () => {
     if (!confirm('Wipe all local vault data?')) return;

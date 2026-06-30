@@ -2,6 +2,7 @@ package nz.fenko.passkeyvault;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -14,10 +15,13 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.CancellationSignal;
+import android.text.InputType;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.webkit.ConsoleMessage;
 import android.webkit.JavascriptInterface;
+import android.webkit.JsPromptResult;
+import android.webkit.JsResult;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -25,15 +29,20 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.Toast;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 
 public final class MainActivity extends Activity {
     private static final int CAMERA_REQUEST = 42;
+    private static final int CREATE_FILE_REQUEST = 43;
     private static final String APP_ORIGIN = "app.passkey-vault.local";
     private WebView webView;
+    private byte[] pendingFileBytes;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -107,6 +116,57 @@ public final class MainActivity extends Activity {
                 android.util.Log.d("FenkoVaultWeb", message.message());
                 return true;
             }
+
+            // A custom WebChromeClient suppresses the WebView's built-in JS
+            // dialogs, so window.alert/confirm/prompt would silently return
+            // null/false. The web vault uses prompt() for backup passwords and
+            // confirm() for wipe, so without these the encrypted export/import
+            // and wipe actions appear to do nothing. Wire them to native dialogs.
+            @Override
+            public boolean onJsAlert(WebView view, String url, String message, JsResult result) {
+                new AlertDialog.Builder(MainActivity.this, android.R.style.Theme_Material_Dialog_Alert)
+                        .setMessage(message)
+                        .setCancelable(false)
+                        .setPositiveButton(android.R.string.ok, (dialog, which) -> result.confirm())
+                        .show();
+                return true;
+            }
+
+            @Override
+            public boolean onJsConfirm(WebView view, String url, String message, JsResult result) {
+                new AlertDialog.Builder(MainActivity.this, android.R.style.Theme_Material_Dialog_Alert)
+                        .setMessage(message)
+                        .setPositiveButton(android.R.string.ok, (dialog, which) -> result.confirm())
+                        .setNegativeButton(android.R.string.cancel, (dialog, which) -> result.cancel())
+                        .setOnCancelListener(dialog -> result.cancel())
+                        .show();
+                return true;
+            }
+
+            @Override
+            public boolean onJsPrompt(WebView view, String url, String message, String defaultValue,
+                    JsPromptResult result) {
+                final EditText input = new EditText(MainActivity.this);
+                if (defaultValue != null) {
+                    input.setText(defaultValue);
+                }
+                // prompt() is only used for backup passwords here; mask the input.
+                if (message != null && message.toLowerCase().contains("password")) {
+                    input.setInputType(InputType.TYPE_CLASS_TEXT
+                            | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+                }
+                int pad = (int) (20 * getResources().getDisplayMetrics().density);
+                input.setPadding(pad, input.getPaddingTop(), pad, input.getPaddingBottom());
+                new AlertDialog.Builder(MainActivity.this, android.R.style.Theme_Material_Dialog_Alert)
+                        .setMessage(message)
+                        .setView(input)
+                        .setPositiveButton(android.R.string.ok,
+                                (dialog, which) -> result.confirm(input.getText().toString()))
+                        .setNegativeButton(android.R.string.cancel, (dialog, which) -> result.cancel())
+                        .setOnCancelListener(dialog -> result.cancel())
+                        .show();
+                return true;
+            }
         });
 
         setContentView(root);
@@ -157,6 +217,45 @@ public final class MainActivity extends Activity {
             return;
         }
         super.onBackPressed();
+    }
+
+    // Opens the system "Save to..." dialog (Storage Access Framework) so the
+    // user can write a backup anywhere — Downloads, Drive, etc. The bytes are
+    // held until the picker returns in onActivityResult.
+    private void startSaveFile(String suggestedName, String mimeType, String content) {
+        pendingFileBytes = content.getBytes(StandardCharsets.UTF_8);
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType(mimeType != null && !mimeType.isEmpty() ? mimeType : "application/json");
+        intent.putExtra(Intent.EXTRA_TITLE, suggestedName);
+        try {
+            startActivityForResult(intent, CREATE_FILE_REQUEST);
+        } catch (ActivityNotFoundException e) {
+            pendingFileBytes = null;
+            Toast.makeText(this, "No file manager available", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != CREATE_FILE_REQUEST) {
+            return;
+        }
+        byte[] bytes = pendingFileBytes;
+        pendingFileBytes = null;
+        if (resultCode != Activity.RESULT_OK || data == null || data.getData() == null || bytes == null) {
+            return;
+        }
+        try (OutputStream out = getContentResolver().openOutputStream(data.getData())) {
+            if (out != null) {
+                out.write(bytes);
+                out.flush();
+                Toast.makeText(this, "Backup saved", Toast.LENGTH_SHORT).show();
+            }
+        } catch (IOException e) {
+            Toast.makeText(this, "Could not save file", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void postBiometricResult(boolean ok) {
@@ -228,6 +327,11 @@ public final class MainActivity extends Activity {
         @JavascriptInterface
         public void toast(String value) {
             Toast.makeText(context, value, Toast.LENGTH_SHORT).show();
+        }
+
+        @JavascriptInterface
+        public void saveFile(String suggestedName, String mimeType, String content) {
+            context.runOnUiThread(() -> context.startSaveFile(suggestedName, mimeType, content));
         }
 
         @JavascriptInterface
