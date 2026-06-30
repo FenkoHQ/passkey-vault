@@ -111,13 +111,21 @@ function main() {
     manifest.version === pkg.version,
     `Manifest version ${manifest.version} != ${pkg.version}`
   );
-  assert(
-    manifest.version_name === pkg.version,
-    `Manifest version_name ${manifest.version_name} != ${pkg.version}`
-  );
+  if (target === 'chrome') {
+    assert(
+      manifest.version_name === pkg.version,
+      `Manifest version_name ${manifest.version_name} != ${pkg.version}`
+    );
+  } else {
+    // Firefox/AMO doesn't support version_name; the build omits it.
+    assert(
+      manifest.version_name === undefined,
+      `Firefox manifest should not set version_name (got ${manifest.version_name})`
+    );
+  }
   assert(manifest.name === '__MSG_appName__', `Unexpected manifest name: ${manifest.name}`);
   assert(
-    enMessages.appName?.message === 'Fenko Vault',
+    enMessages.appName?.message === 'Fenko Vault | Passkey and MFA Manager',
     `Unexpected localized app name: ${enMessages.appName?.message}`
   );
   assert(manifest.icons?.['16'] === 'icons/icon16.png', 'Manifest icon16 path mismatch');

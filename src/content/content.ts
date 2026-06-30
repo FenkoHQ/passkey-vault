@@ -514,15 +514,11 @@ class ContentScript {
    * Send message to background script
    */
   private async sendMessage(message: Record<string, unknown>): Promise<Record<string, unknown>> {
-    return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage(message, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-        } else {
-          resolve(response as Record<string, unknown>);
-        }
-      });
-    });
+    // Promise form works on Chrome MV3 and on Firefox (where `chrome` is aliased
+    // to the promise-based `browser`). The callback form would silently never
+    // resolve under Firefox's promise-only namespace.
+    const response = await chrome.runtime.sendMessage(message);
+    return response as Record<string, unknown>;
   }
 
   private createCredentialFromResponse(

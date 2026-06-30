@@ -4,6 +4,26 @@ All notable changes to Passkey Vault are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [0.9.2] - 2026-06-30
+
+A Firefox fix that makes the extension actually work there, and a clearer store
+name.
+
+### Fixed
+
+- **Firefox now works.** The extension talked to the browser through promise-style
+  `chrome.*` calls, which only return promises on Chrome. On Firefox those calls
+  returned nothing, so the vault never loaded and passkey sign-in hung. Firefox now
+  uses its promise-based `browser` API, so storage reads and the WebAuthn flow work.
+- **Firefox manifest:** dropped a background `type: module` declaration that older
+  supported Firefox versions reject, and stopped emitting the unsupported
+  `version_name` key.
+
+### Changed
+
+- **Clearer name.** The extension is now listed as **Fenko Vault | Passkey and MFA
+  Manager** in both stores.
+
 ## [0.9.1] - 2026-06-14
 
 A fix for sync being hard to reach, plus a Firefox store requirement.

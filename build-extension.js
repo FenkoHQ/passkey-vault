@@ -55,6 +55,14 @@ async function buildForTarget(browserTarget) {
     target: ['chrome88', 'firefox109'],
     format: 'iife',
     platform: 'browser',
+    // Firefox's `chrome.*` namespace is callback-only; its promise-based APIs
+    // live under `browser.*`. The code uses promise-style `chrome.*` throughout
+    // (works natively on Chrome MV3), so on Firefox we re-point the global
+    // `chrome` at `browser`. No-op on Chrome (browser is undefined) and in the
+    // page-world inject script.
+    banner: {
+      js: "(function(){if(typeof browser!=='undefined'&&typeof globalThis!=='undefined'){try{globalThis.chrome=browser;}catch(e){}}})();",
+    },
   };
 
   try {
@@ -142,7 +150,10 @@ async function buildForTarget(browserTarget) {
 
   // Set version from git
   manifest.version = version;
-  manifest.version_name = versionName;
+  // Firefox/AMO doesn't support version_name (lints as a warning); Chrome does.
+  if (!isFirefox) {
+    manifest.version_name = versionName;
+  }
 
   if (isFirefox) {
     manifest.background.scripts = ['background.js'];
