@@ -6,11 +6,11 @@ Intercepts WebAuthn API calls and stores passkeys locally, bypassing the browser
 
 | Platform | Get it | Status |
 | --- | --- | --- |
-| **Chrome · Edge · Brave · Opera** | [Chrome Web Store](https://chromewebstore.google.com/detail/passkey-vault/lopekoolgoijpmaidblgfgelbkfkgmod) | Available |
-| **Firefox** | [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/fenko-vault/) | Submitted — pending Mozilla approval, not yet live |
-| **Android** | [Latest APK](https://github.com/FenkoHQ/passkey-vault/releases) | Pre-release — sideload the signed APK, [feedback welcome](https://github.com/FenkoHQ/passkey-vault/issues) |
+| <img src="https://raw.githubusercontent.com/alrra/browser-logos/main/src/chrome/chrome_24x24.png" width="16" alt=""/> **Chrome** · <img src="https://raw.githubusercontent.com/alrra/browser-logos/main/src/edge/edge_24x24.png" width="16" alt=""/> **Edge** · <img src="https://raw.githubusercontent.com/alrra/browser-logos/main/src/brave/brave_24x24.png" width="16" alt=""/> **Brave** · <img src="https://raw.githubusercontent.com/alrra/browser-logos/main/src/opera/opera_24x24.png" width="16" alt=""/> **Opera** | [Chrome Web Store](https://chromewebstore.google.com/detail/passkey-vault/lopekoolgoijpmaidblgfgelbkfkgmod) | Available |
+| <img src="https://raw.githubusercontent.com/alrra/browser-logos/main/src/firefox/firefox_24x24.png" width="16" alt=""/> **Firefox** | [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/fenko-vault/) | Submitted — pending Mozilla approval, not yet live |
+| <img src="https://cdn.simpleicons.org/android/3DDC84" width="16" alt=""/> **Android** | [Google Play](https://play.google.com/store/apps/details?id=nz.fenko.passkeyvault) | Available |
 
-> The Android build is an early pre-release we're shipping for testing. Expect rough edges, and please [open an issue](https://github.com/FenkoHQ/passkey-vault/issues) with bugs or suggestions. The Firefox listing is awaiting Mozilla review — the link will go live once approved.
+> The Firefox listing is awaiting Mozilla review — the link will go live once approved. Found a bug? [Open an issue](https://github.com/FenkoHQ/passkey-vault/issues).
 
 ---
 
@@ -75,11 +75,11 @@ Intercepts WebAuthn API calls and stores passkeys locally, bypassing the browser
 
 [Fenko Vault on Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/fenko-vault/). The listing is submitted and pending Mozilla review — the install button appears once it's approved. Until then, build from source (below) and load it as a temporary add-on.
 
-### Android (pre-release)
+### Android
 
-Grab the signed APK from the [latest GitHub release](https://github.com/FenkoHQ/passkey-vault/releases), open it on your device to install (you may need to allow installs from your browser/file manager), then enable Fenko Vault under **Settings → Passwords & accounts → Passkeys** as a credential provider.
+[Install from Google Play](https://play.google.com/store/apps/details?id=nz.fenko.passkeyvault), then enable Fenko Vault under **Settings → Passwords & accounts → Passkeys** as a credential provider.
 
-This is an early pre-release for testing — [bug reports and feedback](https://github.com/FenkoHQ/passkey-vault/issues) are very welcome.
+Prefer sideloading? A signed APK ships with each [GitHub release](https://github.com/FenkoHQ/passkey-vault/releases). Note the APK and the Play build are signed with different keys, so a device can't upgrade between them — pick one.
 
 ### Build from source
 

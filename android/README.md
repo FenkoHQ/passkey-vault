@@ -2,6 +2,8 @@
 
 Android build of Fenko Vault. A small native shell (WebView + credential provider service) around the same TypeScript crypto code the extension uses.
 
+Live on Google Play: <https://play.google.com/store/apps/details?id=nz.fenko.passkeyvault> (package `nz.fenko.passkeyvault`). A self-signed APK also ships with each [GitHub release](https://github.com/FenkoHQ/passkey-vault/releases) — different signing key, so devices can't upgrade between the two.
+
 ## Build
 
 ```bash

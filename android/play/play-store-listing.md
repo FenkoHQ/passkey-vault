@@ -1,5 +1,7 @@
 # Google Play — manual submission pack (Fenko Vault)
 
+**The listing is live:** <https://play.google.com/store/apps/details?id=nz.fenko.passkeyvault>
+
 Everything needed to create the Play Console listing for `nz.fenko.passkeyvault`
 by hand. Copy fields straight into the console; asset paths are relative to the
 repo root.
