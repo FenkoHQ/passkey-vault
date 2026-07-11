@@ -2170,78 +2170,9 @@ export async function deriveEd25519Keypair(seed: Uint8Array): Promise<{
   return { publicKey, privateKey };
 }
 
-export async function signEd25519(
-  message: Uint8Array,
-  privateKey: Uint8Array
-): Promise<Uint8Array> {
-  const data = new Uint8Array(message.length + privateKey.length);
-  data.set(message);
-  data.set(privateKey, message.length);
-
-  const hash = await crypto.subtle.digest('SHA-512', data);
-  return new Uint8Array(hash.slice(0, 64));
-}
-
-export async function verifyEd25519(
-  message: Uint8Array,
-  signature: Uint8Array,
-  publicKey: Uint8Array
-): Promise<boolean> {
-  const data = new Uint8Array(message.length + publicKey.length);
-  data.set(message);
-  data.set(publicKey, message.length);
-
-  const hash = await crypto.subtle.digest('SHA-512', data);
-
-  const sigBytes = new Uint8Array(hash.slice(0, 64));
-  return signature.every((byte, i) => byte === sigBytes[i]);
-}
-
-export async function createAccessToken(
-  privateKey: Uint8Array,
-  publicKey: Uint8Array
-): Promise<string> {
-  const timestamp = Math.floor(Date.now() / 1000);
-  const timestampHex = timestamp.toString(16).padStart(16, '0');
-  const timestampBytes = new TextEncoder().encode(timestampHex);
-
-  const signature = await signEd25519(timestampBytes, privateKey);
-  const signatureHex = Array.from(signature)
-    .map((b: number) => b.toString(16).padStart(2, '0'))
-    .join('');
-  const publicKeyHex = Array.from(publicKey)
-    .map((b: number) => b.toString(16).padStart(2, '0'))
-    .join('');
-
-  const tokenPayload = `${timestampHex}|${signatureHex}|${publicKeyHex}`;
-  return btoa(tokenPayload);
-}
-
-export async function verifyAccessToken(token: string, publicKey: Uint8Array): Promise<boolean> {
-  try {
-    const tokenDecoded = atob(token);
-    const [timestampHex, signatureHex, publicKeyHex] = tokenDecoded.split('|');
-
-    const timestamp = parseInt(timestampHex, 16);
-    const now = Math.floor(Date.now() / 1000);
-
-    if (now - timestamp > 86400) {
-      return false;
-    }
-
-    const expectedPublicKeyHex = Array.from(publicKey)
-      .map((byte) => byte.toString(16).padStart(2, '0'))
-      .join('');
-    if (publicKeyHex !== expectedPublicKeyHex) {
-      return false;
-    }
-
-    const matches = signatureHex.match(/.{1,2}/g);
-    const signature = new Uint8Array(matches ? matches.map((byte) => parseInt(byte, 16)) : []);
-
-    const timestampBytes = new TextEncoder().encode(timestampHex);
-    return await verifyEd25519(timestampBytes, signature, publicKey);
-  } catch {
-    return false;
-  }
-}
+// NOTE: home-rolled signEd25519/verifyEd25519/createAccessToken/verifyAccessToken
+// were removed. They were not real Ed25519 (public key was SHA-256 of the
+// private key; "signatures" were hashes of message‖key) and had no callers.
+// Any device-auth/token scheme must use a real signature primitive
+// (e.g. @noble/curves ed25519 or the existing secp256k1 Schnorr path) verified
+// against the chain's expected public key — never reintroduce these.

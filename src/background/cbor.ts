@@ -3,10 +3,11 @@
  * Covers map headers, text strings, byte strings, and COSE public keys.
  */
 
-// Fenko Vault AAGUID — stable identifier used so RPs can display the
-// "Fenko Vault" brand and icon (via the passkey-authenticator-aaguids
-// registry consumed by Chrome and other consumer RPs).
-// Source UUID: d2717a32-9851-48a8-9961-b264c97a411a
+// Fenko Vault AAGUID — d2717a32-9851-48a8-9961-b264c97a411a (random UUIDv4).
+// Stable authenticator-model identifier, byte-identical across web/Android/iOS,
+// reported so RPs display the "Fenko Vault" brand and icon via the
+// passkey-authenticator-aaguids registry. Intentionally non-zero under `none`
+// attestation. Canonical reference + registry submission: docs/aaguid/README.md.
 export const PASSKEY_VAULT_AAGUID = new Uint8Array([
   0xd2, 0x71, 0x7a, 0x32, 0x98, 0x51, 0x48, 0xa8, 0x99, 0x61, 0xb2, 0x64, 0xc9, 0x7a, 0x41, 0x1a,
 ]);

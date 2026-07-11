@@ -11,7 +11,9 @@ enum WebAuthnError: Error {
 }
 
 enum WebAuthn {
-    /// Same AAGUID as the Android provider (d2717a32-9851-48a8-9961-b264c97a411a).
+    /// Fenko Vault AAGUID d2717a32-9851-48a8-9961-b264c97a411a — must stay
+    /// byte-identical to the web (cbor.ts) and Android (WebAuthnNative.java)
+    /// values. See docs/aaguid/README.md.
     static let aaguid = Data([
         0xd2, 0x71, 0x7a, 0x32, 0x98, 0x51, 0x48, 0xa8,
         0x99, 0x61, 0xb2, 0x64, 0xc9, 0x7a, 0x41, 0x1a,

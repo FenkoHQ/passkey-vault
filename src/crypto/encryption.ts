@@ -186,13 +186,9 @@ export function secureWipe(data: Uint8Array | string): void {
     return;
   }
 
-  // Overwrite the array with random data, then zeros
-  for (let i = 0; i < data.length; i++) {
-    data[i] = Math.floor(Math.random() * 256);
-  }
-  for (let i = 0; i < data.length; i++) {
-    data[i] = 0;
-  }
+  // Overwrite the array with cryptographically-random data, then zeros.
+  crypto.getRandomValues(data);
+  data.fill(0);
 }
 
 /**

@@ -47,7 +47,12 @@ public final class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        WebView.setWebContentsDebuggingEnabled(true);
+        // Only expose the WebView to remote debugging (chrome://inspect) in
+        // debuggable builds. In a release build this would let anyone with ADB
+        // read the decrypted vault out of the page's JS/DOM.
+        boolean isDebuggable =
+                (getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        WebView.setWebContentsDebuggingEnabled(isDebuggable);
 
         webView = new WebView(this);
         webView.setLayoutParams(new ViewGroup.LayoutParams(
@@ -108,12 +113,28 @@ public final class MainActivity extends Activity {
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onPermissionRequest(PermissionRequest request) {
-                request.grant(request.getResources());
+                // Only grant the camera (needed for QR scanning); never blanket-grant
+                // every requested resource (which would also hand over the microphone).
+                java.util.List<String> allowed = new java.util.ArrayList<>();
+                for (String resource : request.getResources()) {
+                    if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) {
+                        allowed.add(resource);
+                    }
+                }
+                if (allowed.isEmpty()) {
+                    request.deny();
+                } else {
+                    request.grant(allowed.toArray(new String[0]));
+                }
             }
 
             @Override
             public boolean onConsoleMessage(ConsoleMessage message) {
-                android.util.Log.d("FenkoVaultWeb", message.message());
+                // Avoid mirroring web console output to logcat in release builds.
+                if ((getApplicationInfo().flags
+                        & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
+                    android.util.Log.d("FenkoVaultWeb", message.message());
+                }
                 return true;
             }
 

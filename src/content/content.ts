@@ -30,6 +30,7 @@ type PasskeySelectorResult =
 
 interface WindowWithVault extends Window {
   showPasskeySelector: (options: PasskeyOption[], rpId: string) => Promise<PasskeySelectorResult>;
+  showPasskeyCreateConfirm: (rpId: string, userName: string) => Promise<boolean>;
   showPasskeyCreatedNotification: (userName: string, rpId: string) => void;
   showPasskeyUsedNotification: (userName: string, rpId: string) => void;
   showErrorNotification: (title: string, message: string) => void;
@@ -37,6 +38,7 @@ interface WindowWithVault extends Window {
 
 const vaultWindow = window as unknown as WindowWithVault;
 const _showPasskeySelector = vaultWindow.showPasskeySelector;
+const _showPasskeyCreateConfirm = vaultWindow.showPasskeyCreateConfirm;
 const _showPasskeyCreatedNotification = vaultWindow.showPasskeyCreatedNotification;
 const _showPasskeyUsedNotification = vaultWindow.showPasskeyUsedNotification;
 const _showErrorNotification = vaultWindow.showErrorNotification;
@@ -112,6 +114,44 @@ class ContentScript {
   }
 
   /**
+   * Resolve the RP ID for a request against the *real* page origin.
+   *
+   * SECURITY: the page-supplied `payload.origin` and `publicKey.rpId` cannot be
+   * trusted — any script in the page can post a forged message with an
+   * arbitrary origin/rpId. The content script runs in the isolated world, so
+   * `window.location.origin` is the authoritative caller origin. We overwrite
+   * the payload origin with it and require the requested RP ID to be the
+   * effective domain or a registrable suffix of it (the same rule the native
+   * WebAuthn client enforces). Returns null to reject a cross-origin request.
+   *
+   * This does not change behaviour for legitimate pages: a real registration
+   * already used the true origin, so the stored rpId still resolves.
+   */
+  private resolveTrustedRpId(payload: Record<string, unknown>): string | null {
+    const trueOrigin = window.location.origin;
+    let trueHost: string;
+    try {
+      trueHost = new URL(trueOrigin).hostname;
+    } catch {
+      return null;
+    }
+    // Bind the origin that will be written into clientDataJSON to the real one.
+    payload.origin = trueOrigin;
+
+    const pk = payload.publicKey as Record<string, unknown> | undefined;
+    const pkRp = (pk?.rp as Record<string, string>) || {};
+    const requested = (pk?.rpId as string) || pkRp.id || trueHost;
+
+    const host = trueHost.toLowerCase();
+    const rpId = requested.toLowerCase();
+    if (host === rpId || host.endsWith('.' + rpId)) {
+      return requested;
+    }
+    logger.error('Rejected passkey request: rpId', requested, 'not valid for origin', trueOrigin);
+    return null;
+  }
+
+  /**
    * Handle messages from the page script
    */
   private async handlePageMessage(message: {
@@ -125,8 +165,11 @@ class ContentScript {
       // Create a new passkey
       try {
         const pk = payload.publicKey as Record<string, unknown> | undefined;
-        const pkRp = (pk?.rp as Record<string, string>) || {};
-        const rpId = (pk?.rpId as string) || pkRp.id || new URL(payload.origin as string).hostname;
+        const rpId = this.resolveTrustedRpId(payload);
+        if (rpId === null) {
+          this.postBlockedResponse('PASSKEY_CREATE_RESPONSE', requestId, t('pagePasskeyError'));
+          return;
+        }
         const rules = await this.getDomainRules();
 
         if (!this.shouldInterceptDomain(rpId, rules)) {
@@ -134,6 +177,29 @@ class ContentScript {
             'PASSKEY_CREATE_RESPONSE',
             requestId,
             'Domain not intercepted'
+          );
+          return;
+        }
+
+        // SECURITY: require an explicit user gesture before creating a passkey,
+        // so a page cannot silently register an attacker-triggered credential.
+        const createUser = (pk?.user as Record<string, string>) || {};
+        const createUserName = createUser.displayName || createUser.name || t('commonUnknownUser');
+        const confirmed = await _showPasskeyCreateConfirm(rpId, createUserName);
+        if (!confirmed) {
+          window.postMessage(
+            {
+              source: 'PASSKEY_VAULT_CONTENT',
+              type: 'PASSKEY_CREATE_RESPONSE',
+              requestId,
+              result: {
+                success: false,
+                error: t('commonCancel'),
+                name: 'NotAllowedError',
+                blockNativeFallback: true,
+              },
+            },
+            '*'
           );
           return;
         }
@@ -200,7 +266,11 @@ class ContentScript {
       try {
         // First, get list of available passkeys for this site
         const pk = payload.publicKey as Record<string, unknown> | undefined;
-        const rpId = (pk?.rpId as string) || new URL(payload.origin as string).hostname;
+        const rpId = this.resolveTrustedRpId(payload);
+        if (rpId === null) {
+          this.postBlockedResponse('PASSKEY_GET_RESPONSE', requestId, t('pagePasskeyError'));
+          return;
+        }
         const rules = await this.getDomainRules();
 
         if (!this.shouldInterceptDomain(rpId, rules)) {

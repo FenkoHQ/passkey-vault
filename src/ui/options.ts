@@ -260,7 +260,10 @@ async function loadSyncSettings(): Promise<void> {
   const notConfigured = document.getElementById('sync-not-configured')!;
   const configured = document.getElementById('sync-configured')!;
 
-  if (!response.enabled) {
+  // GET_SYNC_STATUS returns { success, status: { enabled, deviceId, ... } }.
+  const status = (response.status as SyncStatusResponse & { deviceId?: string }) || undefined;
+
+  if (!status?.enabled) {
     notConfigured.style.display = 'block';
     configured.style.display = 'none';
     const setupBtn = document.getElementById('sync-setup-btn');
@@ -276,30 +279,39 @@ async function loadSyncSettings(): Promise<void> {
   notConfigured.style.display = 'none';
   configured.style.display = 'block';
 
-  updateSyncStatus(response as SyncStatusResponse);
+  updateSyncStatus(status);
 
-  // Chain info
-  const chainInfo = await sendMessage('GET_SYNC_CHAIN_INFO');
-  if (chainInfo.success) {
+  // Chain info: GET_SYNC_CHAIN_INFO returns { success, chainInfo: { id, devices } }.
+  const chainResponse = await sendMessage('GET_SYNC_CHAIN_INFO');
+  const chainInfo = chainResponse.chainInfo as {
+    id?: string;
+    devices?: Array<{ id: string; name: string; isThisDevice?: boolean; lastSeen?: number }>;
+  } | null;
+  if (chainResponse.success && chainInfo) {
     const chainIdEl = document.getElementById('sync-chain-id')!;
-    chainIdEl.textContent = chainInfo.chainId ? chainInfo.chainId.substring(0, 16) + '...' : '--';
+    chainIdEl.textContent = chainInfo.id ? chainInfo.id.substring(0, 16) + '...' : '--';
 
+    const thisDevice = chainInfo.devices?.find((d) => d.isThisDevice);
     const deviceNameEl = document.getElementById('sync-device-name')!;
-    deviceNameEl.textContent = chainInfo.deviceName || '--';
+    deviceNameEl.textContent = thisDevice?.name || '--';
 
     if (chainInfo.devices) {
-      renderSyncDevices(chainInfo.devices, chainInfo.deviceId);
+      renderSyncDevices(chainInfo.devices, status.deviceId || '');
     }
   }
 
   // Relays
   loadRelayList();
 
-  // Sync now
-  document.getElementById('sync-now-btn')!.addEventListener('click', async () => {
-    await sendMessage('TRIGGER_SYNC');
-    setTimeout(() => loadSyncSettings(), 1000);
-  });
+  // Sync now — guard against re-adding the listener each time this reloads.
+  const syncNowBtn = document.getElementById('sync-now-btn')!;
+  if (!syncNowBtn.dataset.wired) {
+    syncNowBtn.dataset.wired = '1';
+    syncNowBtn.addEventListener('click', async () => {
+      await sendMessage('TRIGGER_SYNC');
+      setTimeout(() => loadSyncSettings(), 1000);
+    });
+  }
 }
 
 function updateSyncStatus(status: SyncStatusResponse): void {
@@ -357,10 +369,14 @@ async function loadRelayList(): Promise<void> {
   const addBtn = document.getElementById('add-relay-btn')!;
   const relayInput = document.getElementById('relay-input') as HTMLInputElement;
 
-  addBtn.addEventListener('click', () => addRelay(relayInput));
-  relayInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') addRelay(relayInput);
-  });
+  // Guard against re-adding listeners each time the relay list reloads.
+  if (!addBtn.dataset.wired) {
+    addBtn.dataset.wired = '1';
+    addBtn.addEventListener('click', () => addRelay(relayInput));
+    relayInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') addRelay(relayInput);
+    });
+  }
 }
 
 function renderRelayList(relays: string[], connectedRelays: Set<string>): void {
@@ -713,8 +729,16 @@ async function importAllData(e: Event): Promise<void> {
   const text = await file.text();
   try {
     const data = JSON.parse(text);
+    // Validate BEFORE wiping anything — a parseable but non-object file (or a
+    // failed set) must not leave the vault cleared with nothing restored.
+    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+      alert(t('optionsInvalidJson'));
+      input.value = '';
+      return;
+    }
     await chrome.storage.local.clear();
     await chrome.storage.local.set(data);
+    await chrome.runtime.sendMessage({ type: 'RECONCILE_STORAGE' });
     alert(t('optionsImportSuccess'));
   } catch {
     alert(t('optionsInvalidJson'));
@@ -754,7 +778,7 @@ function setText(id: string, text: string): void {
 function escapeHtml(str: string): string {
   const div = document.createElement('div');
   div.textContent = str;
-  return div.innerHTML;
+  return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function timeAgo(timestamp: number): string {

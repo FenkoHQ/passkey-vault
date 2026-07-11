@@ -413,7 +413,7 @@ function createDeviceCard(device: SyncDevice): string {
         </div>
         ${
           !isThisDevice
-            ? `<button class="device-remove-btn" data-device-id="${device.id}" title="${escapeHtml(t('syncRemoveDevice'))}">
+            ? `<button class="device-remove-btn" data-device-id="${escapeHtml(device.id)}" title="${escapeHtml(t('syncRemoveDevice'))}">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="18" y1="6" x2="6" y2="18"></line>
                 <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -479,7 +479,7 @@ function formatLastSeen(timestamp: number): string {
 function escapeHtml(text: string): string {
   const div = document.createElement('div');
   div.textContent = text;
-  return div.innerHTML;
+  return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 async function loadDebugInfo(): Promise<void> {

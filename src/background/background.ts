@@ -16,7 +16,6 @@ import {
   getOrCreatePrfKey,
   computePrfResults,
   buildClientExtensionResults,
-  encodePrfExtension,
 } from './prf';
 import {
   generateTotp as generateTotpCode,
@@ -155,6 +154,44 @@ class BackgroundService {
     }
   }
 
+  /**
+   * Copy the raw passkey/TOTP/sync state into the (just-unlocked) encrypted
+   * store. Raw is written by every mutation regardless of lock state, so it is
+   * the authoritative freshest copy; the encrypted store can be stale after
+   * changes made while locked. Called on setup and unlock to prevent those
+   * changes from being lost when a later save reads back the encrypted copy.
+   */
+  private async reconcileSecureStorageFromRaw(): Promise<void> {
+    if (!secureStorage.isStorageUnlocked()) return;
+
+    const configResult = await chrome.storage.local.get(SYNC_CONFIG_KEY);
+    const config: SyncConfig = configResult[SYNC_CONFIG_KEY];
+    if (config?.seedHash) {
+      await secureStorage.storeSyncConfig({
+        chainId: config.chainId || '',
+        deviceId: config.deviceId || '',
+        deviceName: config.deviceName || '',
+        seedHash: config.seedHash,
+        syncSalt: config.syncSalt || null,
+        enabled: config.enabled || false,
+      });
+    }
+
+    const passkeysResult = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
+    const passkeys: StoredPasskey[] = passkeysResult[PASSKEY_STORAGE_KEY] || [];
+    await secureStorage.storePasskeys(passkeys as unknown as Record<string, unknown>[]);
+
+    const totpResult = await chrome.storage.local.get('totp_entries');
+    const totpEntries: StoredTotpEntry[] = totpResult['totp_entries'] || [];
+    await secureStorage.storeTotpEntries(totpEntries as unknown as Record<string, unknown>[]);
+
+    if (passkeys.length > 0 || totpEntries.length > 0) {
+      logger.info(
+        `Reconciled secure storage from raw (${passkeys.length} passkeys, ${totpEntries.length} TOTP)`
+      );
+    }
+  }
+
   private async initialize(): Promise<void> {
     try {
       await logger.init();
@@ -285,6 +322,8 @@ class BackgroundService {
         return this.handleLockSecureStorage();
       case 'IS_SECURE_STORAGE_UNLOCKED':
         return this.handleIsSecureStorageUnlocked();
+      case 'RECONCILE_STORAGE':
+        return this.handleReconcileStorage();
       case 'CHANGE_MASTER_PASSWORD':
         return this.handleChangeMasterPassword(
           payload as { currentPassword: string; newPassword: string }
@@ -378,7 +417,9 @@ class BackgroundService {
       const prfResults = prfEvalInput
         ? await computePrfResults(prfKeyBytes.buffer, prfEvalInput)
         : null;
-      const extensionsData = prfResults ? encodePrfExtension(prfResults) : null;
+      // SECURITY: the PRF/hmac-secret output is a client-only secret. It is
+      // returned to the page via clientExtensionResults (below), but must NOT
+      // be embedded in authenticatorData, which is forwarded to the RP server.
       const clientExtensionResults = buildClientExtensionResults(prfResults);
 
       const clientData = { type: 'webauthn.create', challenge, origin };
@@ -390,7 +431,7 @@ class BackgroundService {
         publicKeyRaw,
         true,
         0,
-        extensionsData
+        null
       );
 
       const attestationObject = createAttestationObjectNone(authenticatorData);
@@ -532,7 +573,8 @@ class BackgroundService {
       );
       const prfKeyBuffer = await getOrCreatePrfKey(passkey);
       const prfResults = prfEvalInput ? await computePrfResults(prfKeyBuffer, prfEvalInput) : null;
-      const extensionsData = prfResults ? encodePrfExtension(prfResults) : null;
+      // SECURITY: keep the PRF secret out of the RP-bound authenticatorData;
+      // it is returned only via clientExtensionResults.
       const clientExtensionResults = buildClientExtensionResults(prfResults);
 
       passkey.counter = (passkey.counter || 0) + 1;
@@ -542,7 +584,7 @@ class BackgroundService {
         null,
         false,
         passkey.counter,
-        extensionsData
+        null
       );
 
       const clientDataHash = await crypto.subtle.digest('SHA-256', clientDataJSONBytes.buffer);
@@ -1125,8 +1167,9 @@ class BackgroundService {
   }
 
   private logSync(action: string, details?: Record<string, unknown>): void {
-    const timestamp = new Date().toISOString();
-    console.log(`[SYNC ${timestamp}] ${action}`, details || '');
+    // Gate behind the debug toggle so sync activity (chainId, credential IDs,
+    // device names) is not streamed to the console when debug logging is off.
+    logger.debug(`[SYNC] ${action}`, details || '');
   }
 
   private async logWebAuthn(
@@ -1268,21 +1311,7 @@ class BackgroundService {
         logger.info('Migrated sync config to secure storage');
       }
 
-      const passkeysResult = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
-      const passkeys: StoredPasskey[] = passkeysResult[PASSKEY_STORAGE_KEY] || [];
-      for (const passkey of passkeys) {
-        await secureStorage.upsertPasskey(passkey as unknown as Record<string, unknown>);
-      }
-      if (passkeys.length > 0) {
-        logger.info(`Migrated ${passkeys.length} passkeys to secure storage`);
-      }
-
-      const totpResult = await chrome.storage.local.get('totp_entries');
-      const totpEntries: StoredTotpEntry[] = totpResult['totp_entries'] || [];
-      if (totpEntries.length > 0) {
-        await secureStorage.storeTotpEntries(totpEntries as unknown as Record<string, unknown>[]);
-        logger.info(`Migrated ${totpEntries.length} TOTP entries to secure storage`);
-      }
+      await this.reconcileSecureStorageFromRaw();
 
       return { success: true, message: 'Master password setup complete' };
     } catch (error: unknown) {
@@ -1304,10 +1333,34 @@ class BackgroundService {
         return { success: false, error: 'Invalid password or storage not initialized' };
       }
 
+      // Passkeys/TOTP created, synced, or deleted while the vault was locked are
+      // written only to raw storage (the encrypted copy needs the in-memory key).
+      // Raw is therefore the freshest complete copy — reconcile the encrypted
+      // store from it on unlock so those changes are not lost on the next save.
+      await this.reconcileSecureStorageFromRaw();
+
       return { success: true, message: 'Secure storage unlocked' };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       console.error('Failed to unlock secure storage:', error);
+      return { success: false, error: message };
+    }
+  }
+
+  /**
+   * Push the freshest raw storage into the encrypted store. UI pages (popup
+   * delete, import) run in a separate context without the in-memory key, so
+   * they write only raw; they call this afterwards so the encrypted copy does
+   * not go stale and clobber their change on the next background save. No-op
+   * when locked or when no master password is configured.
+   */
+  private async handleReconcileStorage(): Promise<unknown> {
+    try {
+      await this.reconcileSecureStorageFromRaw();
+      return { success: true };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Failed to reconcile storage:', error);
       return { success: false, error: message };
     }
   }

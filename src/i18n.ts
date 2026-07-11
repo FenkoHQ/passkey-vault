@@ -434,6 +434,9 @@ const en: TranslationMap = {
   pageNoPasskeysSite: 'No passkeys found for this site',
   pageContinue: 'Continue',
   pageUseOtherPasskey: 'Use other passkey',
+  pageCreatePasskeyTitle: 'Create a Passkey?',
+  pageCreatePasskeyMsg: 'Create a passkey for {user} on {rp}?',
+  pageCreate: 'Create',
 };
 
 const ru: TranslationMap = {

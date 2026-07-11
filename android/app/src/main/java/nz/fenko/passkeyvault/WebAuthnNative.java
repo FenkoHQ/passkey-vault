@@ -28,6 +28,9 @@ final class WebAuthnNative {
     static final String KEY_SUBTYPE = "androidx.credentials.BUNDLE_KEY_SUBTYPE";
 
     private static final SecureRandom RANDOM = new SecureRandom();
+    // Fenko Vault AAGUID d2717a32-9851-48a8-9961-b264c97a411a — must stay
+    // byte-identical to the web (cbor.ts) and iOS (WebAuthn.swift) values.
+    // See docs/aaguid/README.md.
     private static final byte[] AAGUID = new byte[] {
         (byte) 0xd2, 0x71, 0x7a, 0x32,
         (byte) 0x98, 0x51, 0x48, (byte) 0xa8,

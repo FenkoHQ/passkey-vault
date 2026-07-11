@@ -22,7 +22,12 @@ struct WebVaultView: UIViewRepresentable {
         config.websiteDataStore = .default()   // persistent localStorage across launches
 
         let webView = WKWebView(frame: .zero, configuration: config)
+        // Only allow Web Inspector attachment in debug builds. In a release
+        // build this would let a paired Mac read the decrypted vault (including
+        // private keys) out of the page's JS context.
+        #if DEBUG
         webView.isInspectable = true
+        #endif
         if let url = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "web") {
             webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
         }

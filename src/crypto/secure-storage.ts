@@ -366,43 +366,45 @@ export class SecureStorage {
     }
 
     try {
-      // Get all existing data
+      // Get all existing data (decrypted with the current key)
       const syncConfig = await this.getSyncConfig();
       const passkeys = await this.getPasskeys();
       const totpEntries = await this.getTotpEntries();
 
-      // Generate new salt
+      // Generate new salt and key
       const newSalt = randomBytes(ENCRYPTION_CONFIG.saltLength);
       const newKey = await deriveKeyFromPassword(newPassword, newSalt);
 
-      // Re-encrypt everything with new key
-      await chrome.storage.local.set({
+      // Re-encrypt everything with the new key IN MEMORY first, then commit
+      // salt, check value, and all blobs in a single atomic set(). Writing the
+      // salt separately before the re-encrypted data risks a crash leaving the
+      // stored salt out of sync with the blobs, which would lock the user out
+      // of both the old and new PIN.
+      const batch: Record<string, unknown> = {
         [STORAGE_KEYS.ENCRYPTION_SALT]: uint8ArrayToBase64(newSalt),
-      });
+        [STORAGE_KEYS.MASTER_KEY_CHECK]: encryptData('passkey-vault-check', newKey),
+      };
+      if (syncConfig) {
+        batch[STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG] = encryptData(JSON.stringify(syncConfig), newKey);
+      }
+      if (passkeys.length > 0) {
+        batch[STORAGE_KEYS.ENCRYPTED_PASSKEYS] = encryptData(JSON.stringify(passkeys), newKey);
+      }
+      if (totpEntries.length > 0) {
+        batch[STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES] = encryptData(
+          JSON.stringify(totpEntries),
+          newKey
+        );
+      }
 
-      // Update internal state
+      await chrome.storage.local.set(batch);
+
+      // Only after the atomic commit succeeds, swap the in-memory key.
       if (this.encryptionKey) {
         secureWipe(this.encryptionKey);
       }
       this.encryptionKey = newKey;
       this.salt = newSalt;
-
-      // Store new check value
-      const checkData = encryptData('passkey-vault-check', this.encryptionKey);
-      await chrome.storage.local.set({
-        [STORAGE_KEYS.MASTER_KEY_CHECK]: checkData,
-      });
-
-      // Re-encrypt and store data
-      if (syncConfig) {
-        await this.storeSyncConfig(syncConfig);
-      }
-      if (passkeys.length > 0) {
-        await this.storePasskeys(passkeys);
-      }
-      if (totpEntries.length > 0) {
-        await this.storeTotpEntries(totpEntries);
-      }
 
       this.resetAutoLock();
       return true;

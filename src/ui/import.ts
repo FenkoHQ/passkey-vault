@@ -22,12 +22,19 @@ import { initTheme } from '../theme';
     [key: string]: unknown;
   }
 
+  interface ImportTotpEntry {
+    id: string;
+    [key: string]: unknown;
+  }
+
   interface PlaintextBackup {
     passkeys?: ImportPasskey[];
+    totpEntries?: ImportTotpEntry[];
     [key: string]: unknown;
   }
 
   const IMPORT_PASSKEY_STORAGE_KEY = 'passkeys';
+  const IMPORT_TOTP_STORAGE_KEY = 'totp_entries';
 
   // State
   let parsedData: PlaintextBackup | null = null;
@@ -303,12 +310,33 @@ import { initTheme } from '../theme';
       // Save
       await chrome.storage.local.set({ [IMPORT_PASSKEY_STORAGE_KEY]: mergedPasskeys });
 
+      // A full backup can also contain TOTP entries — merge the new ones in by
+      // id so they are not silently dropped when restoring a full backup.
+      const backupTotp = Array.isArray(parsedData?.totpEntries) ? parsedData!.totpEntries : [];
+      let importedTotp = 0;
+      if (backupTotp.length > 0) {
+        const totpResult = await chrome.storage.local.get(IMPORT_TOTP_STORAGE_KEY);
+        const existingTotp = (totpResult[IMPORT_TOTP_STORAGE_KEY] || []) as ImportTotpEntry[];
+        const totpIds = new Set(existingTotp.map((e) => e.id));
+        const newTotp = backupTotp.filter((e) => e.id && !totpIds.has(e.id));
+        if (newTotp.length > 0) {
+          await chrome.storage.local.set({
+            [IMPORT_TOTP_STORAGE_KEY]: [...existingTotp, ...newTotp],
+          });
+          importedTotp = newTotp.length;
+        }
+      }
+
+      // Keep the encrypted store in sync so imported items survive the next
+      // background save (which would otherwise read back the stale copy).
+      await chrome.runtime.sendMessage({ type: 'RECONCILE_STORAGE' });
+
       // Show success
       showStatus(
         t('importSuccess', {
           count: newPasskeys.length,
           plural: newPasskeys.length !== 1 ? 's' : '',
-        }),
+        }) + (importedTotp > 0 ? ` (+${importedTotp} TOTP)` : ''),
         'success'
       );
 
@@ -343,6 +371,6 @@ import { initTheme } from '../theme';
   function importEscapeHtml(text: string): string {
     const div = document.createElement('div');
     div.textContent = text || '';
-    return div.innerHTML;
+    return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 })();

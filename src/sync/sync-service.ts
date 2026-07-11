@@ -1,6 +1,8 @@
 import * as secp256k1 from '@noble/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
+import { secureStorage } from '../crypto/secure-storage';
+import { logger } from '../utils/logger';
 
 const RECONNECT_DELAY = 5000;
 const MAX_RECONNECT_DELAY = 60000;
@@ -198,12 +200,17 @@ export class SyncService {
       this.debugLogs = this.debugLogs.slice(-MAX_DEBUG_LOGS);
     }
     const prefix = `[SyncService:${category}]`;
+    // Always surface errors; gate warn/info behind the debug toggle. Print the
+    // sanitized copy (entry.data), never the raw data, so secrets/metadata are
+    // not leaked to the console.
     if (level === 'error') {
-      console.error(prefix, message, data || '');
-    } else if (level === 'warn') {
-      console.warn(prefix, message, data || '');
-    } else {
-      console.log(prefix, message, data || '');
+      console.error(prefix, message, entry.data || '');
+    } else if (logger.isDebugEnabled()) {
+      if (level === 'warn') {
+        console.warn(prefix, message, entry.data || '');
+      } else {
+        console.log(prefix, message, entry.data || '');
+      }
     }
   }
 
@@ -304,7 +311,6 @@ export class SyncService {
     this.log('info', 'init', 'Initialized for chain', { chainId: chainId.substring(0, 8) + '...' });
   }
 
-  // SECURITY FIX: Use random or chain-derived salt instead of static strings
   private async deriveKeys(seedHash: string): Promise<void> {
     const encoder = new TextEncoder();
     const keyMaterial = await crypto.subtle.importKey(
@@ -315,15 +321,15 @@ export class SyncService {
       ['deriveKey', 'deriveBits']
     );
 
-    // SECURITY FIX: Use chain-derived salt if no random salt provided
-    // This ensures different chains get different keys even with static fallback
-    const encryptionSalt = this.syncSalt
-      ? encoder.encode(this.syncSalt)
-      : encoder.encode(`pkvault-sync-${this.chainId}-enc`);
-
-    const nostrSalt = this.syncSalt
-      ? encoder.encode(this.syncSalt + '-nostr')
-      : encoder.encode(`pkvault-sync-${this.chainId}-nostr`);
+    // The PBKDF2 salt MUST be deterministic from the shared chain so that every
+    // device holding the mnemonic derives the SAME encryption/signing keys.
+    // A previous "random salt per device" attempt broke this: the salt was
+    // generated independently on each device and never transmitted, so peers
+    // derived different keys and could never decrypt each other's events.
+    // Different chains still get different keys because chainId derives from the
+    // seed. (Per-chain, not per-device — that is the whole point of sync.)
+    const encryptionSalt = encoder.encode(`pkvault-sync-${this.chainId}-enc`);
+    const nostrSalt = encoder.encode(`pkvault-sync-${this.chainId}-nostr`);
 
     // Derive AES encryption key for message encryption
     this.encryptionKey = await crypto.subtle.deriveKey(
@@ -390,7 +396,23 @@ export class SyncService {
     this.log('info', 'ws', 'Connecting to all relays', { count: urls.length, relays: urls });
 
     return new Promise((resolve) => {
-      this.firstConnectResolve = resolve;
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        this.firstConnectResolve = null;
+        resolve();
+      };
+      this.firstConnectResolve = settle;
+      // Do not hang forever when no relay is reachable (offline/firewalled).
+      // The config is already persisted and the connections keep retrying in
+      // the background, so resolve after a grace period and connect later.
+      setTimeout(() => {
+        if (!settled) {
+          this.log('warn', 'ws', 'No relay connected yet; continuing in background');
+          settle();
+        }
+      }, 12000);
       for (const conn of this.relayConnections) {
         this.connectRelay(conn);
       }
@@ -1173,21 +1195,35 @@ export class SyncService {
           rpId: remote.rpId,
         });
       } else if (remote.createdAt > local.createdAt) {
-        // Remote is newer - update with source tracking
+        // Remote is newer - update with source tracking.
         remote.syncSource = sourceDeviceId;
         remote.syncTimestamp = Date.now();
+        // Never let the signature counter regress: devices increment their own
+        // counters independently, and a backwards counter looks like a cloned
+        // authenticator to RPs doing clone detection.
+        remote.counter = Math.max(remote.counter || 0, local.counter || 0);
         localMap.set(remote.id, remote);
         updatedCount++;
         this.log('info', 'merge', 'Updated passkey (newer)', {
           id: remote.id?.substring(0, 8),
           rpId: remote.rpId,
         });
+      } else if ((remote.counter || 0) > (local.counter || 0)) {
+        // Same/older record but a higher counter — advance the counter only,
+        // so assertions made on another device do not cause a local regression.
+        local.counter = remote.counter || 0;
+        updatedCount++;
       }
     }
 
     if (addedCount > 0 || updatedCount > 0) {
       const merged = Array.from(localMap.values());
       await chrome.storage.local.set({ [PASSKEY_STORAGE_KEY]: merged });
+      // Mirror into the encrypted store when unlocked, otherwise a later save
+      // that reads the (stale) encrypted copy would drop the merged passkeys.
+      if (secureStorage.isStorageUnlocked()) {
+        await secureStorage.storePasskeys(merged as unknown as Record<string, unknown>[]);
+      }
       this.log('info', 'merge', 'Merge complete', {
         added: addedCount,
         updated: updatedCount,
@@ -1223,6 +1259,9 @@ export class SyncService {
     if (added > 0 || updated > 0) {
       const merged = Array.from(localMap.values());
       await chrome.storage.local.set({ [TOTP_STORAGE_KEY]: merged });
+      if (secureStorage.isStorageUnlocked()) {
+        await secureStorage.storeTotpEntries(merged as unknown as Record<string, unknown>[]);
+      }
       this.log('info', 'merge', 'TOTP merge complete', {
         added,
         updated,

@@ -681,6 +681,62 @@ function showPasskeySelector(
 }
 
 /**
+ * Ask the user to confirm creating a new passkey for a site.
+ *
+ * SECURITY: passkey registration must not be silent — without an explicit
+ * gesture, a page can drive a logged-in "add a passkey" flow and register an
+ * attacker-triggered credential. Resolves true only if the user clicks Create.
+ */
+function showPasskeyCreateConfirm(rpId: string, userName: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    injectStyles();
+
+    const existingCard = document.querySelector('.pkv-notification-container');
+    if (existingCard) {
+      existingCard.remove();
+    }
+
+    const container = document.createElement('div');
+    container.className = 'pkv-notification-container';
+    container.innerHTML = `
+       <div class="pkv-card">
+         <div class="pkv-card-header">
+           <div class="pkv-card-header-content">
+              <div>
+                <span class="pkv-card-title">${escapeHtml(t('pageCreatePasskeyTitle'))}</span>
+                <div class="pkv-card-subtitle">${escapeHtml(t('pageCreatePasskeyMsg', { user: userName, rp: rpId }))}</div>
+              </div>
+           </div>
+         </div>
+         <div class="pkv-card-footer">
+           <button class="pkv-btn pkv-btn-secondary" id="pkv-cancel">${escapeHtml(t('commonCancel'))}</button>
+           <button class="pkv-btn pkv-btn-primary" id="pkv-create">${escapeHtml(t('pageCreate'))}</button>
+         </div>
+       </div>
+     `;
+
+    document.body.appendChild(container);
+
+    const cleanup = (result: boolean) => {
+      document.removeEventListener('keydown', handleEscape);
+      container.style.animation = 'pkv-slideOutRight 0.2s ease-in forwards';
+      setTimeout(() => {
+        container.remove();
+        resolve(result);
+      }, 200);
+    };
+
+    container.querySelector('#pkv-cancel')?.addEventListener('click', () => cleanup(false));
+    container.querySelector('#pkv-create')?.addEventListener('click', () => cleanup(true));
+
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cleanup(false);
+    };
+    document.addEventListener('keydown', handleEscape);
+  });
+}
+
+/**
  * Show passkey creation success notification
  */
 function showPasskeyCreatedNotification(userName: string, rpId: string): void {
@@ -711,11 +767,14 @@ function escapeHtml(str: string): string {
   if (!str) return '';
   const div = document.createElement('div');
   div.textContent = str;
-  return div.innerHTML;
+  // textContent->innerHTML does not encode quotes; escape them so values placed
+  // inside quoted HTML attributes cannot break out of the attribute context.
+  return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 const w = window as unknown as Record<string, unknown>;
 w.showPasskeySelector = showPasskeySelector;
+w.showPasskeyCreateConfirm = showPasskeyCreateConfirm;
 w.showPasskeyCreatedNotification = showPasskeyCreatedNotification;
 w.showPasskeyUsedNotification = showPasskeyUsedNotification;
 w.showErrorNotification = showErrorNotification;

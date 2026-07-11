@@ -797,6 +797,9 @@ import { initTheme } from '../theme';
 
       if (filtered.length < passkeys.length) {
         await chrome.storage.local.set({ [POPUP_PASSKEY_STORAGE_KEY]: filtered });
+        // Keep the encrypted store in sync so the deletion is not undone when
+        // the background next reads back its (otherwise stale) encrypted copy.
+        await chrome.runtime.sendMessage({ type: 'RECONCILE_STORAGE' });
 
         showNotification(t('popupPasskeyDeleted'));
 
@@ -995,7 +998,7 @@ import { initTheme } from '../theme';
   function popupEscapeHtml(text: string): string {
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   // ==================== TOTP ====================
