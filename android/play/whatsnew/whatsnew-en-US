@@ -1,1 +1,1 @@
-First Play Store release of Fenko Vault for Android: a passkey provider and 2FA authenticator that keeps everything on your device, with optional end-to-end encrypted sync and encrypted backups.
+Security hardening: fixes a cross-origin passkey issue, adds a confirmation before a passkey is created, keeps the PRF secret on-device, and resolves sync/storage edge cases so nothing is lost. You can now jump to the Chrome, Firefox, and Android listings straight from the sync screen to set up your other devices.

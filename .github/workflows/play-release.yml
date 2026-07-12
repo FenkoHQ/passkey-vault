@@ -12,6 +12,11 @@ name: Publish to Google Play
 # Until then the job is skipped even if manually dispatched, so nothing can publish.
 #
 # This workflow only ever runs on manual dispatch — it never fires on a tag/push.
+#
+# NOTE: Tagged releases now publish to Play automatically via the `publish-play`
+# job in release.yml (production track). Keep this standalone workflow only for
+# ad-hoc pushes to a non-production track (internal/beta) or a specific
+# versionCode. It stays disabled (if:false) so it can't publish by accident.
 
 on:
   workflow_dispatch:
