@@ -368,6 +368,10 @@ const en: TranslationMap = {
   syncLastSync: 'Last Sync',
   syncDevicesInChain: 'Devices in Sync Chain',
   syncAddDevice: 'Add Another Device',
+  syncGetOtherDevices: 'Install Fenko Vault on another device, then join this chain from there:',
+  syncStoreChrome: 'Chrome, Edge & Brave',
+  syncStoreFirefox: 'Firefox',
+  syncStoreAndroid: 'Android',
   syncLeavingTitle: 'Leaving this sync chain',
   syncLeavingDesc:
     'will remove this device from the chain. Make sure you have access to at least one other device before leaving.',
