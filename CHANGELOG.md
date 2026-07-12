@@ -4,6 +4,33 @@ All notable changes to Passkey Vault are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [0.9.3] - 2026-07-13
+
+A security hardening pass and an easier way to get the vault onto your other
+devices.
+
+### Security
+
+- **Cross-origin passkey forgery fixed.** The content script now binds the
+  request origin to `window.location.origin` and checks the `rpId` against the
+  registrable suffix, closing an account-takeover path.
+- **No more silent passkey creation.** Creating a passkey now shows a confirm
+  dialog.
+- **PRF secret is no longer exposed.** It was being embedded in the
+  server-visible `authenticatorData`; it now stays local.
+- **XSS hardening.** Quote-safe `escapeHtml` and an escaped `device.id`.
+- **Storage data-loss fixes.** Sync merges, popup deletes, and imports now keep
+  the encrypted store consistent (reconcile-on-unlock), imports restore TOTP and
+  validate before clearing, and changing the master PIN is now atomic.
+- **Cross-device sync now derives a shared key.** The PBKDF2 salt is derived
+  deterministically from the chain ID instead of being random per device.
+
+### Added
+
+- **Get the vault on your other devices.** The sync Devices tab now links to the
+  Chrome, Firefox, and Android listings so you can install and join the chain
+  from another device.
+
 ## [0.9.2] - 2026-06-30
 
 A Firefox fix that makes the extension actually work there, and a clearer store
