@@ -17,6 +17,13 @@ on:
 #   ASC_ISSUER_ID          - API key issuer ID
 #   ASC_KEY_P8_BASE64      - base64 of the AuthKey_XXXX.p8 file
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Archive and upload to TestFlight
@@ -24,7 +31,9 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_16.app
@@ -33,7 +42,7 @@ jobs:
         run: brew install xcodegen
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: '24'
 
@@ -44,11 +53,14 @@ jobs:
 
       - name: Resolve version
         id: ver
+        env:
+          # Via env, not inline, so the dispatch input can't inject shell.
+          VERSION_INPUT: ${{ github.event.inputs.version }}
         run: |
           if [ "${GITHUB_REF}" != "${GITHUB_REF#refs/tags/ios-v}" ]; then
             echo "name=${GITHUB_REF#refs/tags/ios-v}" >> "$GITHUB_OUTPUT"
           else
-            echo "name=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "name=${VERSION_INPUT}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Generate Xcode project
