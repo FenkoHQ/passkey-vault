@@ -217,47 +217,36 @@ jobs:
     name: Publish to Google Play
     needs: build
     runs-on: ubuntu-latest
+    # Keyless: no service-account key exists. GitHub's OIDC token is federated
+    # into GCP (Workload Identity) and impersonates the Play publisher SA for a
+    # short-lived token. Gated on the WIF provider being configured as a repo
+    # variable, so the job is a clean skip until that's set — the rest of the
+    # release (Chrome, Firefox, GitHub Release) is never affected.
+    if: ${{ vars.PLAY_WIF_PROVIDER != '' }}
+    permissions:
+      contents: read
+      id-token: write # required to mint the OIDC token for WIF
 
     steps:
-      # Secrets can't be used in a job-level `if:`, so gate every step on this
-      # check. If PLAY_SERVICE_ACCOUNT_JSON isn't set the job is a clean no-op —
-      # the rest of the release (Chrome, Firefox, GitHub Release) is unaffected.
-      - name: Check for Play credentials
-        id: check
-        env:
-          SA_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-        run: |
-          if [ -n "$SA_JSON" ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::PLAY_SERVICE_ACCOUNT_JSON not set — skipping Google Play publish."
-          fi
-
       - name: Checkout code
-        if: steps.check.outputs.present == 'true'
         uses: actions/checkout@v4
 
       - name: Setup Node.js
-        if: steps.check.outputs.present == 'true'
         uses: actions/setup-node@v6
         with:
           node-version: '24'
           cache: 'npm'
 
       - name: Install dependencies
-        if: steps.check.outputs.present == 'true'
         run: npm ci
 
       - name: Install Android build tools
-        if: steps.check.outputs.present == 'true'
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             "build-tools;35.0.0" "platforms;android-35" > /dev/null
 
       - name: Restore release keystore
-        if: steps.check.outputs.present == 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
@@ -266,7 +255,6 @@ jobs:
           printf '%s' "$KEYSTORE_BASE64" | base64 -d > android/signing/passkey-vault.jks
 
       - name: Compute versionCode
-        if: steps.check.outputs.present == 'true'
         id: vc
         run: |
           # Monotonic and always > the last manual upload (902).
@@ -275,7 +263,6 @@ jobs:
           echo "Using versionCode $VC"
 
       - name: Build signed AAB
-        if: steps.check.outputs.present == 'true'
         env:
           # VERSION_NAME defaults to package.json, which the build job already
           # verified equals the tag.
@@ -284,26 +271,49 @@ jobs:
         run: ./android/build-aab.sh
 
       - name: Resolve AAB path
-        if: steps.check.outputs.present == 'true'
         id: aab
         run: echo "path=$(ls android/dist/fenko-vault-*.aab | head -1)" >> "$GITHUB_OUTPUT"
 
-      - name: Write service account key
-        if: steps.check.outputs.present == 'true'
-        env:
-          SA_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
-        run: printf '%s' "$SA_JSON" > "$RUNNER_TEMP/play-sa.json"
-
-      - name: Upload to Google Play (production)
-        if: steps.check.outputs.present == 'true'
-        uses: r0adkll/upload-google-play@v1
+      - name: Authenticate to Google Cloud (keyless, WIF)
+        id: auth
+        uses: google-github-actions/auth@v2
         with:
-          serviceAccountJson: ${{ runner.temp }}/play-sa.json
-          packageName: nz.fenko.passkeyvault
-          releaseFiles: ${{ steps.aab.outputs.path }}
-          track: production
-          status: completed
-          whatsNewDirectory: android/play/whatsnew
+          workload_identity_provider: ${{ vars.PLAY_WIF_PROVIDER }}
+          service_account: ${{ vars.PLAY_SA_EMAIL }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/androidpublisher
+
+      - name: Upload AAB to Google Play (production)
+        env:
+          TOKEN: ${{ steps.auth.outputs.access_token }}
+          PKG: nz.fenko.passkeyvault
+          AAB: ${{ steps.aab.outputs.path }}
+        run: |
+          set -euo pipefail
+          API="https://androidpublisher.googleapis.com/androidpublisher/v3/applications/$PKG"
+          UPLOAD="https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/$PKG"
+          auth=(-H "Authorization: Bearer $TOKEN")
+
+          echo "→ Creating edit"
+          EDIT_ID=$(curl -sf -X POST "$API/edits" "${auth[@]}" -H "Content-Length: 0" | jq -r .id)
+          echo "  editId=$EDIT_ID"
+
+          echo "→ Uploading $AAB"
+          VC=$(curl -sf -X POST "$UPLOAD/edits/$EDIT_ID/bundles?uploadType=media" "${auth[@]}" \
+            -H "Content-Type: application/octet-stream" --data-binary @"$AAB" | jq -r .versionCode)
+          echo "  uploaded versionCode=$VC"
+
+          echo "→ Assigning versionCode $VC to production (full rollout)"
+          PAYLOAD=$(jq -n --arg vc "$VC" --rawfile notes android/play/whatsnew/whatsnew-en-US '
+            { track: "production",
+              releases: [ { versionCodes: [$vc], status: "completed",
+                            releaseNotes: [ { language: "en-US", text: $notes } ] } ] }')
+          curl -sf -X PUT "$API/edits/$EDIT_ID/tracks/production" "${auth[@]}" \
+            -H "Content-Type: application/json" -d "$PAYLOAD" | jq -r '.releases[0]'
+
+          echo "→ Committing edit"
+          curl -sf -X POST "$API/edits/$EDIT_ID:commit" "${auth[@]}" -H "Content-Length: 0" | jq -r '.id'
+          echo "✅ Published versionCode $VC to production."
 
   release:
     name: Create Release
