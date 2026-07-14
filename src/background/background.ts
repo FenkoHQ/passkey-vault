@@ -11,6 +11,7 @@ import { randomBytes } from '@noble/hashes/utils';
 import { logger } from '../utils/logger';
 import { arrayBufferToBase64, arrayBufferToBase64URL, base64urlToBase64 } from '../utils/base64';
 import { createAuthenticatorData, createAttestationObjectNone, convertP1363ToDER } from './cbor';
+import { verifyRelatedOrigin } from './related-origins';
 import {
   selectPrfEval,
   getOrCreatePrfKey,
@@ -276,6 +277,8 @@ class BackgroundService {
         return this.handleListPasskeys();
       case 'LIST_PASSKEYS_FOR_RP':
         return this.handleListPasskeysForRp(payload || {});
+      case 'VERIFY_RELATED_ORIGIN':
+        return this.handleVerifyRelatedOrigin(payload || {});
       case 'DELETE_PASSKEY':
         return this.handleDeletePasskey(payload || {});
       case 'ENCRYPT_BACKUP':
@@ -756,6 +759,17 @@ class BackgroundService {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
     }
+  }
+
+  // WebAuthn Related Origin Requests: the content script asks whether an origin
+  // that is not same-site with the requested RP ID is nonetheless authorized by
+  // the RP's /.well-known/webauthn file. Done here (not in the content script)
+  // so the fetch has host permissions and isn't blocked by the page's CSP.
+  private async handleVerifyRelatedOrigin(payload: MessagePayload): Promise<unknown> {
+    const rpId = typeof payload.rpId === 'string' ? payload.rpId : '';
+    const origin = typeof payload.origin === 'string' ? payload.origin : '';
+    const authorized = await verifyRelatedOrigin(rpId, origin);
+    return { authorized };
   }
 
   private async handleDeletePasskey(payload: MessagePayload): Promise<unknown> {

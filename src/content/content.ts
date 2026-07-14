@@ -126,8 +126,14 @@ class ContentScript {
    *
    * This does not change behaviour for legitimate pages: a real registration
    * already used the true origin, so the stored rpId still resolves.
+   *
+   * When the RP ID is not same-site with the page, we fall back to WebAuthn
+   * Related Origin Requests before rejecting: some RPs deliberately use a
+   * cross-site RP ID (e.g. Meta's accounts.meta.com on
+   * accountscenter.facebook.com) and authorize it via their
+   * /.well-known/webauthn file.
    */
-  private resolveTrustedRpId(payload: Record<string, unknown>): string | null {
+  private async resolveTrustedRpId(payload: Record<string, unknown>): Promise<string | null> {
     const trueOrigin = window.location.origin;
     let trueHost: string;
     try {
@@ -147,8 +153,26 @@ class ContentScript {
     if (host === rpId || host.endsWith('.' + rpId)) {
       return requested;
     }
+    // Not same-site — the RP may still authorize this origin via Related Origin
+    // Requests. The background worker fetches the RP's /.well-known/webauthn
+    // file (it has host permissions and isn't subject to the page's CSP).
+    if (await this.isRelatedOriginAuthorized(requested, trueOrigin)) {
+      return requested;
+    }
     logger.error('Rejected passkey request: rpId', requested, 'not valid for origin', trueOrigin);
     return null;
+  }
+
+  private async isRelatedOriginAuthorized(rpId: string, origin: string): Promise<boolean> {
+    try {
+      const res = await this.sendMessage({
+        type: 'VERIFY_RELATED_ORIGIN',
+        payload: { rpId, origin },
+      });
+      return res?.authorized === true;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -165,7 +189,7 @@ class ContentScript {
       // Create a new passkey
       try {
         const pk = payload.publicKey as Record<string, unknown> | undefined;
-        const rpId = this.resolveTrustedRpId(payload);
+        const rpId = await this.resolveTrustedRpId(payload);
         if (rpId === null) {
           this.postBlockedResponse('PASSKEY_CREATE_RESPONSE', requestId, t('pagePasskeyError'));
           return;
@@ -266,7 +290,7 @@ class ContentScript {
       try {
         // First, get list of available passkeys for this site
         const pk = payload.publicKey as Record<string, unknown> | undefined;
-        const rpId = this.resolveTrustedRpId(payload);
+        const rpId = await this.resolveTrustedRpId(payload);
         if (rpId === null) {
           this.postBlockedResponse('PASSKEY_GET_RESPONSE', requestId, t('pagePasskeyError'));
           return;
