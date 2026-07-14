@@ -4,6 +4,23 @@ All notable changes to Passkey Vault are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [0.9.4] - 2026-07-15
+
+A hotfix for cross-origin passkeys that broke in 0.9.3.
+
+### Fixed
+
+- **Facebook (and other cross-site) passkeys work again.** The 0.9.3 hardening
+  pass rejected any request where the `rpId` was not same-site with the page,
+  which broke RPs that deliberately use a cross-site RP ID — most visibly Meta,
+  whose Facebook passkeys use the `accounts.meta.com` RP ID on
+  `accountscenter.facebook.com`. The vault now implements WebAuthn Related
+  Origin Requests: when the RP ID is not same-site, it consults the RP's
+  `/.well-known/webauthn` file and honours the origins the RP itself authorizes
+  (subject to the spec's five-label cap). The same-origin anti-forgery
+  protection from 0.9.3 is unchanged — the allowlist is served from the RP ID's
+  own HTTPS origin, which only the RP controls.
+
 ## [0.9.3] - 2026-07-13
 
 A security hardening pass and an easier way to get the vault onto your other
