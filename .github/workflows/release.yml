@@ -120,7 +120,7 @@ jobs:
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "build-tools;35.0.0" "platforms;android-35" > /dev/null
+            "build-tools;36.0.0" "platforms;android-36" > /dev/null
 
       - name: Restore release keystore
         env:
@@ -260,7 +260,7 @@ jobs:
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "build-tools;35.0.0" "platforms;android-35" > /dev/null
+            "build-tools;36.0.0" "platforms;android-36" > /dev/null
 
       - name: Restore release keystore
         env:
