@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
-BUILD_TOOLS="${ANDROID_BUILD_TOOLS:-$ANDROID_HOME/build-tools/35.0.0}"
-PLATFORM="${ANDROID_PLATFORM:-$ANDROID_HOME/platforms/android-35/android.jar}"
+BUILD_TOOLS="${ANDROID_BUILD_TOOLS:-$ANDROID_HOME/build-tools/36.0.0}"
+PLATFORM="${ANDROID_PLATFORM:-$ANDROID_HOME/platforms/android-36/android.jar}"
 APP_ID="nz.fenko.passkeyvault"
 VERSION_CODE="${VERSION_CODE:-1}"
 VERSION_NAME="${VERSION_NAME:-$(node -p "require('$ROOT/package.json').version")}"
@@ -50,7 +50,7 @@ cp "$ROOT/node_modules/jsqr/dist/jsQR.js" "$ASSETS/jsQR.js"
   --manifest "$ROOT/android/app/src/main/AndroidManifest.xml" \
   --java "$GEN" \
   --min-sdk-version 29 \
-  --target-sdk-version 35 \
+  --target-sdk-version 36 \
   --version-code "$VERSION_CODE" \
   --version-name "$VERSION_NAME" \
   -A "$ASSETS" \
