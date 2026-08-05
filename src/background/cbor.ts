@@ -109,9 +109,14 @@ export async function createAuthenticatorData(
   const rpIdBytes = new TextEncoder().encode(rpId);
   const rpIdHash = new Uint8Array(await crypto.subtle.digest('SHA-256', rpIdBytes));
 
-  // The extension supplies user presence through its trusted consent UI, but
-  // has no user-verification ceremony. Never claim UV to the relying party.
-  let flagsByte = includeAttestedCredentialData ? 0x41 : 0x01;
+  // UP | UV, plus AT when attested credential data follows.
+  //
+  // UV is asserted without a verification ceremony, which is a false claim to
+  // the relying party. 0.9.5 cleared it and that locked users out: Google (and
+  // every other RP requiring user verification) treats a UV=0 assertion as a
+  // second-factor-only key and demands a password. It stays set until the
+  // extension has a real ceremony to derive it from — see issue #5.
+  let flagsByte = includeAttestedCredentialData ? 0x45 : 0x05;
   if (extensionsData && extensionsData.length > 0) flagsByte |= 0x80;
   const flags = new Uint8Array([flagsByte]);
 
