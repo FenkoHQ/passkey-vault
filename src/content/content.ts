@@ -134,6 +134,16 @@ class ContentScript {
    * /.well-known/webauthn file.
    */
   private async resolveTrustedRpId(payload: Record<string, unknown>): Promise<string | null> {
+    // WebAuthn is restricted to secure contexts.  The content script also
+    // receives direct postMessage requests, so the hook's own secure-context
+    // check is not enough here.
+    if (
+      !window.isSecureContext &&
+      !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)
+    ) {
+      logger.error('Rejected passkey request from insecure origin', location.origin);
+      return null;
+    }
     const trueOrigin = window.location.origin;
     let trueHost: string;
     try {
@@ -448,19 +458,6 @@ class ContentScript {
           },
           '*'
         );
-      }
-    } else if (type === 'PASSKEY_STORE_REQUEST') {
-      // Store passkey after successful creation (non-blocking response)
-      try {
-        await this.sendMessage({
-          type: 'STORE_PASSKEY',
-          payload,
-          requestId,
-          timestamp: Date.now(),
-        });
-        logger.debug('Passkey stored successfully');
-      } catch (error) {
-        logger.error('Failed to store passkey:', error);
       }
     }
   }

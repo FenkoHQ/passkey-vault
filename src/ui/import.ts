@@ -33,9 +33,6 @@ import { initTheme } from '../theme';
     [key: string]: unknown;
   }
 
-  const IMPORT_PASSKEY_STORAGE_KEY = 'passkeys';
-  const IMPORT_TOTP_STORAGE_KEY = 'totp_entries';
-
   // State
   let parsedData: PlaintextBackup | null = null;
   let newPasskeys: ImportPasskey[] = [];
@@ -242,8 +239,9 @@ import { initTheme } from '../theme';
       return;
     }
 
-    const result = await chrome.storage.local.get(IMPORT_PASSKEY_STORAGE_KEY);
-    const existingPasskeys = (result[IMPORT_PASSKEY_STORAGE_KEY] || []) as ImportPasskey[];
+    const result = await chrome.runtime.sendMessage({ type: 'LIST_PASSKEYS' });
+    if (!result.success) throw new Error(result.error || 'Failed to load vault');
+    const existingPasskeys = (result.passkeys || []) as ImportPasskey[];
     existingIds = new Set(existingPasskeys.map((p) => p.id));
 
     newPasskeys = validPasskeys.filter((p) => !existingIds.has(p.id));
@@ -300,36 +298,13 @@ import { initTheme } from '../theme';
     }
 
     try {
-      // Get existing passkeys
-      const result = await chrome.storage.local.get(IMPORT_PASSKEY_STORAGE_KEY);
-      const existingPasskeys = (result[IMPORT_PASSKEY_STORAGE_KEY] || []) as ImportPasskey[];
-
-      // Merge
-      const mergedPasskeys = [...existingPasskeys, ...newPasskeys];
-
-      // Save
-      await chrome.storage.local.set({ [IMPORT_PASSKEY_STORAGE_KEY]: mergedPasskeys });
-
-      // A full backup can also contain TOTP entries — merge the new ones in by
-      // id so they are not silently dropped when restoring a full backup.
       const backupTotp = Array.isArray(parsedData?.totpEntries) ? parsedData!.totpEntries : [];
-      let importedTotp = 0;
-      if (backupTotp.length > 0) {
-        const totpResult = await chrome.storage.local.get(IMPORT_TOTP_STORAGE_KEY);
-        const existingTotp = (totpResult[IMPORT_TOTP_STORAGE_KEY] || []) as ImportTotpEntry[];
-        const totpIds = new Set(existingTotp.map((e) => e.id));
-        const newTotp = backupTotp.filter((e) => e.id && !totpIds.has(e.id));
-        if (newTotp.length > 0) {
-          await chrome.storage.local.set({
-            [IMPORT_TOTP_STORAGE_KEY]: [...existingTotp, ...newTotp],
-          });
-          importedTotp = newTotp.length;
-        }
-      }
-
-      // Keep the encrypted store in sync so imported items survive the next
-      // background save (which would otherwise read back the stale copy).
-      await chrome.runtime.sendMessage({ type: 'RECONCILE_STORAGE' });
+      const response = await chrome.runtime.sendMessage({
+        type: 'IMPORT_VAULT',
+        payload: { passkeys: newPasskeys, totpEntries: backupTotp },
+      });
+      if (!response.success) throw new Error(response.error || 'Import failed');
+      const importedTotp = Number(response.totpEntries || 0);
 
       // Show success
       showStatus(

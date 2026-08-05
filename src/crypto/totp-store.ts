@@ -36,15 +36,22 @@ export async function loadTotpEntries(): Promise<StoredTotpEntry[]> {
     const entries = (await secureStorage.getTotpEntries()) as unknown as StoredTotpEntry[];
     return entries;
   }
+  if (await secureStorage.isSetup()) {
+    throw new Error('Secure storage is locked. Please unlock with master password.');
+  }
   const result = await chrome.storage.local.get(TOTP_STORAGE_KEY);
   return (result[TOTP_STORAGE_KEY] || []) as StoredTotpEntry[];
 }
 
 export async function saveTotpEntries(entries: StoredTotpEntry[]): Promise<void> {
-  await chrome.storage.local.set({ [TOTP_STORAGE_KEY]: entries });
   if (isUnlocked()) {
     await secureStorage.storeTotpEntries(entries as unknown as Record<string, unknown>[]);
+    return;
   }
+  if (await secureStorage.isSetup()) {
+    throw new Error('Secure storage is locked. Please unlock with master password.');
+  }
+  await chrome.storage.local.set({ [TOTP_STORAGE_KEY]: entries });
 }
 
 export async function addTotpEntry(entry: StoredTotpEntry): Promise<void> {

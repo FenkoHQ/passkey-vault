@@ -4,6 +4,123 @@ All notable changes to Passkey Vault are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [0.9.5] - 2026-08-05
+
+A security release covering the findings from a full-codebase review. The vault
+now actually encrypts what it said it encrypted, the lock actually locks, and
+the Android provider stops vouching for callers it never checked.
+
+**Cross-site passkeys still work.** 0.9.3 broke Meta/Facebook sign-in by
+rejecting any cross-site `rpId`, and 0.9.4 fixed it with Related Origin
+Requests. Nothing here narrows that path: the new secure-origin check runs
+before the same-site test and only rejects plain `http:` pages, the
+`/.well-known/webauthn` lookup is untouched, and `https://*/*` host permissions
+are retained so the background can still fetch it. The Related Origin Requests
+test suite passes unchanged.
+
+### Security
+
+- **Android: any installed app could mint assertions for any site.** The
+  provider derived the signing origin as `https://<rpId>` whenever
+  `CallingAppInfo.getOrigin()` was null, which is every non-browser caller. It
+  now derives `android:apk-key-hash:<sha256(signing cert)>` from the caller's
+  own certificate, so a relying party's asset links decide whether that app is
+  allowed. A caller-supplied `clientDataHash` is honoured only for callers the
+  platform has confirmed as privileged.
+- **Silent assertions from a compromised page.** The consent dialogs live in the
+  page's DOM, so any script on the site could hide them and synthesise a click,
+  producing signed assertions with no user present. Every dialog handler now
+  ignores untrusted events.
+- **A web page could write to the vault.** `PASSKEY_STORE_REQUEST` was relayed
+  from the page without any origin validation, letting any site plant entries
+  under another site's `rpId` or overwrite a real credential's private key. The
+  relay and the background handler are both gone.
+- **The PIN did not encrypt anything.** Private keys and TOTP seeds were written
+  to cleartext storage on every save, alongside the encrypted copy. The
+  encrypted store is now the only copy once a PIN is set, and existing vaults
+  are migrated on first unlock (see below).
+- **The lock did not lock.** A locked vault still signed assertions and emitted
+  TOTP codes by falling back to the cleartext copy. Credential and TOTP
+  operations are now refused until the vault is unlocked, and the popup reads
+  through the background worker instead of raw storage.
+- **Both providers claimed the user was verified when nobody was.** The UV flag
+  was hardcoded on every ceremony. The extension no longer sets it, and Android
+  sets it only when the device lock screen actually verified the user.
+- **`http:` pages could run ceremonies.** WebAuthn is secure-context only, but
+  the content script accepted direct page messages on plain HTTP, exposing PRF
+  output that never reaches the relying party and so cannot be caught by any
+  server-side origin check. Insecure origins are now rejected, and the Chrome
+  manifest matches `https` plus localhost rather than `<all_urls>`.
+- **Stored XSS in the mobile vault.** An imported backup could put markup in a
+  passkey's `counter` and reach the native bridge, which hands out every private
+  key and TOTP seed. The value is coerced to a number, imported records are
+  normalised, and both WebViews now ship a Content-Security-Policy.
+- **Release workflow leaked its Chrome Web Store token.** The access token
+  derived from the refresh token was interpolated into `run:` blocks, and the
+  runner prints those verbatim; only registered secrets get masked. It is now
+  registered with `::add-mask::`.
+
+### Added
+
+- **A feedback link, in the extension popup and settings sidebar and in the
+  mobile app's header and Tools tab.** It opens a short form in your browser.
+  Nothing is collected automatically and the form asks for no account. If a
+  website ever refuses one of your passkeys, that is the single most useful
+  thing you can tell us.
+
+### Breaking
+
+- **Sites that require user verification will refuse the extension.** The
+  extension used to claim the user had been verified on every ceremony, which
+  was untrue: it has no verification step. It no longer sets that flag, so a
+  relying party configured with `userVerification: "required"` will now reject
+  the assertion instead of accepting a false one. Sites that ask for user
+  verification as preferred, which is most of them, are unaffected. Restoring
+  compatibility means adding a real per-assertion prompt, not restating the
+  claim.
+- **A locked vault no longer signs anything.** With a PIN set, sign-in, TOTP
+  codes and vault listings all fail until you unlock in the popup, including
+  after the 30-minute auto-lock. Previously the lock only hid the UI while the
+  vault kept serving credentials from the cleartext copy.
+- **PIN'd vaults must export a backup once, after upgrading.** Changes to the
+  vault (adding or deleting a passkey or 2FA code, importing, resetting,
+  changing the PIN) are refused until you export an encrypted backup from the
+  popup, which the popup prompts for. **Signing in keeps working throughout.**
+  This exists because the upgrade is one-way: the first unlock deletes the
+  cleartext copies, and 0.9.4 treats those as authoritative, so unlocking on the
+  older build would overwrite the encrypted store with an empty one and destroy
+  the vault. The backup is your route back to 0.9.4, via its import page. Vaults
+  with no PIN are unaffected, since nothing is deleted for them.
+- **Chrome no longer runs on plain `http://` pages**, other than `localhost` and
+  `127.0.0.1`. WebAuthn is secure-context only and browsers never offered it
+  there. `host_permissions` narrows from `*://*/*` to `https://*/*`. Firefox was
+  already scoped this way.
+- **Android prompts for the device lock screen on every passkey use.** There is
+  no way to opt out, since the alternative is signing while claiming a
+  verification that never happened.
+- **Sync starts only once the vault is unlocked**, for vaults with a PIN. The
+  chain seed now lives in the encrypted store, so after a browser restart sync
+  stays down until you unlock. It resumes automatically on unlock.
+- **Removing your PIN writes the vault back out unencrypted**, which is the
+  pre-PIN layout and what makes the vault readable again without a PIN.
+- Android credentials created by another app now record that app's signing
+  identity as their origin instead of a fabricated `https://<rpId>`. Existing
+  records keep the value they were stored with.
+- The internal `STORE_PASSKEY` message and its `PASSKEY_STORE_REQUEST` page
+  relay are gone. No shipped code sent either.
+
+### Changed
+
+- **Existing vaults migrate on first unlock.** Vaults with a PIN set before this
+  release keep a cleartext copy that the encrypted store may never have seen.
+  The first unlock merges those records in, keeping whichever is newer, then
+  deletes the cleartext keys. Nothing is lost, and the cleanup runs once.
+- **Android asks for your lock screen before signing**, using whichever method
+  the device has: fingerprint, face, PIN or pattern. Devices with no lock screen
+  at all still work, and report the user as unverified rather than pretending.
+- **Removing your PIN restores the unencrypted layout**, so the vault stays
+  readable exactly as it was before the PIN was set.
+
 ## [0.9.4] - 2026-07-15
 
 A hotfix for cross-origin passkeys that broke in 0.9.3.

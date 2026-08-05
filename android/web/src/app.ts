@@ -7,12 +7,7 @@ import {
   mnemonicToBytes,
   deriveEd25519Keypair,
 } from '../../../src/crypto/bip39';
-import {
-  generateHotp,
-  generateTotp,
-  parseOtpauth,
-  timeRemaining,
-} from '../../../src/crypto/totp';
+import { generateHotp, generateTotp, parseOtpauth, timeRemaining } from '../../../src/crypto/totp';
 
 declare const jsQR:
   | undefined
@@ -139,6 +134,7 @@ const LOCKED_FLAG_KEY = 'android_vault_locked';
 const AUTOLOCK_KEY = 'android_auto_lock_minutes';
 const RECYCLE_BIN_KEY = 'recycle_bin';
 const RECYCLE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const FEEDBACK_URL = 'https://tally.so/r/zxAJYM';
 
 let lastActivityAt = Date.now();
 const DEFAULT_RELAYS = [
@@ -344,7 +340,9 @@ function base64Url(bytes: Uint8Array): string {
 }
 
 function uuid(): string {
-  return crypto.randomUUID ? crypto.randomUUID() : base64Url(crypto.getRandomValues(new Uint8Array(16)));
+  return crypto.randomUUID
+    ? crypto.randomUUID()
+    : base64Url(crypto.getRandomValues(new Uint8Array(16)));
 }
 
 function randomHex(bytes: number): string {
@@ -388,7 +386,6 @@ async function sha256Hex(data: Uint8Array | string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', input);
   return bytesToHex(new Uint8Array(digest));
 }
-
 
 interface RecycleEntry {
   kind: 'passkey' | 'totp';
@@ -540,9 +537,11 @@ async function addTotpManual(form: HTMLFormElement): Promise<void> {
   const digits = Number(data.get('digits') || 6);
   const period = Number(data.get('period') || 30);
   const counter = Number(data.get('counter') || 0);
-  const bytes = /^[A-Za-z2-7=\s]+$/.test(secret) ? parseOtpauth(
-    `otpauth://${type}/${encodeURIComponent(issuer + ':' + account)}?secret=${encodeURIComponent(secret)}&issuer=${encodeURIComponent(issuer)}&algorithm=${algorithm}&digits=${digits}&period=${period}&counter=${counter}`
-  ).secret : new TextEncoder().encode(secret);
+  const bytes = /^[A-Za-z2-7=\s]+$/.test(secret)
+    ? parseOtpauth(
+        `otpauth://${type}/${encodeURIComponent(issuer + ':' + account)}?secret=${encodeURIComponent(secret)}&issuer=${encodeURIComponent(issuer)}&algorithm=${algorithm}&digits=${digits}&period=${period}&counter=${counter}`
+      ).secret
+    : new TextEncoder().encode(secret);
 
   const entry: StoredTotpEntry = {
     id: uuid(),
@@ -584,9 +583,13 @@ function codeFor(entry: StoredTotpEntry): { code: string; remaining: number } {
 }
 
 async function deriveBackupKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
-  const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, [
-    'deriveKey',
-  ]);
+  const material = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
   return crypto.subtle.deriveKey(
     { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
     material,
@@ -753,12 +756,37 @@ async function importVault(raw: string): Promise<void> {
       return;
     }
   }
-  const passkeys = Array.isArray(payload.passkeys) ? payload.passkeys : [];
-  const totpEntries = Array.isArray(payload.totpEntries)
-    ? payload.totpEntries
-    : Array.isArray(payload.totp_entries)
-      ? payload.totp_entries
-      : [];
+  const passkeys = (Array.isArray(payload.passkeys) ? payload.passkeys : []).map((entry) => ({
+    ...entry,
+    id: String(entry.id || entry.credentialId || ''),
+    credentialId: String(entry.credentialId || entry.id || ''),
+    rpId: String(entry.rpId || ''),
+    counter: Number.isFinite(Number(entry.counter)) ? Math.max(0, Number(entry.counter)) : 0,
+  }));
+  const totpEntries = (
+    Array.isArray(payload.totpEntries)
+      ? payload.totpEntries
+      : Array.isArray(payload.totp_entries)
+        ? payload.totp_entries
+        : []
+  ).map((entry) => {
+    // Normalise rather than reject. These fields are interpolated into the
+    // vault markup, so they must not carry arbitrary strings — but a restore
+    // that silently drops entries is data loss, and the accepted ranges have to
+    // match what the app itself produces (6–10 digits, algorithm case as the
+    // otpauth parser emits it), not a narrower guess.
+    const type = entry.type === 'hotp' ? 'hotp' : 'totp';
+    const algoRaw = String(entry.algorithm || 'SHA1').toUpperCase();
+    const algorithm = ['SHA1', 'SHA256', 'SHA512'].includes(algoRaw) ? algoRaw : 'SHA1';
+    const digitsRaw = Number(entry.digits);
+    const digits = Number.isInteger(digitsRaw) && digitsRaw >= 6 && digitsRaw <= 10 ? digitsRaw : 6;
+    const periodRaw = Number(entry.period);
+    const period =
+      Number.isInteger(periodRaw) && periodRaw >= 1 && periodRaw <= 86400 ? periodRaw : 30;
+    const counterRaw = Number(entry.counter);
+    const counter = Number.isInteger(counterRaw) && counterRaw >= 0 ? counterRaw : 0;
+    return { ...entry, id: String(entry.id || ''), type, algorithm, digits, period, counter };
+  });
   const passkeyMap = new Map(getPasskeys().map((item) => [item.id, item]));
   for (const passkey of passkeys) passkeyMap.set(passkey.id || passkey.credentialId, passkey);
   const totpMap = new Map(getTotpEntries().map((item) => [item.id, item]));
@@ -796,7 +824,13 @@ class AndroidSync {
   constructor(private config: SyncConfig) {}
 
   async start(): Promise<void> {
-    if (!this.config.enabled || !this.config.chainId || !this.config.deviceId || !this.config.seedHash) return;
+    if (
+      !this.config.enabled ||
+      !this.config.chainId ||
+      !this.config.deviceId ||
+      !this.config.seedHash
+    )
+      return;
     await this.deriveKeys();
     this.connect();
   }
@@ -1026,19 +1060,30 @@ class AndroidSync {
     const event = parsed[2];
     if (!event.id || this.processed.has(event.id)) return;
     this.processed.add(event.id);
-    const expected = bytesToHex(sha256(new TextEncoder().encode(JSON.stringify([
-      0,
-      event.pubkey,
-      event.created_at,
-      event.kind,
-      event.tags || [],
-      event.content || '',
-    ]))));
+    const expected = bytesToHex(
+      sha256(
+        new TextEncoder().encode(
+          JSON.stringify([
+            0,
+            event.pubkey,
+            event.created_at,
+            event.kind,
+            event.tags || [],
+            event.content || '',
+          ])
+        )
+      )
+    );
     if (expected !== event.id) return;
-    const ok = await secp256k1.schnorr.verify(hexToBytes(event.sig), hexToBytes(event.id), hexToBytes(event.pubkey));
+    const ok = await secp256k1.schnorr.verify(
+      hexToBytes(event.sig),
+      hexToBytes(event.id),
+      hexToBytes(event.pubkey)
+    );
     if (!ok) return;
     const msg = await this.decryptMessage(event.content);
-    if (!msg || msg.chainId !== this.config.chainId || msg.deviceId === this.config.deviceId) return;
+    if (!msg || msg.chainId !== this.config.chainId || msg.deviceId === this.config.deviceId)
+      return;
     this.mergeDevice(msg);
     if (msg.type === 'request' && msg.payload.action === 'sync') {
       await this.broadcast({
@@ -1081,12 +1126,20 @@ class AndroidSync {
     saveJson(SYNC_DEVICES_KEY, { ...chain, devices });
   }
 
-  private mergeVault(passkeys: StoredPasskey[], totpEntries: StoredTotpEntry[], sourceDeviceId: string): void {
+  private mergeVault(
+    passkeys: StoredPasskey[],
+    totpEntries: StoredTotpEntry[],
+    sourceDeviceId: string
+  ): void {
     const localPasskeys = new Map(getPasskeys().map((item) => [item.id, item]));
     for (const remote of passkeys) {
       const local = localPasskeys.get(remote.id);
       if (!local || remote.createdAt > local.createdAt) {
-        localPasskeys.set(remote.id, { ...remote, syncSource: sourceDeviceId, syncTimestamp: Date.now() });
+        localPasskeys.set(remote.id, {
+          ...remote,
+          syncSource: sourceDeviceId,
+          syncTimestamp: Date.now(),
+        });
       }
     }
     const localTotp = new Map(getTotpEntries().map((item) => [item.id, item]));
@@ -1141,7 +1194,9 @@ async function joinSyncChain(form: HTMLFormElement): Promise<void> {
   }
   const data = new FormData(form);
   const deviceName = String(data.get('deviceName') || defaultDeviceName()).trim();
-  const mnemonic = String(data.get('mnemonic') || '').trim().toLowerCase();
+  const mnemonic = String(data.get('mnemonic') || '')
+    .trim()
+    .toLowerCase();
   if (!validateMnemonic(mnemonic)) {
     setStatus('Recovery phrase is invalid.', 'bad');
     return;
@@ -1152,12 +1207,17 @@ async function joinSyncChain(form: HTMLFormElement): Promise<void> {
   render();
 }
 
-async function configureSync(deviceName: string, mnemonic: string, created: boolean): Promise<void> {
+async function configureSync(
+  deviceName: string,
+  mnemonic: string,
+  created: boolean
+): Promise<void> {
   const seedBytes = mnemonicToBytes(mnemonic);
   const keypair = await deriveEd25519Keypair(seedBytes);
   const seedHash = await sha256Hex(seedBytes);
   const chainId = seedHash.slice(0, 32);
-  const syncSalt = localStorage.getItem('android_sync_deterministic_salt') === '1' ? null : randomHex(32);
+  const syncSalt =
+    localStorage.getItem('android_sync_deterministic_salt') === '1' ? null : randomHex(32);
   const deviceId = uuid();
   const publicKey = bytesToHex(keypair.publicKey);
   const device: SyncDevice = {
@@ -1284,6 +1344,11 @@ function render(): void {
             <p class="muted">${getPasskeys().length} passkeys, ${getTotpEntries().length} 2FA codes</p>
           </div>
         </div>
+        <a class="icon-btn" href="${FEEDBACK_URL}" target="_blank" rel="noopener noreferrer" aria-label="Send feedback" title="Send feedback">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+          </svg>
+        </a>
         <button id="lock-btn" class="icon-btn" aria-label="Lock vault" ${canLock() ? '' : 'disabled'}>
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <rect x="4" y="11" width="16" height="10" rx="2"></rect>
@@ -1325,6 +1390,20 @@ function bindTabContent(): void {
   if (state.tab === 'add') bindAdd();
   if (state.tab === 'sync') bindSync();
   if (state.tab === 'tools') bindTools();
+  applyProgressWidths();
+}
+
+/**
+ * Apply the TOTP countdown widths. These have to be set through the CSSOM
+ * rather than a `style="width:..."` attribute: the WebView now ships a strict
+ * Content-Security-Policy, and `style-src 'self'` blocks inline style
+ * attributes. CSSOM assignment is unaffected.
+ */
+function applyProgressWidths(): void {
+  document.querySelectorAll<HTMLElement>('[data-progress]').forEach((el) => {
+    const value = Number(el.dataset.progress);
+    el.style.width = `${Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : 0}%`;
+  });
 }
 
 function updateTabContent(): void {
@@ -1356,10 +1435,14 @@ function renderVault(): string {
   const totp = getTotpEntries()
     .filter((entry) => matchesSearch([entry.issuer, entry.account]))
     .sort((a, b) =>
-      (a.issuer || a.account || '').toLowerCase().localeCompare((b.issuer || b.account || '').toLowerCase())
+      (a.issuer || a.account || '')
+        .toLowerCase()
+        .localeCompare((b.issuer || b.account || '').toLowerCase())
     );
   const passkeys = getPasskeys()
-    .filter((passkey) => matchesSearch([passkey.rpId, passkey.user?.name, passkey.user?.displayName]))
+    .filter((passkey) =>
+      matchesSearch([passkey.rpId, passkey.user?.name, passkey.user?.displayName])
+    )
     .sort((a, b) => a.rpId.toLowerCase().localeCompare(b.rpId.toLowerCase()));
   return `
     <section class="grid">
@@ -1400,7 +1483,7 @@ function renderTotpItem(entry: StoredTotpEntry): string {
         </div>
         <button class="code code-compact" data-copy="${escapeHtml(code)}">${code}</button>
       </div>
-      <div class="progress"><div style="width:${width}%"></div></div>
+      <div class="progress"><div data-progress="${width}"></div></div>
       ${
         expanded
           ? `<div class="totp-details">
@@ -1423,8 +1506,8 @@ function renderPasskeyItem(passkey: StoredPasskey): string {
         year: 'numeric',
       })
     : null;
-  const uses =
-    passkey.counter === 0 ? 'not used yet' : passkey.counter === 1 ? 'used once' : `used ${passkey.counter} times`;
+  const count = Number.isFinite(Number(passkey.counter)) ? Math.max(0, Number(passkey.counter)) : 0;
+  const uses = count === 0 ? 'not used yet' : count === 1 ? 'used once' : `used ${count} times`;
   return `
     <article class="item passkey-card" data-item-kind="passkey" data-item-id="${escapeHtml(passkey.id)}">
       <div class="item-head">
@@ -1526,7 +1609,7 @@ function renderSync(): string {
       <div class="panel stack" id="recovery-phrase-panel">
         <h2>Save your recovery phrase</h2>
         <p class="muted">Write these 12 words down and keep them somewhere safe. You'll enter them on your other devices to join this chain. Anyone with them can access your vault, and they won't be shown again.</p>
-        <div class="small-code" style="user-select:all; line-height:1.9; word-spacing:0.4em;">${escapeHtml(pendingMnemonic)}</div>
+        <div class="small-code mnemonic-display">${escapeHtml(pendingMnemonic)}</div>
         <div class="row">
           <button id="copy-phrase" class="primary" type="button">Copy phrase</button>
           <button id="ack-phrase" type="button">I've saved it</button>
@@ -1617,7 +1700,9 @@ function renderTools(): string {
                   .map((entry, index) => {
                     const daysLeft = Math.max(
                       1,
-                      Math.ceil((entry.deletedAt + RECYCLE_TTL_MS - Date.now()) / (24 * 60 * 60 * 1000))
+                      Math.ceil(
+                        (entry.deletedAt + RECYCLE_TTL_MS - Date.now()) / (24 * 60 * 60 * 1000)
+                      )
                     );
                     return `
                       <div class="item">
@@ -1638,6 +1723,14 @@ function renderTools(): string {
       <div class="panel stack">
         <h2>Danger</h2>
         <button class="danger" id="wipe-vault">Wipe local vault</button>
+      </div>
+      <div class="panel stack">
+        <h2>Feedback</h2>
+        <p class="muted">
+          Tell us how it's going. It takes under a minute, and if a website ever refuses one of your
+          passkeys, that's the most useful thing you can report.
+        </p>
+        <a class="btn" href="${FEEDBACK_URL}" target="_blank" rel="noopener noreferrer">Send feedback</a>
       </div>
       <div class="panel stack about">
         <div class="brand">
@@ -1773,7 +1866,9 @@ function bindAdd(): void {
   });
   document.getElementById('totp-manual-form')?.addEventListener('submit', (event) => {
     event.preventDefault();
-    void addTotpManual(event.currentTarget as HTMLFormElement).catch((error) => setStatus(String(error), 'bad'));
+    void addTotpManual(event.currentTarget as HTMLFormElement).catch((error) =>
+      setStatus(String(error), 'bad')
+    );
   });
   document.getElementById('scan-qr')?.addEventListener('click', () => void startScanner());
   document.getElementById('stop-qr')?.addEventListener('click', stopScanner);
@@ -1782,15 +1877,22 @@ function bindAdd(): void {
 function bindSync(): void {
   document.getElementById('create-sync-form')?.addEventListener('submit', (event) => {
     event.preventDefault();
-    void createSyncChain(event.currentTarget as HTMLFormElement).catch((error) => setStatus(String(error), 'bad'));
+    void createSyncChain(event.currentTarget as HTMLFormElement).catch((error) =>
+      setStatus(String(error), 'bad')
+    );
   });
   document.getElementById('join-sync-form')?.addEventListener('submit', (event) => {
     event.preventDefault();
-    void joinSyncChain(event.currentTarget as HTMLFormElement).catch((error) => setStatus(String(error), 'bad'));
+    void joinSyncChain(event.currentTarget as HTMLFormElement).catch((error) =>
+      setStatus(String(error), 'bad')
+    );
   });
-  document.getElementById('sync-now')?.addEventListener('click', () =>
-    void state.sync?.requestSync().then(() => setStatus('Sync requested.'))
-  );
+  document
+    .getElementById('sync-now')
+    ?.addEventListener(
+      'click',
+      () => void state.sync?.requestSync().then(() => setStatus('Sync requested.'))
+    );
   document.getElementById('leave-sync')?.addEventListener('click', leaveSync);
   document.getElementById('copy-phrase')?.addEventListener('click', () => {
     if (pendingMnemonic) {
@@ -1832,7 +1934,9 @@ function bindTools(): void {
   exportPw?.addEventListener('input', () => {
     state.exportPassword = exportPw.value;
   });
-  const exportPwConfirm = document.getElementById('export-password-confirm') as HTMLInputElement | null;
+  const exportPwConfirm = document.getElementById(
+    'export-password-confirm'
+  ) as HTMLInputElement | null;
   exportPwConfirm?.addEventListener('input', () => {
     state.exportPasswordConfirm = exportPwConfirm.value;
   });
@@ -1846,7 +1950,10 @@ function bindTools(): void {
   });
   document
     .getElementById('export-vault')
-    ?.addEventListener('click', () => void exportBackup().catch((error) => setStatus(String(error), 'bad')));
+    ?.addEventListener(
+      'click',
+      () => void exportBackup().catch((error) => setStatus(String(error), 'bad'))
+    );
   document.getElementById('import-vault')?.addEventListener('click', () => {
     void importVault(importJson?.value ?? state.importJson).catch((error) =>
       setStatus(String(error), 'bad')

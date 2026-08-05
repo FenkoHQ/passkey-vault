@@ -109,7 +109,9 @@ export async function createAuthenticatorData(
   const rpIdBytes = new TextEncoder().encode(rpId);
   const rpIdHash = new Uint8Array(await crypto.subtle.digest('SHA-256', rpIdBytes));
 
-  let flagsByte = includeAttestedCredentialData ? 0x45 : 0x05;
+  // The extension supplies user presence through its trusted consent UI, but
+  // has no user-verification ceremony. Never claim UV to the relying party.
+  let flagsByte = includeAttestedCredentialData ? 0x41 : 0x01;
   if (extensionsData && extensionsData.length > 0) flagsByte |= 0x80;
   const flags = new Uint8Array([flagsByte]);
 

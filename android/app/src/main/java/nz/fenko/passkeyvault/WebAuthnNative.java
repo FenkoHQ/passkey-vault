@@ -68,7 +68,7 @@ final class WebAuthnNative {
         record.id = credentialIdB64;
         record.credentialId = credentialIdB64;
         record.rpId = rpId;
-        record.origin = origin == null || origin.length() == 0 ? "https://" + rpId : origin;
+        record.origin = finalOrigin(origin, rpId);
         record.userId = ProviderVaultStore.userIdFromCreateRequest(requestJson);
         record.userName = ProviderVaultStore.userNameFromCreateRequest(requestJson);
         record.displayName = ProviderVaultStore.displayNameFromCreateRequest(requestJson);
@@ -84,11 +84,19 @@ final class WebAuthnNative {
             ProviderVaultStore.PasskeyRecord passkey,
             String requestJson,
             String origin) throws Exception {
+        return registrationResponseJson(passkey, requestJson, origin, false);
+    }
+
+    static String registrationResponseJson(
+            ProviderVaultStore.PasskeyRecord passkey,
+            String requestJson,
+            String origin,
+            boolean userVerified) throws Exception {
         String challenge = ProviderVaultStore.challengeFromRequestJson(requestJson);
         byte[] credentialId = base64UrlDecode(passkey.credentialId);
         byte[] publicKeyRaw = Base64.decode(passkey.publicKey, Base64.DEFAULT);
         byte[] coseKey = cosePublicKey(publicKeyRaw);
-        byte[] authData = authenticatorData(passkey.rpId, credentialId, coseKey, true, 0);
+        byte[] authData = authenticatorData(passkey.rpId, credentialId, coseKey, true, 0, userVerified);
         byte[] attestationObject = attestationObject(authData);
         byte[] clientData = clientDataJson("webauthn.create", challenge, finalOrigin(origin, passkey.rpId));
 
@@ -122,10 +130,19 @@ final class WebAuthnNative {
             String requestJson,
             String origin,
             byte[] callerClientDataHash) throws Exception {
+        return authenticationResponseJson(passkey, requestJson, origin, callerClientDataHash, false);
+    }
+
+    static String authenticationResponseJson(
+            ProviderVaultStore.PasskeyRecord passkey,
+            String requestJson,
+            String origin,
+            byte[] callerClientDataHash,
+            boolean userVerified) throws Exception {
         String challenge = ProviderVaultStore.challengeFromRequestJson(requestJson);
         passkey.counter += 1;
 
-        byte[] authData = authenticatorData(passkey.rpId, null, null, false, passkey.counter);
+        byte[] authData = authenticatorData(passkey.rpId, null, null, false, passkey.counter, userVerified);
         byte[] clientData = clientDataJson("webauthn.get", challenge, finalOrigin(origin, passkey.rpId));
         // Browsers build their own clientDataJSON and pass its hash; the signature
         // must cover that hash or the RP-side verification fails.
@@ -161,7 +178,10 @@ final class WebAuthnNative {
     }
 
     private static String finalOrigin(String origin, String rpId) {
-        return origin == null || origin.length() == 0 ? "https://" + rpId : origin;
+        if (origin == null || origin.length() == 0) {
+            throw new IllegalArgumentException("Credential request has no verified origin");
+        }
+        return origin;
     }
 
     private static PrivateKey privateKey(String privateKeyB64) throws Exception {
@@ -183,10 +203,13 @@ final class WebAuthnNative {
             byte[] credentialId,
             byte[] cosePublicKey,
             boolean includeAttestedCredentialData,
-            long counter) throws Exception {
+            long counter,
+            boolean userVerified) throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         out.write(sha256(rpId.getBytes(StandardCharsets.UTF_8)));
-        out.write(includeAttestedCredentialData ? 0x45 : 0x05);
+        int flags = includeAttestedCredentialData ? 0x41 : 0x01;
+        if (userVerified) flags |= 0x04;
+        out.write(flags);
         out.write(ByteBuffer.allocate(4).putInt((int) counter).array());
         if (includeAttestedCredentialData) {
             out.write(AAGUID);

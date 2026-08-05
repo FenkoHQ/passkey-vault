@@ -704,8 +704,12 @@ function loadExtensionInfo(): void {
 // ==================== DANGER ZONE ====================
 
 async function exportAllData(): Promise<void> {
-  const data = await chrome.storage.local.get(null);
-  const json = JSON.stringify(data, null, 2);
+  const response = await sendMessage('EXPORT_VAULT');
+  if (!response.success) {
+    alert(String(response.error || 'Unlock the vault before exporting it.'));
+    return;
+  }
+  const json = JSON.stringify(response, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
 
@@ -736,9 +740,18 @@ async function importAllData(e: Event): Promise<void> {
       input.value = '';
       return;
     }
-    await chrome.storage.local.clear();
-    await chrome.storage.local.set(data);
-    await chrome.runtime.sendMessage({ type: 'RECONCILE_STORAGE' });
+    if (!Array.isArray(data.passkeys)) {
+      alert('Use the dedicated Vault Import page for this backup format.');
+      input.value = '';
+      return;
+    }
+    const result = await sendMessage('IMPORT_VAULT', {
+      passkeys: data.passkeys as unknown as Record<string, unknown>,
+      totpEntries: Array.isArray(data.totpEntries)
+        ? (data.totpEntries as unknown as Record<string, unknown>)
+        : [],
+    });
+    if (!result.success) throw new Error(String(result.error || 'Import failed'));
     alert(t('optionsImportSuccess'));
   } catch {
     alert(t('optionsInvalidJson'));
@@ -749,7 +762,11 @@ async function importAllData(e: Event): Promise<void> {
 async function clearPasskeys(): Promise<void> {
   if (!confirm(t('optionsClearConfirm'))) return;
 
-  await chrome.storage.local.remove(['passkeys', 'passext_encrypted_passkeys']);
+  const result = await sendMessage('CLEAR_VAULT');
+  if (!result.success) {
+    alert(String(result.error || 'Unlock the vault before clearing it.'));
+    return;
+  }
   alert(t('optionsClearSuccess'));
 }
 
@@ -757,7 +774,11 @@ async function factoryReset(): Promise<void> {
   if (!confirm(t('optionsFactoryConfirm'))) return;
   if (!confirm(t('optionsFactoryConfirmAgain'))) return;
 
-  await chrome.storage.local.clear();
+  const result = await sendMessage('FACTORY_RESET');
+  if (!result.success) {
+    alert(String(result.error || 'Factory reset failed.'));
+    return;
+  }
   alert(t('optionsFactorySuccess'));
 }
 

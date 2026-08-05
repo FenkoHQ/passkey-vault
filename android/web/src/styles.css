@@ -63,6 +63,32 @@ button {
   font-weight: 500;
 }
 
+/* External links that should read as buttons. They have to be anchors rather
+   than buttons so the WebView hands them to the system browser instead of
+   navigating the vault away, so they need the button chrome restated. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-strong);
+  color: var(--ink);
+  padding: 10px 12px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+/* Chrome only: .icon-btn below still supplies the sizing, padding and colour. */
+a.icon-btn {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-strong);
+  text-decoration: none;
+}
+
 button.primary {
   border-color: var(--accent);
   background: var(--accent);
@@ -432,6 +458,14 @@ input[type='text'].search-input:focus {
   overflow-wrap: anywhere;
   font-family: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
+}
+
+/* Recovery-phrase block. Was an inline style attribute, which the WebView's
+   Content-Security-Policy now blocks. */
+.mnemonic-display {
+  user-select: all;
+  line-height: 1.9;
+  word-spacing: 0.4em;
 }
 
 .progress {

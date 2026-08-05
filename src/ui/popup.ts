@@ -29,8 +29,6 @@ import { initTheme } from '../theme';
     [key: string]: unknown;
   }
 
-  const POPUP_PASSKEY_STORAGE_KEY = 'passkeys';
-  const POPUP_TOTP_STORAGE_KEY = 'totp_entries';
   const VAULT_WARNING_DISMISSED_KEY = 'vault_warning_dismissed';
   const EXPORT_VERSION = '1.0';
   const SETUP_SKIPPED_KEY = 'master_password_setup_skipped';
@@ -263,6 +261,22 @@ import { initTheme } from '../theme';
     startTotpTicker();
     initVaultWarning();
     initFilters().then(loadVault);
+    void showUpgradeBackupNotice();
+  }
+
+  async function showUpgradeBackupNotice(): Promise<void> {
+    const result = await chrome.runtime.sendMessage({ type: 'GET_UPGRADE_BACKUP_STATUS' });
+    if (!result?.required) return;
+    if (document.getElementById('upgrade-backup-required')) return;
+    const notice = document.createElement('div');
+    notice.id = 'upgrade-backup-required';
+    notice.className = 'vault-warning';
+    notice.setAttribute('role', 'alert');
+    notice.innerHTML = `<div class="vault-warning-icon" aria-hidden="true">!</div>
+      <div class="vault-warning-text"><strong>Backup required after upgrade</strong>
+      <span>Export an encrypted backup before making vault changes. Sign-in still works.</span></div>`;
+    mainContainer.prepend(notice);
+    exportFullBtn?.focus();
   }
 
   async function initFilters(): Promise<void> {
@@ -570,11 +584,14 @@ import { initTheme } from '../theme';
       vaultListEl.style.display = 'none';
 
       const [passkeyResult, totpResult] = await Promise.all([
-        chrome.storage.local.get(POPUP_PASSKEY_STORAGE_KEY),
-        chrome.storage.local.get(POPUP_TOTP_STORAGE_KEY),
+        chrome.runtime.sendMessage({ type: 'LIST_PASSKEYS' }),
+        chrome.runtime.sendMessage({ type: 'LIST_TOTP_ENTRIES' }),
       ]);
-      allPasskeys = (passkeyResult[POPUP_PASSKEY_STORAGE_KEY] || []) as PopupPasskey[];
-      allTotpEntries = (totpResult[POPUP_TOTP_STORAGE_KEY] || []) as PopupTotpEntry[];
+      if (!passkeyResult.success || !totpResult.success) {
+        throw new Error(passkeyResult.error || totpResult.error || 'Failed to load vault');
+      }
+      allPasskeys = (passkeyResult.passkeys || []) as PopupPasskey[];
+      allTotpEntries = (totpResult.entries || []) as PopupTotpEntry[];
 
       loadingEl.style.display = 'none';
       renderVault();
@@ -790,17 +807,12 @@ import { initTheme } from '../theme';
     }
 
     try {
-      const result = await chrome.storage.local.get(POPUP_PASSKEY_STORAGE_KEY);
-      const passkeys = (result[POPUP_PASSKEY_STORAGE_KEY] || []) as PopupPasskey[];
+      const response = await chrome.runtime.sendMessage({
+        type: 'DELETE_PASSKEY',
+        payload: { credentialId },
+      });
 
-      const filtered = passkeys.filter((p) => p.id !== credentialId);
-
-      if (filtered.length < passkeys.length) {
-        await chrome.storage.local.set({ [POPUP_PASSKEY_STORAGE_KEY]: filtered });
-        // Keep the encrypted store in sync so the deletion is not undone when
-        // the background next reads back its (otherwise stale) encrypted copy.
-        await chrome.runtime.sendMessage({ type: 'RECONCILE_STORAGE' });
-
+      if (response.success) {
         showNotification(t('popupPasskeyDeleted'));
 
         await loadVault();
@@ -821,16 +833,21 @@ import { initTheme } from '../theme';
     if (password === null) return;
 
     try {
-      const result = await chrome.storage.local.get(POPUP_PASSKEY_STORAGE_KEY);
-      const passkeys = (result[POPUP_PASSKEY_STORAGE_KEY] || []) as PopupPasskey[];
+      const [passkeyResult, totpResult] = await Promise.all([
+        chrome.runtime.sendMessage({ type: 'LIST_PASSKEYS' }),
+        chrome.runtime.sendMessage({ type: 'LIST_TOTP_ENTRIES' }),
+      ]);
+      if (!passkeyResult.success || !totpResult.success) {
+        throw new Error(passkeyResult.error || totpResult.error || 'Failed to load vault');
+      }
+      const passkeys = (passkeyResult.passkeys || []) as PopupPasskey[];
 
       if (passkeys.length === 0) {
         showNotification(t('popupNoPasskeysExport'), 'error');
         return;
       }
 
-      const totpResult = await chrome.storage.local.get('totp_entries');
-      const totpEntries = (totpResult['totp_entries'] || []) as unknown[];
+      const totpEntries = (totpResult.entries || []) as unknown[];
 
       const exportData = {
         version: EXPORT_VERSION,
@@ -878,6 +895,8 @@ import { initTheme } from '../theme';
       };
 
       downloadJson(encryptedBackup, `passkey-vault-backup-${getDateString()}.json`);
+      await chrome.runtime.sendMessage({ type: 'COMPLETE_UPGRADE_BACKUP' });
+      document.getElementById('upgrade-backup-required')?.remove();
       showNotification(t('popupExportedPasskeys', { count: passkeys.length + totpEntries.length }));
     } catch (error) {
       console.error('Error exporting passkeys:', error);

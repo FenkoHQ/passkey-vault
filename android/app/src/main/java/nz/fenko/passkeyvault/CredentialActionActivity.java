@@ -1,7 +1,11 @@
 package nz.fenko.passkeyvault;
 
 import android.app.Activity;
+import android.app.KeyguardManager;
+import android.hardware.biometrics.BiometricPrompt;
+import android.os.CancellationSignal;
 import android.content.Intent;
+import java.util.function.Consumer;
 import android.os.Bundle;
 import android.service.credentials.CreateCredentialRequest;
 import android.service.credentials.CredentialProviderService;
@@ -13,6 +17,8 @@ import android.credentials.CredentialOption;
 import android.credentials.GetCredentialException;
 import android.credentials.GetCredentialResponse;
 import java.util.List;
+import java.security.MessageDigest;
+import android.util.Base64;
 
 public final class CredentialActionActivity extends Activity {
     static final String EXTRA_ACTION = "nz.fenko.passkeyvault.extra.ACTION";
@@ -52,22 +58,26 @@ public final class CredentialActionActivity extends Activity {
                 return;
             }
 
-            String origin = request == null || request.getCallingAppInfo() == null
-                    ? passkey.origin
-                    : request.getCallingAppInfo().getOrigin();
-            byte[] clientDataHash = clientDataHashFromGetRequest(request);
-            String authenticationJson =
-                    WebAuthnNative.authenticationResponseJson(passkey, requestJson, origin, clientDataHash);
-            ProviderVaultStore.upsertPasskey(this, passkey);
-
-            Bundle data = publicKeyBundle(WebAuthnNative.KEY_AUTH_RESPONSE_JSON, authenticationJson);
-            Credential credential = new Credential(WebAuthnNative.TYPE_PUBLIC_KEY_CREDENTIAL, data);
-            Intent result = new Intent();
-            result.putExtra(
-                    CredentialProviderService.EXTRA_GET_CREDENTIAL_RESPONSE,
-                    new GetCredentialResponse(credential));
-            setResult(RESULT_OK, result);
-            finish();
+            String privilegedOrigin = request == null || request.getCallingAppInfo() == null
+                    ? null : request.getCallingAppInfo().getOrigin();
+            String origin = callingAppOrigin(request == null ? null : request.getCallingAppInfo(), privilegedOrigin);
+            byte[] clientDataHash = privilegedOrigin == null ? null : clientDataHashFromGetRequest(request);
+            verifyUser(verified -> {
+                try {
+                    String authenticationJson = WebAuthnNative.authenticationResponseJson(
+                            passkey, requestJson, origin, clientDataHash, verified);
+                    ProviderVaultStore.upsertPasskey(this, passkey);
+                    Bundle data = publicKeyBundle(WebAuthnNative.KEY_AUTH_RESPONSE_JSON, authenticationJson);
+                    Credential credential = new Credential(WebAuthnNative.TYPE_PUBLIC_KEY_CREDENTIAL, data);
+                    Intent result = new Intent();
+                    result.putExtra(CredentialProviderService.EXTRA_GET_CREDENTIAL_RESPONSE,
+                            new GetCredentialResponse(credential));
+                    setResult(RESULT_OK, result);
+                    finish();
+                } catch (Exception e) {
+                    finishGetError(GetCredentialException.TYPE_UNKNOWN, e.getMessage());
+                }
+            }, () -> finishGetError(GetCredentialException.TYPE_USER_CANCELED, "User verification required"));
         } catch (Exception e) {
             finishGetError(GetCredentialException.TYPE_UNKNOWN, e.getMessage());
         }
@@ -83,25 +93,76 @@ public final class CredentialActionActivity extends Activity {
             }
 
             String requestJson = ProviderVaultStore.requestJson(request.getData());
-            String origin = request.getCallingAppInfo() == null
-                    ? null
-                    : request.getCallingAppInfo().getOrigin();
-            ProviderVaultStore.PasskeyRecord passkey =
-                    WebAuthnNative.createPasskey(requestJson, origin);
-            String registrationJson =
-                    WebAuthnNative.registrationResponseJson(passkey, requestJson, origin);
-            ProviderVaultStore.upsertPasskey(this, passkey);
-
-            Bundle data = publicKeyBundle(WebAuthnNative.KEY_REG_RESPONSE_JSON, registrationJson);
-            Intent result = new Intent();
-            result.putExtra(
-                    CredentialProviderService.EXTRA_CREATE_CREDENTIAL_RESPONSE,
-                    new CreateCredentialResponse(data));
-            setResult(RESULT_OK, result);
-            finish();
+            String privilegedOrigin = request.getCallingAppInfo() == null ? null : request.getCallingAppInfo().getOrigin();
+            String origin = callingAppOrigin(request.getCallingAppInfo(), privilegedOrigin);
+            verifyUser(verified -> {
+                try {
+                    ProviderVaultStore.PasskeyRecord passkey = WebAuthnNative.createPasskey(requestJson, origin);
+                    String registrationJson = WebAuthnNative.registrationResponseJson(passkey, requestJson, origin, verified);
+                    ProviderVaultStore.upsertPasskey(this, passkey);
+                    Bundle data = publicKeyBundle(WebAuthnNative.KEY_REG_RESPONSE_JSON, registrationJson);
+                    Intent result = new Intent();
+                    result.putExtra(CredentialProviderService.EXTRA_CREATE_CREDENTIAL_RESPONSE,
+                            new CreateCredentialResponse(data));
+                    setResult(RESULT_OK, result);
+                    finish();
+                } catch (Exception e) {
+                    finishCreateError(CreateCredentialException.TYPE_UNKNOWN, e.getMessage());
+                }
+            }, () -> finishCreateError(CreateCredentialException.TYPE_USER_CANCELED, "User verification required"));
         } catch (Exception e) {
             finishCreateError(CreateCredentialException.TYPE_UNKNOWN, e.getMessage());
         }
+    }
+
+    private String callingAppOrigin(android.service.credentials.CallingAppInfo info, String privilegedOrigin)
+            throws Exception {
+        if (privilegedOrigin != null && !privilegedOrigin.isEmpty()) return privilegedOrigin;
+        if (info == null || info.getSigningInfo() == null) {
+            throw new SecurityException("Credential request has no verified calling app");
+        }
+        byte[] certificate = info.getSigningInfo().getApkContentsSigners()[0].toByteArray();
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(certificate);
+        return "android:apk-key-hash:" + Base64.encodeToString(
+                digest, Base64.URL_SAFE | Base64.NO_PADDING | Base64.NO_WRAP);
+    }
+
+    /**
+     * Run the platform user-verification ceremony before signing.
+     *
+     * onVerified(true)  — the user actually authenticated.
+     * onVerified(false) — the device has no secure lock screen, so there is
+     *                     nothing to verify against. The ceremony still
+     *                     proceeds, but with the UV flag clear so the relying
+     *                     party is told the truth rather than a comfortable lie.
+     * onCancel          — the user dismissed the prompt, or it errored.
+     *
+     * Gating on KeyguardManager.isDeviceSecure() rather than
+     * BiometricManager.canAuthenticate() is deliberate: the latter reports
+     * NONE_ENROLLED on a device that has a PIN or pattern but no enrolled
+     * fingerprint, which would lock every such user out of their own passkeys
+     * even though setDeviceCredentialAllowed lets the prompt accept that PIN.
+     */
+    private void verifyUser(Consumer<Boolean> onVerified, Runnable onCancel) {
+        KeyguardManager keyguard = getSystemService(KeyguardManager.class);
+        if (keyguard == null || !keyguard.isDeviceSecure()) {
+            onVerified.accept(false);
+            return;
+        }
+        new BiometricPrompt.Builder(this)
+                .setTitle("Verify to use Fenko Vault")
+                .setDeviceCredentialAllowed(true)
+                .build()
+                .authenticate(new CancellationSignal(), getMainExecutor(),
+                        new BiometricPrompt.AuthenticationCallback() {
+                            @Override public void onAuthenticationSucceeded(
+                                    BiometricPrompt.AuthenticationResult result) {
+                                onVerified.accept(true);
+                            }
+                            @Override public void onAuthenticationError(int code, CharSequence message) {
+                                onCancel.run();
+                            }
+                        });
     }
 
     private byte[] clientDataHashFromGetRequest(GetCredentialRequest request) {
