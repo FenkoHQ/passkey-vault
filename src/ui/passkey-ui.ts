@@ -638,7 +638,8 @@ function showPasskeySelector(
     // Handle passkey selection
     const items = container.querySelectorAll('.pkv-passkey-item');
     items.forEach((item) => {
-      item.addEventListener('click', () => {
+      item.addEventListener('click', (event) => {
+        if (!event.isTrusted) return;
         items.forEach((i) => i.classList.remove('pkv-selected'));
         item.classList.add('pkv-selected');
         selectedId = item.getAttribute('data-id');
@@ -657,22 +658,27 @@ function showPasskeySelector(
 
     // Handle cancel
     const cancelBtn = container.querySelector('#pkv-cancel');
-    cancelBtn?.addEventListener('click', () => cleanup({ action: 'cancel' }));
+    cancelBtn?.addEventListener('click', (event) => {
+      if (event.isTrusted) cleanup({ action: 'cancel' });
+    });
 
     // Handle passthrough — let the next hook / native WebAuthn handle this
     const passthroughBtn = container.querySelector('#pkv-passthrough');
-    passthroughBtn?.addEventListener('click', () => cleanup({ action: 'passthrough' }));
+    passthroughBtn?.addEventListener('click', (event) => {
+      if (event.isTrusted) cleanup({ action: 'passthrough' });
+    });
 
     // Handle continue
     const continueBtn = container.querySelector('#pkv-continue');
-    continueBtn?.addEventListener('click', () => {
+    continueBtn?.addEventListener('click', (event) => {
+      if (!event.isTrusted) return;
       if (!selectedId) return;
       cleanup({ action: 'use', id: selectedId });
     });
 
     // Handle escape key
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.isTrusted && e.key === 'Escape') {
         cleanup({ action: 'cancel' });
       }
     };
@@ -726,11 +732,15 @@ function showPasskeyCreateConfirm(rpId: string, userName: string): Promise<boole
       }, 200);
     };
 
-    container.querySelector('#pkv-cancel')?.addEventListener('click', () => cleanup(false));
-    container.querySelector('#pkv-create')?.addEventListener('click', () => cleanup(true));
+    container.querySelector('#pkv-cancel')?.addEventListener('click', (event) => {
+      if (event.isTrusted) cleanup(false);
+    });
+    container.querySelector('#pkv-create')?.addEventListener('click', (event) => {
+      if (event.isTrusted) cleanup(true);
+    });
 
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cleanup(false);
+      if (e.isTrusted && e.key === 'Escape') cleanup(false);
     };
     document.addEventListener('keydown', handleEscape);
   });

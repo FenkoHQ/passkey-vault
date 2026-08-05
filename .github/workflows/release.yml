@@ -169,6 +169,8 @@ jobs:
             -d "client_secret=${{ secrets.CHROME_CLIENT_SECRET }}" \
             -d "refresh_token=${{ secrets.CHROME_REFRESH_TOKEN }}" \
             -d "grant_type=refresh_token" | jq -r .access_token)
+          test -n "$TOKEN" && test "$TOKEN" != "null"
+          echo "::add-mask::$TOKEN"
           echo "access_token=$TOKEN" >> $GITHUB_OUTPUT
 
       - name: Upload ZIP to Chrome Web Store

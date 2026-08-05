@@ -1,15 +1,12 @@
 import * as secp256k1 from '@noble/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
-import { secureStorage } from '../crypto/secure-storage';
 import { logger } from '../utils/logger';
 
 const RECONNECT_DELAY = 5000;
 const MAX_RECONNECT_DELAY = 60000;
 const HEARTBEAT_INTERVAL = 300000; // 5 minutes - relays rate limit aggressively
 const MIN_BROADCAST_INTERVAL = 10000; // Minimum 10s between broadcasts
-const PASSKEY_STORAGE_KEY = 'passkeys';
-const TOTP_STORAGE_KEY = 'totp_entries';
 const SYNC_DEVICES_KEY = 'sync_devices';
 const MAX_DEBUG_LOGS = 200;
 const MAX_PROCESSED_EVENTS = 1000; // Track last N event IDs for replay protection
@@ -91,6 +88,16 @@ export interface SyncTotpEntry {
   counter: number;
   createdAt: number;
   lastUsed?: number;
+}
+
+/** The background service owns vault persistence. Sync only transports records. */
+export interface SyncVaultAdapter {
+  getSnapshot(): Promise<{ passkeys: SyncPasskey[]; totpEntries: SyncTotpEntry[] }>;
+  mergeRemote(
+    passkeys: SyncPasskey[],
+    totpEntries: SyncTotpEntry[],
+    sourceDeviceId: string
+  ): Promise<void>;
 }
 
 // Per-relay state exposed in debug info
@@ -180,6 +187,7 @@ export class SyncService {
   private knownDevices = new Set<string>(); // Track devices we've already seen
   private processedEventIds = new Set<string>(); // SECURITY FIX: Replay protection
   private messageSequence = 0; // SECURITY FIX: Sequence numbers for ordering
+  private vaultAdapter: SyncVaultAdapter | null = null;
 
   private log(
     level: DebugLogEntry['level'],
@@ -282,8 +290,10 @@ export class SyncService {
     deviceId: string,
     seedHash: string,
     deviceName?: string,
-    syncSalt?: string // SECURITY FIX: Accept random salt
+    syncSalt?: string,
+    vaultAdapter?: SyncVaultAdapter
   ): Promise<void> {
+    if (vaultAdapter) this.vaultAdapter = vaultAdapter;
     if (this.chainId === chainId && this.isConnected) {
       this.log('info', 'init', 'Already initialized for this chain');
       return;
@@ -309,6 +319,14 @@ export class SyncService {
     await this.connectAll(relayUrls);
 
     this.log('info', 'init', 'Initialized for chain', { chainId: chainId.substring(0, 8) + '...' });
+  }
+
+  private async vaultSnapshot(): Promise<{
+    passkeys: SyncPasskey[];
+    totpEntries: SyncTotpEntry[];
+  }> {
+    if (!this.vaultAdapter) throw new Error('Sync vault adapter is not configured');
+    return this.vaultAdapter.getSnapshot();
   }
 
   private async deriveKeys(seedHash: string): Promise<void> {
@@ -840,9 +858,9 @@ export class SyncService {
       peerName: msg.deviceName,
     });
 
-    const passkeys = await this.getLocalPasskeys();
+    const { passkeys, totpEntries } = await this.vaultSnapshot();
     if (passkeys.length > 0) {
-      await this.broadcastPasskeyUpdate(passkeys);
+      await this.broadcastPasskeyUpdate(passkeys, totpEntries);
     } else {
       this.log('info', 'sync', 'No passkeys to share with peer');
     }
@@ -854,13 +872,13 @@ export class SyncService {
       requestId: msg.payload.requestId,
     });
 
-    const passkeys = await this.getLocalPasskeys();
+    const { passkeys, totpEntries } = await this.vaultSnapshot();
     if (passkeys.length === 0) {
       this.log('info', 'sync', 'No passkeys to share');
       return;
     }
 
-    const bundle = await this.createEncryptedBundle(passkeys);
+    const bundle = await this.createEncryptedBundle(passkeys, totpEntries);
 
     const response: SyncMessage = {
       type: 'response',
@@ -891,10 +909,8 @@ export class SyncService {
         });
         const { passkeys: remotePasskeys, totpEntries: remoteTotp } =
           await this.decryptBundle(bundle);
-        await this.mergePasskeys(remotePasskeys, msg.deviceId);
-        if (remoteTotp.length > 0) {
-          await this.mergeTotpEntries(remoteTotp, msg.deviceId);
-        }
+        if (!this.vaultAdapter) throw new Error('Sync vault adapter is not configured');
+        await this.vaultAdapter.mergeRemote(remotePasskeys, remoteTotp, msg.deviceId);
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         this.log('error', 'sync', 'Failed to decrypt/merge bundle', { error: errorMessage });
@@ -928,7 +944,10 @@ export class SyncService {
     await this.broadcastMessage(request);
   }
 
-  async broadcastPasskeyUpdate(passkeys: SyncPasskey[]): Promise<void> {
+  async broadcastPasskeyUpdate(
+    passkeys: SyncPasskey[],
+    totpEntries: SyncTotpEntry[]
+  ): Promise<void> {
     if (!this.isConnected || !this.chainId) {
       this.log('warn', 'sync', 'Not connected, skipping passkey broadcast');
       return;
@@ -939,7 +958,7 @@ export class SyncService {
       return;
     }
 
-    const bundle = await this.createEncryptedBundle(passkeys);
+    const bundle = await this.createEncryptedBundle(passkeys, totpEntries);
 
     const update: SyncMessage = {
       type: 'update',
@@ -1090,13 +1109,13 @@ export class SyncService {
   }
 
   // SECURITY FIX: passkeyIds no longer exposed outside encrypted payload
-  private async createEncryptedBundle(passkeys: SyncPasskey[]): Promise<EncryptedPasskeyBundle> {
+  private async createEncryptedBundle(
+    passkeys: SyncPasskey[],
+    totpEntries: SyncTotpEntry[]
+  ): Promise<EncryptedPasskeyBundle> {
     if (!this.encryptionKey) {
       throw new Error('Encryption key not initialized');
     }
-
-    const totpResult = await chrome.storage.local.get(TOTP_STORAGE_KEY);
-    const totpEntries = (totpResult[TOTP_STORAGE_KEY] || []) as SyncTotpEntry[];
 
     // Include passkeyIds INSIDE the encrypted payload
     const bundlePayload = {
@@ -1157,118 +1176,6 @@ export class SyncService {
       passkeys: payload.passkeys || [],
       totpEntries: payload.totpEntries || [],
     };
-  }
-
-  private async getLocalPasskeys(): Promise<SyncPasskey[]> {
-    const result = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
-    return result[PASSKEY_STORAGE_KEY] || [];
-  }
-
-  // SECURITY FIX: Improved merge with source device tracking
-  private async mergePasskeys(
-    remotePasskeys: SyncPasskey[],
-    sourceDeviceId: string
-  ): Promise<void> {
-    const localPasskeys = await this.getLocalPasskeys();
-    const localMap = new Map(localPasskeys.map((p) => [p.id, p]));
-
-    let addedCount = 0;
-    let updatedCount = 0;
-
-    this.log('info', 'merge', 'Merging passkeys', {
-      localCount: localPasskeys.length,
-      remoteCount: remotePasskeys.length,
-      sourceDevice: sourceDeviceId.substring(0, 8),
-    });
-
-    for (const remote of remotePasskeys) {
-      const local = localMap.get(remote.id);
-
-      if (!local) {
-        // New passkey - add it with source tracking
-        remote.syncSource = sourceDeviceId;
-        remote.syncTimestamp = Date.now();
-        localMap.set(remote.id, remote);
-        addedCount++;
-        this.log('info', 'merge', 'Added new passkey', {
-          id: remote.id?.substring(0, 8),
-          rpId: remote.rpId,
-        });
-      } else if (remote.createdAt > local.createdAt) {
-        // Remote is newer - update with source tracking.
-        remote.syncSource = sourceDeviceId;
-        remote.syncTimestamp = Date.now();
-        // Never let the signature counter regress: devices increment their own
-        // counters independently, and a backwards counter looks like a cloned
-        // authenticator to RPs doing clone detection.
-        remote.counter = Math.max(remote.counter || 0, local.counter || 0);
-        localMap.set(remote.id, remote);
-        updatedCount++;
-        this.log('info', 'merge', 'Updated passkey (newer)', {
-          id: remote.id?.substring(0, 8),
-          rpId: remote.rpId,
-        });
-      } else if ((remote.counter || 0) > (local.counter || 0)) {
-        // Same/older record but a higher counter — advance the counter only,
-        // so assertions made on another device do not cause a local regression.
-        local.counter = remote.counter || 0;
-        updatedCount++;
-      }
-    }
-
-    if (addedCount > 0 || updatedCount > 0) {
-      const merged = Array.from(localMap.values());
-      await chrome.storage.local.set({ [PASSKEY_STORAGE_KEY]: merged });
-      // Mirror into the encrypted store when unlocked, otherwise a later save
-      // that reads the (stale) encrypted copy would drop the merged passkeys.
-      if (secureStorage.isStorageUnlocked()) {
-        await secureStorage.storePasskeys(merged as unknown as Record<string, unknown>[]);
-      }
-      this.log('info', 'merge', 'Merge complete', {
-        added: addedCount,
-        updated: updatedCount,
-        total: merged.length,
-      });
-    } else {
-      this.log('info', 'merge', 'No changes needed');
-    }
-  }
-
-  private async mergeTotpEntries(
-    remoteEntries: SyncTotpEntry[],
-    sourceDeviceId: string
-  ): Promise<void> {
-    const result = await chrome.storage.local.get(TOTP_STORAGE_KEY);
-    const local = (result[TOTP_STORAGE_KEY] || []) as SyncTotpEntry[];
-    const localMap = new Map(local.map((e) => [e.id, e]));
-
-    let added = 0;
-    let updated = 0;
-
-    for (const remote of remoteEntries) {
-      const existing = localMap.get(remote.id);
-      if (!existing) {
-        localMap.set(remote.id, remote);
-        added++;
-      } else if (remote.createdAt > existing.createdAt) {
-        localMap.set(remote.id, remote);
-        updated++;
-      }
-    }
-
-    if (added > 0 || updated > 0) {
-      const merged = Array.from(localMap.values());
-      await chrome.storage.local.set({ [TOTP_STORAGE_KEY]: merged });
-      if (secureStorage.isStorageUnlocked()) {
-        await secureStorage.storeTotpEntries(merged as unknown as Record<string, unknown>[]);
-      }
-      this.log('info', 'merge', 'TOTP merge complete', {
-        added,
-        updated,
-        total: merged.length,
-        sourceDevice: sourceDeviceId.substring(0, 8),
-      });
-    }
   }
 
   private arrayBufferToBase64(buffer: ArrayBuffer | Uint8Array): string {

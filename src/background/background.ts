@@ -4,7 +4,12 @@ import {
   mnemonicToBytes,
   deriveEd25519Keypair,
 } from '../crypto/bip39';
-import { syncService } from '../sync/sync-service';
+import {
+  syncService,
+  type SyncPasskey,
+  type SyncTotpEntry,
+  type SyncVaultAdapter,
+} from '../sync/sync-service';
 import { secureStorage } from '../crypto/secure-storage';
 import { encryptWithPassword, decryptWithPassword } from '../crypto/encryption';
 import { randomBytes } from '@noble/hashes/utils';
@@ -25,10 +30,12 @@ import {
 } from '../crypto/totp';
 import {
   loadTotpEntries,
+  saveTotpEntries,
   addTotpEntry as addTotpEntryStore,
   deleteTotpEntry as deleteTotpEntryStore,
   entryToSecretBytes,
   generateTotpId,
+  TOTP_STORAGE_KEY,
   type StoredTotpEntry,
 } from '../crypto/totp-store';
 
@@ -36,6 +43,7 @@ const PASSKEY_STORAGE_KEY = 'passkeys';
 const SYNC_CONFIG_KEY = 'sync_config';
 const SYNC_DEVICES_KEY = 'sync_devices';
 const SYNC_STATUS_KEY = 'sync_status';
+const UPGRADE_BACKUP_REQUIRED_KEY = 'upgrade_backup_required_0_9_5';
 
 interface StoredPasskey {
   id: string;
@@ -142,17 +150,22 @@ class BackgroundService {
     if (this.useSecureStorage) {
       return (await secureStorage.getPasskeys()) as unknown as StoredPasskey[];
     }
+    if (await secureStorage.isSetup()) {
+      throw new Error('Secure storage is locked. Please unlock with master password.');
+    }
     const result = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
     return result[PASSKEY_STORAGE_KEY] || [];
   }
 
   private async savePasskeys(passkeys: StoredPasskey[]): Promise<void> {
-    // Always write to raw storage (needed by popup for display)
-    await chrome.storage.local.set({ [PASSKEY_STORAGE_KEY]: passkeys });
-    // Also write encrypted copy if secure storage is available
     if (this.useSecureStorage) {
       await secureStorage.storePasskeys(passkeys as unknown as Record<string, unknown>[]);
+      return;
     }
+    if (await secureStorage.isSetup()) {
+      throw new Error('Secure storage is locked. Please unlock with master password.');
+    }
+    await chrome.storage.local.set({ [PASSKEY_STORAGE_KEY]: passkeys });
   }
 
   /**
@@ -193,6 +206,77 @@ class BackgroundService {
     }
   }
 
+  /**
+   * One-shot upgrade for vaults created before the encrypted store became
+   * authoritative. Those builds wrote every mutation to raw storage and only
+   * mirrored it into the encrypted copy while unlocked, so on upgrade the raw
+   * keys can hold credentials the encrypted store never saw. Merge those in
+   * (raw wins on conflict — it was the freshest copy) and then delete the
+   * cleartext keys, which is what makes the PIN protect anything at rest.
+   *
+   * Deliberately not a plain reconcileSecureStorageFromRaw(): that overwrites
+   * the encrypted store with raw wholesale and would wipe an already-migrated
+   * vault, whose raw copy is legitimately absent. No-op once the keys are gone.
+   */
+  private async migrateLegacyRawStorage(): Promise<void> {
+    if (!secureStorage.isStorageUnlocked()) return;
+
+    const raw = await chrome.storage.local.get([
+      PASSKEY_STORAGE_KEY,
+      TOTP_STORAGE_KEY,
+      SYNC_CONFIG_KEY,
+    ]);
+    const rawConfig = raw[SYNC_CONFIG_KEY] as SyncConfig | undefined;
+    const hasLegacyState =
+      raw[PASSKEY_STORAGE_KEY] !== undefined ||
+      raw[TOTP_STORAGE_KEY] !== undefined ||
+      Boolean(rawConfig?.seedHash);
+    if (!hasLegacyState) return;
+
+    const rawPasskeys = (raw[PASSKEY_STORAGE_KEY] || []) as StoredPasskey[];
+    const rawTotp = (raw[TOTP_STORAGE_KEY] || []) as StoredTotpEntry[];
+
+    if (rawPasskeys.length > 0) {
+      const stored = (await secureStorage.getPasskeys()) as unknown as StoredPasskey[];
+      const merged = new Map(stored.map((entry) => [entry.credentialId, entry]));
+      for (const passkey of rawPasskeys) merged.set(passkey.credentialId, passkey);
+      await secureStorage.storePasskeys([...merged.values()] as unknown as Record<
+        string,
+        unknown
+      >[]);
+    }
+
+    if (rawTotp.length > 0) {
+      const stored = (await secureStorage.getTotpEntries()) as unknown as StoredTotpEntry[];
+      const merged = new Map(stored.map((entry) => [entry.id, entry]));
+      for (const entry of rawTotp) merged.set(entry.id, entry);
+      await secureStorage.storeTotpEntries([...merged.values()] as unknown as Record<
+        string,
+        unknown
+      >[]);
+    }
+
+    if (rawConfig?.seedHash) {
+      await secureStorage.storeSyncConfig({
+        chainId: rawConfig.chainId || '',
+        deviceId: rawConfig.deviceId || '',
+        deviceName: rawConfig.deviceName || '',
+        seedHash: rawConfig.seedHash,
+        syncSalt: rawConfig.syncSalt || null,
+        enabled: rawConfig.enabled || false,
+      });
+      const publicConfig = { ...rawConfig };
+      delete publicConfig.seedHash;
+      await chrome.storage.local.set({ [SYNC_CONFIG_KEY]: publicConfig });
+    }
+
+    await chrome.storage.local.remove([PASSKEY_STORAGE_KEY, TOTP_STORAGE_KEY]);
+    logger.info(
+      `Migrated legacy cleartext vault into the encrypted store ` +
+        `(${rawPasskeys.length} passkeys, ${rawTotp.length} TOTP); cleartext copies removed`
+    );
+  }
+
   private async initialize(): Promise<void> {
     try {
       await logger.init();
@@ -211,19 +295,35 @@ class BackgroundService {
     }
   }
 
+  /**
+   * Resolve the sync seed. Once a PIN is set the seed lives only in the
+   * encrypted store — raw `sync_config` keeps every other field so the sync UI
+   * still works while locked, but the seed derives the chain keys and must not
+   * sit in cleartext. A PIN'd vault can therefore only start sync while
+   * unlocked, which is why the unlock handler re-runs initializeSyncService().
+   */
+  private async resolveSyncSeedHash(config: SyncConfig | undefined): Promise<string | null> {
+    if (config?.seedHash) return config.seedHash;
+    if (!secureStorage.isStorageUnlocked()) return null;
+    const stored = (await secureStorage.getSyncConfig()) as { seedHash?: string } | null;
+    return stored?.seedHash || null;
+  }
+
   private async initializeSyncService(): Promise<void> {
     try {
       const configResult = await chrome.storage.local.get(SYNC_CONFIG_KEY);
       const config: SyncConfig = configResult[SYNC_CONFIG_KEY];
+      const seedHash = await this.resolveSyncSeedHash(config);
 
-      if (config?.enabled && config.chainId && config.deviceId && config.seedHash) {
+      if (config?.enabled && config.chainId && config.deviceId && seedHash) {
         logger.info('Starting sync service...');
         await syncService.initialize(
           config.chainId,
           config.deviceId,
-          config.seedHash,
+          seedHash,
           config.deviceName || undefined,
-          config.syncSalt || undefined
+          config.syncSalt || undefined,
+          this.syncVaultAdapter()
         );
         await this.updateSyncStatus({ connectionStatus: 'connected' });
         logger.info('Sync service started');
@@ -236,6 +336,39 @@ class BackgroundService {
         lastError: message,
       });
     }
+  }
+
+  private syncVaultAdapter(): SyncVaultAdapter {
+    return {
+      getSnapshot: async () => ({
+        passkeys: (await this.loadPasskeys()) as SyncPasskey[],
+        totpEntries: (await loadTotpEntries()) as SyncTotpEntry[],
+      }),
+      mergeRemote: async (remotePasskeys, remoteTotpEntries, sourceDeviceId) => {
+        const localPasskeys = await this.loadPasskeys();
+        const passkeys = new Map(localPasskeys.map((entry) => [entry.id, entry]));
+        for (const remote of remotePasskeys) {
+          const local = passkeys.get(remote.id);
+          if (!local || remote.createdAt > local.createdAt) {
+            remote.counter = Math.max(remote.counter || 0, local?.counter || 0);
+            remote.syncSource = sourceDeviceId;
+            remote.syncTimestamp = Date.now();
+            passkeys.set(remote.id, remote as StoredPasskey);
+          } else if ((remote.counter || 0) > (local.counter || 0)) {
+            local.counter = remote.counter;
+          }
+        }
+        await this.savePasskeys([...passkeys.values()]);
+
+        const localTotp = await loadTotpEntries();
+        const totp = new Map(localTotp.map((entry) => [entry.id, entry]));
+        for (const remote of remoteTotpEntries) {
+          const local = totp.get(remote.id);
+          if (!local || remote.createdAt > local.createdAt) totp.set(remote.id, remote);
+        }
+        await saveTotpEntries([...totp.values()]);
+      },
+    };
   }
 
   private setupMessageHandlers(): void {
@@ -263,13 +396,56 @@ class BackgroundService {
   private async routeMessage(message: ExtensionMessage): Promise<unknown> {
     const { type, payload } = message;
 
+    const lockedTypes = new Set([
+      'CREATE_PASSKEY',
+      'GET_PASSKEY',
+      'RETRIEVE_PASSKEY',
+      'LIST_PASSKEYS',
+      'GET_PASSKEYS',
+      'LIST_PASSKEYS_FOR_RP',
+      'DELETE_PASSKEY',
+      'ENCRYPT_BACKUP',
+      'LIST_TOTP_ENTRIES',
+      'ADD_TOTP_ENTRY',
+      'DELETE_TOTP_ENTRY',
+      'GENERATE_TOTP_CODE',
+      'IMPORT_VAULT',
+      'EXPORT_VAULT',
+      'CLEAR_VAULT',
+      'FACTORY_RESET',
+      'CHANGE_MASTER_PASSWORD',
+      'REMOVE_MASTER_PASSWORD',
+    ]);
+    const upgradeBlockedTypes = new Set([
+      'CREATE_PASSKEY',
+      'DELETE_PASSKEY',
+      'ADD_TOTP_ENTRY',
+      'DELETE_TOTP_ENTRY',
+      'IMPORT_VAULT',
+      'CLEAR_VAULT',
+      'FACTORY_RESET',
+      'CHANGE_MASTER_PASSWORD',
+      'REMOVE_MASTER_PASSWORD',
+    ]);
+    if (
+      lockedTypes.has(type) &&
+      (await secureStorage.isSetup()) &&
+      !secureStorage.isStorageUnlocked()
+    ) {
+      throw new Error('Secure storage is locked. Please unlock with master password.');
+    }
+    if (
+      upgradeBlockedTypes.has(type) &&
+      (await chrome.storage.local.get(UPGRADE_BACKUP_REQUIRED_KEY))[UPGRADE_BACKUP_REQUIRED_KEY]
+    ) {
+      throw new Error('Export an encrypted backup before changing this upgraded vault.');
+    }
+
     switch (type) {
       case 'CREATE_PASSKEY':
         return this.handleCreatePasskey(payload || {});
       case 'GET_PASSKEY':
         return this.handleGetPasskey(payload || {});
-      case 'STORE_PASSKEY':
-        return this.handleStorePasskey(payload || {});
       case 'RETRIEVE_PASSKEY':
         return this.handleRetrievePasskey(payload || {});
       case 'LIST_PASSKEYS':
@@ -291,6 +467,18 @@ class BackgroundService {
         return this.handleDeleteTotpEntry(payload || {});
       case 'GENERATE_TOTP_CODE':
         return this.handleGenerateTotpCode(payload || {});
+      case 'IMPORT_VAULT':
+        return this.handleImportVault(payload || {});
+      case 'EXPORT_VAULT':
+        return this.handleExportVault();
+      case 'CLEAR_VAULT':
+        return this.handleClearVault();
+      case 'FACTORY_RESET':
+        return this.handleFactoryReset();
+      case 'GET_UPGRADE_BACKUP_STATUS':
+        return this.handleUpgradeBackupStatus();
+      case 'COMPLETE_UPGRADE_BACKUP':
+        return this.handleCompleteUpgradeBackup();
       case 'DECRYPT_BACKUP':
         return this.handleDecryptBackup(
           payload as { data: string; iv: string; salt: string; password: string }
@@ -355,6 +543,7 @@ class BackgroundService {
         logger.info('First-time installation');
       } else if (details.reason === 'update') {
         logger.info('Extension updated');
+        void this.requireUpgradeBackupIfNeeded(details.previousVersion);
       }
     });
     chrome.runtime.onStartup.addListener(() => {
@@ -363,6 +552,26 @@ class BackgroundService {
     chrome.runtime.onSuspend.addListener(() => {
       logger.info('Extension suspending');
     });
+  }
+
+  private async requireUpgradeBackupIfNeeded(previousVersion?: string): Promise<void> {
+    if (!previousVersion || !this.isVersionBefore(previousVersion, '0.9.5')) return;
+    if (!(await secureStorage.isSetup())) return;
+    const legacy = await chrome.storage.local.get([PASSKEY_STORAGE_KEY, TOTP_STORAGE_KEY]);
+    if ((legacy[PASSKEY_STORAGE_KEY] || []).length || (legacy[TOTP_STORAGE_KEY] || []).length) {
+      await chrome.storage.local.set({ [UPGRADE_BACKUP_REQUIRED_KEY]: true });
+    }
+  }
+
+  private isVersionBefore(version: string, target: string): boolean {
+    const parse = (value: string) => value.split('.').map((part) => Number.parseInt(part, 10) || 0);
+    const current = parse(version);
+    const expected = parse(target);
+    for (let index = 0; index < Math.max(current.length, expected.length); index += 1) {
+      const delta = (current[index] || 0) - (expected[index] || 0);
+      if (delta !== 0) return delta < 0;
+    }
+    return false;
   }
 
   // ==================== PASSKEY OPERATIONS ====================
@@ -660,50 +869,6 @@ class BackgroundService {
     }
   }
 
-  private async handleStorePasskey(payload: MessagePayload): Promise<unknown> {
-    try {
-      const publicKey = payload.publicKey as Record<string, string> | undefined;
-      const origin = payload.origin as string;
-      const options = payload.options as Record<string, Record<string, string>> | undefined;
-      const passkeys = await this.loadPasskeys();
-      const rpId = options?.publicKey?.rpId || new URL(origin).hostname;
-      const credentialId = publicKey?.id || publicKey?.rawId;
-
-      if (credentialId) {
-        const existingIndex = passkeys.findIndex((p) => p.credentialId === credentialId);
-        const passkeyData: StoredPasskey = {
-          credentialId,
-          id: publicKey!.id,
-          rawId: publicKey!.rawId,
-          type: publicKey!.type,
-          response: publicKey!.response as unknown as Record<string, unknown>,
-          rpId,
-          origin,
-          createdAt: Date.now(),
-          user: { id: null, name: '', displayName: '' },
-          privateKey: '',
-          publicKey: '',
-          counter: 0,
-        };
-
-        if (existingIndex >= 0) {
-          passkeys[existingIndex] = passkeyData;
-        } else {
-          passkeys.push(passkeyData);
-        }
-
-        await this.savePasskeys(passkeys);
-        logger.debug('Stored passkey', credentialId, 'for', rpId);
-        return { success: true, message: 'Passkey stored successfully', count: passkeys.length };
-      }
-      return { success: false, error: 'No credential ID in payload' };
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error('Error storing passkey:', error);
-      return { success: false, error: message };
-    }
-  }
-
   private async handleRetrievePasskey(payload: MessagePayload): Promise<unknown> {
     try {
       const publicKey = payload.publicKey as Record<string, string> | undefined;
@@ -805,6 +970,67 @@ class BackgroundService {
       logger.error('Error listing TOTP entries:', error);
       return { success: false, error: message };
     }
+  }
+
+  private async handleImportVault(payload: MessagePayload): Promise<unknown> {
+    const incomingPasskeys = Array.isArray(payload.passkeys)
+      ? (payload.passkeys as StoredPasskey[])
+      : [];
+    const incomingTotp = Array.isArray(payload.totpEntries)
+      ? (payload.totpEntries as StoredTotpEntry[])
+      : [];
+    if (incomingPasskeys.some((entry) => !entry?.id || !entry.rpId || !entry.privateKey)) {
+      return { success: false, error: 'Backup contains an invalid passkey' };
+    }
+    const passkeys = await this.loadPasskeys();
+    const knownPasskeys = new Set(passkeys.map((entry) => entry.id));
+    const newPasskeys = incomingPasskeys.filter((entry) => !knownPasskeys.has(entry.id));
+    if (newPasskeys.length > 0) await this.savePasskeys([...passkeys, ...newPasskeys]);
+
+    const totpEntries = await loadTotpEntries();
+    const knownTotp = new Set(totpEntries.map((entry) => entry.id));
+    const newTotp = incomingTotp.filter((entry) => entry?.id && !knownTotp.has(entry.id));
+    if (newTotp.length > 0) await saveTotpEntries([...totpEntries, ...newTotp]);
+
+    if (newPasskeys.length > 0 || newTotp.length > 0) {
+      await this.incrementPendingChanges();
+      void this.triggerSync();
+    }
+    return { success: true, passkeys: newPasskeys.length, totpEntries: newTotp.length };
+  }
+
+  private async handleExportVault(): Promise<unknown> {
+    return {
+      success: true,
+      exportedAt: new Date().toISOString(),
+      passkeys: await this.loadPasskeys(),
+      totpEntries: await loadTotpEntries(),
+    };
+  }
+
+  private async handleClearVault(): Promise<unknown> {
+    await this.savePasskeys([]);
+    await saveTotpEntries([]);
+    await this.incrementPendingChanges();
+    void this.triggerSync();
+    return { success: true };
+  }
+
+  private async handleFactoryReset(): Promise<unknown> {
+    await syncService.disconnect();
+    secureStorage.lock();
+    await chrome.storage.local.clear();
+    return { success: true };
+  }
+
+  private async handleUpgradeBackupStatus(): Promise<unknown> {
+    const result = await chrome.storage.local.get(UPGRADE_BACKUP_REQUIRED_KEY);
+    return { success: true, required: result[UPGRADE_BACKUP_REQUIRED_KEY] === true };
+  }
+
+  private async handleCompleteUpgradeBackup(): Promise<unknown> {
+    await chrome.storage.local.remove(UPGRADE_BACKUP_REQUIRED_KEY);
+    return { success: true };
   }
 
   private async handleAddTotpEntry(payload: MessagePayload): Promise<unknown> {
@@ -969,7 +1195,14 @@ class BackgroundService {
         [SYNC_DEVICES_KEY]: chain,
       });
 
-      await syncService.initialize(chainId, deviceId, seedHashHex, deviceName, syncSalt);
+      await syncService.initialize(
+        chainId,
+        deviceId,
+        seedHashHex,
+        deviceName,
+        syncSalt,
+        this.syncVaultAdapter()
+      );
       this.logSync('SYNC_CHAIN_CREATED', { chainId, deviceId });
 
       return { success: true, mnemonic, deviceId, chainId };
@@ -1034,7 +1267,14 @@ class BackgroundService {
         [SYNC_DEVICES_KEY]: chain,
       });
 
-      await syncService.initialize(chainId, deviceId, seedHashHex, deviceName, syncSalt);
+      await syncService.initialize(
+        chainId,
+        deviceId,
+        seedHashHex,
+        deviceName,
+        syncSalt,
+        this.syncVaultAdapter()
+      );
       await syncService.requestSync();
       this.logSync('SYNC_CHAIN_JOINED', { chainId, deviceId });
 
@@ -1269,12 +1509,16 @@ class BackgroundService {
             config.deviceId,
             config.seedHash,
             config.deviceName || undefined,
-            config.syncSalt || undefined
+            config.syncSalt || undefined,
+            this.syncVaultAdapter()
           );
         }
       }
 
-      await syncService.broadcastPasskeyUpdate(passkeys);
+      await syncService.broadcastPasskeyUpdate(
+        passkeys as SyncPasskey[],
+        (await loadTotpEntries()) as SyncTotpEntry[]
+      );
       await syncService.requestSync();
 
       await this.updateSyncStatus({
@@ -1326,6 +1570,12 @@ class BackgroundService {
       }
 
       await this.reconcileSecureStorageFromRaw();
+      await chrome.storage.local.remove([PASSKEY_STORAGE_KEY, 'totp_entries']);
+      if (config?.seedHash) {
+        const publicConfig = { ...config };
+        delete publicConfig.seedHash;
+        await chrome.storage.local.set({ [SYNC_CONFIG_KEY]: publicConfig });
+      }
 
       return { success: true, message: 'Master password setup complete' };
     } catch (error: unknown) {
@@ -1347,11 +1597,10 @@ class BackgroundService {
         return { success: false, error: 'Invalid password or storage not initialized' };
       }
 
-      // Passkeys/TOTP created, synced, or deleted while the vault was locked are
-      // written only to raw storage (the encrypted copy needs the in-memory key).
-      // Raw is therefore the freshest complete copy — reconcile the encrypted
-      // store from it on unlock so those changes are not lost on the next save.
-      await this.reconcileSecureStorageFromRaw();
+      await this.migrateLegacyRawStorage();
+      // The seed lives in the encrypted store, so sync could not have started
+      // while locked. Now that the key is in memory, bring it up.
+      await this.initializeSyncService();
 
       return { success: true, message: 'Secure storage unlocked' };
     } catch (error: unknown) {
@@ -1381,6 +1630,7 @@ class BackgroundService {
 
   private async handleLockSecureStorage(): Promise<unknown> {
     try {
+      await syncService.disconnect();
       secureStorage.lock();
       return { success: true, message: 'Secure storage locked' };
     } catch (error: unknown) {
@@ -1396,10 +1646,18 @@ class BackgroundService {
       if (!currentPassword) {
         return { success: false, error: 'Current PIN is required' };
       }
+      const passkeys = await secureStorage.getPasskeys();
+      const totpEntries = await secureStorage.getTotpEntries();
+      const config = await secureStorage.getSyncConfig();
       const removed = await secureStorage.removeMasterPassword(currentPassword);
       if (!removed) {
         return { success: false, error: 'Failed to remove PIN — check your current PIN' };
       }
+      await chrome.storage.local.set({
+        [PASSKEY_STORAGE_KEY]: passkeys,
+        totp_entries: totpEntries,
+        ...(config ? { [SYNC_CONFIG_KEY]: config } : {}),
+      });
       return { success: true, message: 'Master PIN removed' };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);

@@ -22,6 +22,7 @@ struct WebVaultView: UIViewRepresentable {
         config.websiteDataStore = .default()   // persistent localStorage across launches
 
         let webView = WKWebView(frame: .zero, configuration: config)
+        webView.navigationDelegate = context.coordinator
         // Only allow Web Inspector attachment in debug builds. In a release
         // build this would let a paired Mac read the decrypted vault (including
         // private keys) out of the page's JS context.
@@ -59,7 +60,26 @@ struct WebVaultView: UIViewRepresentable {
         """
     }
 
-    final class Coordinator: NSObject, WKScriptMessageHandler {
+    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+        /// Keep the vault itself in the WebView and push everything else (the
+        /// feedback form, any future external link) out to the system browser.
+        /// Without this, tapping a link would replace the vault UI with a remote
+        /// page inside the app, with no way back and no address bar.
+        func webView(_ webView: WKWebView,
+                     decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            guard let url = navigationAction.request.url else {
+                decisionHandler(.allow)
+                return
+            }
+            if url.isFileURL || url.scheme == "about" {
+                decisionHandler(.allow)
+                return
+            }
+            decisionHandler(.cancel)
+            UIApplication.shared.open(url)
+        }
+
         func userContentController(_ controller: WKUserContentController,
                                    didReceive message: WKScriptMessage) {
             guard message.name == "bridge",

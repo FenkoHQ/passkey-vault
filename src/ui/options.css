@@ -259,6 +259,13 @@ nav {
   flex-shrink: 0;
 }
 
+/* The feedback entry is an external link rather than a section button, so it
+   needs the anchor underline removed and never takes the .active state. */
+.nav-item-link {
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
 .nav-item:hover {
   background: var(--bg-elev);
   color: var(--text);
