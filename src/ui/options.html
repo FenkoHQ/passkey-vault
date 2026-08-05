@@ -85,6 +85,29 @@
             </svg>
             <span data-i18n="navSecurity">Security</span>
           </button>
+          <button class="nav-item" data-section="advanced">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <line x1="21" x2="14" y1="4" y2="4" />
+              <line x1="10" x2="3" y1="4" y2="4" />
+              <line x1="21" x2="12" y1="12" y2="12" />
+              <line x1="8" x2="3" y1="12" y2="12" />
+              <line x1="21" x2="16" y1="20" y2="20" />
+              <line x1="12" x2="3" y1="20" y2="20" />
+              <line x1="14" x2="14" y1="2" y2="6" />
+              <line x1="8" x2="8" y1="10" y2="14" />
+              <line x1="16" x2="16" y1="18" y2="22" />
+            </svg>
+            <span data-i18n="navAdvanced">Advanced</span>
+          </button>
           <button class="nav-item" data-section="developer">
             <svg
               width="18"
@@ -502,6 +525,129 @@
                 <option value="120" data-i18n="optionsTwoHours">2 hours</option>
                 <option value="0" data-i18n="commonNever">Never</option>
               </select>
+            </div>
+          </div>
+        </section>
+
+        <!-- Advanced Section -->
+        <section id="section-advanced" class="section">
+          <div class="section-header">
+            <h2 data-i18n="optionsAdvancedTitle">Advanced</h2>
+            <p class="section-desc" data-i18n="optionsAdvancedDesc">
+              What the vault claims about itself during a WebAuthn ceremony. The defaults suit
+              nearly every site — change these only if you know why.
+            </p>
+          </div>
+
+          <div class="card">
+            <h3 data-i18n="optionsUvTitle">User Verification</h3>
+            <p class="card-hint" data-i18n="optionsUvDesc">
+              The vault has no verification step of its own — a click in the consent card is user
+              presence, not verification. Reporting verification anyway is what lets Google and
+              other passwordless sign-ins accept the passkey. Report presence only and those sites
+              will ask for a password instead.
+            </p>
+            <div class="timeout-selector">
+              <select id="uv-mode">
+                <option value="always" data-i18n="optionsUvAlways">
+                  Report as verified (default)
+                </option>
+                <option value="never" data-i18n="optionsUvNever">Report presence only</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 data-i18n="optionsBackupTitle">Backup Flags</h3>
+            <p class="card-hint" data-i18n="optionsBackupDesc">
+              Tell the site whether this credential can be synced to your other devices. Some sites
+              use it to decide whether to keep a second factor on the account.
+            </p>
+            <div class="setting-row">
+              <div>
+                <h3 data-i18n="optionsBeTitle">Backup eligible (BE)</h3>
+                <p class="card-hint" data-i18n="optionsBeDesc">
+                  The credential is allowed to leave this device.
+                </p>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="be-toggle" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="setting-row interception-fallback-row">
+              <div>
+                <h3 data-i18n="optionsBsTitle">Backed up (BS)</h3>
+                <p class="card-hint" data-i18n="optionsBsDesc">
+                  The credential is synced right now. Requires backup eligible.
+                </p>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="bs-toggle" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 data-i18n="optionsCounterTitle">Signature Counter</h3>
+            <p class="card-hint" data-i18n="optionsCounterDesc">
+              Every device keeps its own counter, so a synced credential can look cloned to a site
+              that checks for it. Sending zero is what platform passkey providers do.
+            </p>
+            <div class="timeout-selector">
+              <select id="counter-mode">
+                <option value="increment" data-i18n="optionsCounterIncrement">
+                  Count up per signature (default)
+                </option>
+                <option value="zero" data-i18n="optionsCounterZero">Always send zero</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 data-i18n="optionsAaguidTitle">AAGUID</h3>
+            <p class="card-hint" data-i18n="optionsAaguidDesc">
+              Identifies the authenticator model at registration. The Fenko Vault value makes sites
+              show the vault by name and icon; all-zero keeps the authenticator anonymous.
+            </p>
+            <div class="timeout-selector">
+              <select id="aaguid-mode">
+                <option value="vault" data-i18n="optionsAaguidVault">Fenko Vault (default)</option>
+                <option value="zero" data-i18n="optionsAaguidZero">Anonymous (all zero)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3 data-i18n="optionsAttachmentTitle">Reported Attachment</h3>
+            <p class="card-hint" data-i18n="optionsAttachmentDesc">
+              How the credential describes where it lives. Cosmetic on most sites.
+            </p>
+            <div class="timeout-selector">
+              <select id="attachment-mode">
+                <option value="cross-platform" data-i18n="optionsAttachmentCross">
+                  Cross-platform (default)
+                </option>
+                <option value="platform" data-i18n="optionsAttachmentPlatform">Platform</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-row">
+              <h3 data-i18n="optionsFlagsCurrent">Current Flags</h3>
+              <code id="flags-preview" class="info-value mono">--</code>
+            </div>
+            <p class="card-hint" data-i18n="optionsFlagsScope">
+              Changes apply to the next ceremony. Credentials you already registered keep working,
+              though a site that recorded different flags at registration may notice.
+            </p>
+            <div class="card-actions">
+              <button id="reset-flags-btn" class="btn btn-secondary btn-sm">
+                <span data-i18n="optionsFlagsReset">Reset to defaults</span>
+              </button>
+              <span id="flags-status" class="info-value"></span>
             </div>
           </div>
         </section>

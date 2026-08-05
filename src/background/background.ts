@@ -15,7 +15,19 @@ import { encryptWithPassword, decryptWithPassword } from '../crypto/encryption';
 import { randomBytes } from '@noble/hashes/utils';
 import { logger } from '../utils/logger';
 import { arrayBufferToBase64, arrayBufferToBase64URL, base64urlToBase64 } from '../utils/base64';
-import { createAuthenticatorData, createAttestationObjectNone, convertP1363ToDER } from './cbor';
+import {
+  createAuthenticatorData,
+  createAttestationObjectNone,
+  convertP1363ToDER,
+  ANONYMOUS_AAGUID,
+  PASSKEY_VAULT_AAGUID,
+  type AuthenticatorDataOptions,
+} from './cbor';
+import {
+  loadWebAuthnFlags,
+  saveWebAuthnFlags,
+  type WebAuthnFlagSettings,
+} from './webauthn-settings';
 import { verifyRelatedOrigin } from './related-origins';
 import {
   selectPrfEval,
@@ -44,6 +56,16 @@ const SYNC_CONFIG_KEY = 'sync_config';
 const SYNC_DEVICES_KEY = 'sync_devices';
 const SYNC_STATUS_KEY = 'sync_status';
 const UPGRADE_BACKUP_REQUIRED_KEY = 'upgrade_backup_required_0_9_5';
+
+/** Translate the user's Advanced settings into authenticator data flags. */
+function toAuthenticatorDataOptions(flags: WebAuthnFlagSettings): AuthenticatorDataOptions {
+  return {
+    userVerified: flags.userVerification === 'always',
+    backupEligible: flags.backupEligible,
+    backupState: flags.backupState,
+    aaguid: flags.aaguid === 'zero' ? ANONYMOUS_AAGUID : PASSKEY_VAULT_AAGUID,
+  };
+}
 
 interface StoredPasskey {
   id: string;
@@ -525,6 +547,10 @@ class BackgroundService {
         return this.handleSetDebugLogging(payload as { enabled: boolean });
       case 'GET_DEBUG_LOGGING':
         return this.handleGetDebugLogging();
+      case 'GET_WEBAUTHN_FLAGS':
+        return this.handleGetWebAuthnFlags();
+      case 'SET_WEBAUTHN_FLAGS':
+        return this.handleSetWebAuthnFlags(payload as { flags: unknown });
       case 'SET_AUTO_LOCK_TIMEOUT':
         return this.handleSetAutoLockTimeout(payload as { minutes: number });
       case 'GET_WEBAUTHN_LOG':
@@ -637,13 +663,15 @@ class BackgroundService {
       const clientData = { type: 'webauthn.create', challenge, origin };
       const clientDataJSONBytes = new TextEncoder().encode(JSON.stringify(clientData));
 
+      const flagSettings = await loadWebAuthnFlags();
       const authenticatorData = await createAuthenticatorData(
         rpId,
         credentialId,
         publicKeyRaw,
         true,
         0,
-        null
+        null,
+        toAuthenticatorDataOptions(flagSettings)
       );
 
       const attestationObject = createAttestationObjectNone(authenticatorData);
@@ -700,7 +728,7 @@ class BackgroundService {
             clientDataJSON: clientDataJSONBase64,
             attestationObject: attestationObjectBase64,
           },
-          authenticatorAttachment: 'cross-platform',
+          authenticatorAttachment: flagSettings.attachment,
           clientExtensionResults,
         },
       };
@@ -789,14 +817,21 @@ class BackgroundService {
       // it is returned only via clientExtensionResults.
       const clientExtensionResults = buildClientExtensionResults(prfResults);
 
+      const flagSettings = await loadWebAuthnFlags();
       passkey.counter = (passkey.counter || 0) + 1;
+      // A synced credential lives on several devices, each with its own
+      // counter, which looks like a cloned authenticator to an RP doing clone
+      // detection. Sending zero is what platform passkey providers do; the
+      // stored counter keeps moving either way so the UI still shows use.
+      const reportedCounter = flagSettings.signCounter === 'zero' ? 0 : passkey.counter;
       const authenticatorData = await createAuthenticatorData(
         rpId,
         null,
         null,
         false,
-        passkey.counter,
-        null
+        reportedCounter,
+        null,
+        toAuthenticatorDataOptions(flagSettings)
       );
 
       const clientDataHash = await crypto.subtle.digest('SHA-256', clientDataJSONBytes.buffer);
@@ -851,7 +886,7 @@ class BackgroundService {
             signature: signatureBase64,
             userHandle: userHandleBase64,
           },
-          authenticatorAttachment: 'cross-platform',
+          authenticatorAttachment: flagSettings.attachment,
           clientExtensionResults,
         },
       };
@@ -1751,6 +1786,28 @@ class BackgroundService {
     try {
       const enabled = logger.isDebugEnabled();
       return { success: true, enabled };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  }
+
+  private async handleGetWebAuthnFlags(): Promise<unknown> {
+    try {
+      return { success: true, flags: await loadWebAuthnFlags() };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  }
+
+  private async handleSetWebAuthnFlags(payload: { flags: unknown }): Promise<unknown> {
+    try {
+      // Normalized on the way in, so a malformed value can never reach a
+      // ceremony — the caller gets back what was actually stored.
+      const flags = await saveWebAuthnFlags(payload?.flags);
+      logger.info('WebAuthn ceremony settings updated');
+      return { success: true, flags };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };

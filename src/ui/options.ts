@@ -8,6 +8,12 @@ import {
   t,
 } from '../i18n';
 import { SUPPORTED_THEMES, getStoredTheme, initTheme, setStoredTheme } from '../theme';
+import {
+  DEFAULT_WEBAUTHN_FLAGS,
+  normalizeWebAuthnFlags,
+  type WebAuthnFlagSettings,
+} from '../background/webauthn-settings';
+import { FLAG_UP, FLAG_UV, FLAG_BE, FLAG_BS, FLAG_AT } from '../background/cbor';
 
 const DEFAULT_RELAYS = [
   'wss://vaultsync.fenko.nz',
@@ -50,6 +56,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadInterceptionSettings();
   loadSyncSettings();
   loadSecuritySettings();
+  loadAdvancedSettings();
   loadDeveloperSettings();
   loadExtensionInfo();
 });
@@ -564,6 +571,98 @@ function wireSecurityHandlers(): void {
     await chrome.storage.local.set({ auto_lock_timeout: minutes });
     await sendMessage('SET_AUTO_LOCK_TIMEOUT', { minutes });
   });
+}
+
+// ==================== ADVANCED ====================
+
+/** Spell out the flag byte the current settings produce, e.g. "0x45 · UP UV AT". */
+function describeFlagByte(byte: number, includeAt: boolean): string {
+  const names: string[] = [];
+  if (byte & FLAG_UP) names.push('UP');
+  if (byte & FLAG_UV) names.push('UV');
+  if (byte & FLAG_BE) names.push('BE');
+  if (byte & FLAG_BS) names.push('BS');
+  if (includeAt) names.push('AT');
+  const hex = `0x${byte.toString(16).padStart(2, '0')}`;
+  return `${hex} · ${names.join(' ')}`;
+}
+
+function flagsPreview(flags: WebAuthnFlagSettings): string {
+  let assertion = FLAG_UP;
+  if (flags.userVerification === 'always') assertion |= FLAG_UV;
+  if (flags.backupEligible) {
+    assertion |= FLAG_BE;
+    if (flags.backupState) assertion |= FLAG_BS;
+  }
+  const registration = assertion | FLAG_AT;
+
+  return `${describeFlagByte(registration, true)} ${t('optionsFlagsOnRegister')} / ${describeFlagByte(
+    assertion,
+    false
+  )} ${t('optionsFlagsOnSignIn')}`;
+}
+
+async function loadAdvancedSettings(): Promise<void> {
+  const uvSelect = document.getElementById('uv-mode') as HTMLSelectElement | null;
+  const beToggle = document.getElementById('be-toggle') as HTMLInputElement | null;
+  const bsToggle = document.getElementById('bs-toggle') as HTMLInputElement | null;
+  const counterSelect = document.getElementById('counter-mode') as HTMLSelectElement | null;
+  const aaguidSelect = document.getElementById('aaguid-mode') as HTMLSelectElement | null;
+  const attachmentSelect = document.getElementById('attachment-mode') as HTMLSelectElement | null;
+  const resetBtn = document.getElementById('reset-flags-btn');
+  if (
+    !uvSelect ||
+    !beToggle ||
+    !bsToggle ||
+    !counterSelect ||
+    !aaguidSelect ||
+    !attachmentSelect ||
+    !resetBtn
+  ) {
+    return;
+  }
+
+  const render = (flags: WebAuthnFlagSettings): void => {
+    uvSelect.value = flags.userVerification;
+    beToggle.checked = flags.backupEligible;
+    // BS without BE is invalid per spec, so the background drops it. Reflect
+    // that here rather than leaving a switch on that does nothing.
+    bsToggle.checked = flags.backupState;
+    bsToggle.disabled = !flags.backupEligible;
+    counterSelect.value = flags.signCounter;
+    aaguidSelect.value = flags.aaguid;
+    attachmentSelect.value = flags.attachment;
+    setText('flags-preview', flagsPreview(flags));
+  };
+
+  const readInputs = (): WebAuthnFlagSettings =>
+    normalizeWebAuthnFlags({
+      userVerification: uvSelect.value,
+      backupEligible: beToggle.checked,
+      backupState: bsToggle.checked,
+      signCounter: counterSelect.value,
+      attachment: attachmentSelect.value,
+      aaguid: aaguidSelect.value,
+    });
+
+  let statusTimer: number | undefined;
+  const save = async (next: WebAuthnFlagSettings): Promise<void> => {
+    const response = await sendMessage('SET_WEBAUTHN_FLAGS', { flags: next });
+    render(normalizeWebAuthnFlags(response.flags ?? next));
+
+    setText('flags-status', t('optionsFlagsSaved'));
+    window.clearTimeout(statusTimer);
+    statusTimer = window.setTimeout(() => setText('flags-status', ''), 2500);
+  };
+
+  const stored = await sendMessage('GET_WEBAUTHN_FLAGS');
+  render(normalizeWebAuthnFlags(stored.flags));
+
+  [uvSelect, counterSelect, aaguidSelect, attachmentSelect, beToggle, bsToggle].forEach((el) => {
+    el.addEventListener('change', () => save(readInputs()));
+  });
+
+  resetBtn.addEventListener('click', () => save({ ...DEFAULT_WEBAUTHN_FLAGS }));
 }
 
 // ==================== DEVELOPER ====================

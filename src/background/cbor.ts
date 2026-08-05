@@ -95,6 +95,33 @@ export function createAttestationObjectNone(authenticatorData: ArrayBuffer): Arr
   return result.buffer;
 }
 
+/** Authenticator data flag bits (WebAuthn L3 §6.1). */
+export const FLAG_UP = 0x01;
+export const FLAG_UV = 0x04;
+export const FLAG_BE = 0x08;
+export const FLAG_BS = 0x10;
+export const FLAG_AT = 0x40;
+export const FLAG_ED = 0x80;
+
+/** All-zero AAGUID — the credential does not identify its authenticator model. */
+export const ANONYMOUS_AAGUID = new Uint8Array(16);
+
+/**
+ * What the authenticator claims about a ceremony. Defaults reproduce the
+ * behaviour these values had while they were constants; the Advanced settings
+ * page overrides them per vault (src/background/webauthn-settings.ts).
+ */
+export interface AuthenticatorDataOptions {
+  /** UV — user verification happened. Asserted without a ceremony; see issue #5. */
+  userVerified?: boolean;
+  /** BE — the credential is eligible for backup / sync. */
+  backupEligible?: boolean;
+  /** BS — the credential is currently backed up. Ignored unless BE is set. */
+  backupState?: boolean;
+  /** Authenticator model identifier written into attested credential data. */
+  aaguid?: Uint8Array;
+}
+
 /**
  * Build authenticator data for create or get operations.
  */
@@ -104,27 +131,36 @@ export async function createAuthenticatorData(
   publicKeyRaw: ArrayBuffer | null,
   includeAttestedCredentialData: boolean,
   counter: number = 0,
-  extensionsData?: Uint8Array | null
+  extensionsData?: Uint8Array | null,
+  options: AuthenticatorDataOptions = {}
 ): Promise<ArrayBuffer> {
   const rpIdBytes = new TextEncoder().encode(rpId);
   const rpIdHash = new Uint8Array(await crypto.subtle.digest('SHA-256', rpIdBytes));
 
-  // UP | UV, plus AT when attested credential data follows.
+  // UP is always set: nothing reaches here without the user clicking through
+  // the consent card.
   //
-  // UV is asserted without a verification ceremony, which is a false claim to
-  // the relying party. 0.9.5 cleared it and that locked users out: Google (and
-  // every other RP requiring user verification) treats a UV=0 assertion as a
-  // second-factor-only key and demands a password. It stays set until the
-  // extension has a real ceremony to derive it from — see issue #5.
-  let flagsByte = includeAttestedCredentialData ? 0x45 : 0x05;
-  if (extensionsData && extensionsData.length > 0) flagsByte |= 0x80;
+  // UV defaults to set, which is a claim the extension cannot back up — a
+  // click is presence, not verification. 0.9.5 cleared it unconditionally and
+  // that locked users out: Google (and every other RP requiring user
+  // verification) treats a UV=0 assertion as a second-factor-only key and
+  // demands a password. It stays on by default until there is a real ceremony
+  // to derive it from — see issue #5 — and the user can turn it off.
+  let flagsByte = FLAG_UP;
+  if (options.userVerified !== false) flagsByte |= FLAG_UV;
+  if (options.backupEligible) {
+    flagsByte |= FLAG_BE;
+    if (options.backupState) flagsByte |= FLAG_BS;
+  }
+  if (includeAttestedCredentialData) flagsByte |= FLAG_AT;
+  if (extensionsData && extensionsData.length > 0) flagsByte |= FLAG_ED;
   const flags = new Uint8Array([flagsByte]);
 
   const counterBytes = new Uint8Array(4);
   new DataView(counterBytes.buffer).setUint32(0, counter, false);
 
   if (includeAttestedCredentialData && credentialId && publicKeyRaw) {
-    const aaguid = PASSKEY_VAULT_AAGUID;
+    const aaguid = options.aaguid ?? PASSKEY_VAULT_AAGUID;
     const credentialIdLength = new Uint8Array(2);
     new DataView(credentialIdLength.buffer).setUint16(0, credentialId.length, false);
     const cosePublicKey = rawPublicKeyToCose(publicKeyRaw);
