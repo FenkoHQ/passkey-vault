@@ -4,6 +4,23 @@ All notable changes to Passkey Vault are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [0.9.6] - 2026-08-06
+
+### Fixed
+
+- **Sign-in broke on every site that requires user verification.** 0.9.5 cleared
+  the UV bit in authenticator data, so Google and anyone else asking for
+  `userVerification` treated the assertion as a 2-Step-Verification-only
+  security key and fell back to asking for a password. The bit is set again and
+  existing credentials work as before.
+
+  It is still a claim the extension cannot back up — a click in the consent card
+  is user presence, not verification — and it stays that way until there is a
+  real ceremony to derive it from. That work needs a mandatory vault PIN and is
+  tracked in [#5](https://github.com/FenkoHQ/passkey-vault/issues/5) for 1.x.
+  Android is unaffected: it gates signing on the device lock screen and reports
+  what actually happened.
+
 ## [0.9.5] - 2026-08-05
 
 A security release covering the findings from a full-codebase review. The vault
