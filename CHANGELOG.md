@@ -4,6 +4,31 @@ All notable changes to Passkey Vault are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [semantic versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Advanced settings for the WebAuthn ceremony.** Everything the vault used to
+  assert as a constant is now a setting: user verification, the backup flags
+  (BE/BS), the signature counter, the AAGUID, and the reported attachment. The
+  card shows the exact flag byte each combination produces, for registration and
+  for sign-in.
+
+  Defaults reproduce 0.9.6 byte for byte, so a vault that never opens the page
+  signs exactly as before. What the settings are for:
+
+  - **User verification** — the vault has no verification step, so reporting UV
+    is a claim it cannot back up. Leaving it on is what makes Google and other
+    passwordless sign-ins work; turning it off is honest and makes those sites
+    ask for a password. Real verification is still [#5](https://github.com/FenkoHQ/passkey-vault/issues/5).
+  - **Backup flags** — a synced credential is what BE/BS were added to describe,
+    but sites read them in different ways, so they are off until you say so.
+  - **Signature counter** — every device keeps its own counter, which looks like
+    a cloned authenticator to a site that checks. Sending zero is what platform
+    passkey providers do.
+  - **AAGUID** — keep the Fenko Vault identity so sites show the vault by name
+    and icon, or go all-zero and stay anonymous.
+
 ## [0.9.6] - 2026-08-06
 
 ### Fixed
