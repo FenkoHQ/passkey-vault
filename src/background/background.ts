@@ -1,4 +1,11 @@
 import {
+  restoreRecord,
+  mergeRecords,
+  mergeDeletions,
+  SYNC_DELETIONS_KEY,
+  type SyncDeletion,
+} from '../sync/merge';
+import {
   generateMnemonic,
   validateMnemonic,
   mnemonicToBytes,
@@ -81,6 +88,7 @@ interface StoredPasskey {
   privateKey: string;
   publicKey: string;
   createdAt: number;
+  updatedAt?: number;
   counter: number;
   prfKey?: string;
   // Fields from STORE_PASSKEY path (external passkeys)
@@ -139,6 +147,13 @@ interface ExtensionMessage {
 
 class BackgroundService {
   private isInitialized: boolean;
+  private vaultJobs: Promise<unknown> = Promise.resolve();
+
+  private withVault<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.vaultJobs.then(operation);
+    this.vaultJobs = result.catch(() => {});
+    return result;
+  }
   private syncStatus: SyncStatus;
 
   constructor() {
@@ -360,36 +375,54 @@ class BackgroundService {
     }
   }
 
+  private async loadDeletions(): Promise<SyncDeletion[]> {
+    const data = await chrome.storage.local.get(SYNC_DELETIONS_KEY);
+    return data[SYNC_DELETIONS_KEY] || [];
+  }
+
+  private async recordDeletions(entries: SyncDeletion[]): Promise<void> {
+    await chrome.storage.local.set({
+      [SYNC_DELETIONS_KEY]: mergeDeletions(await this.loadDeletions(), entries),
+    });
+  }
+
   private syncVaultAdapter(): SyncVaultAdapter {
     return {
       getSnapshot: async () => ({
         passkeys: (await this.loadPasskeys()) as SyncPasskey[],
         totpEntries: (await loadTotpEntries()) as SyncTotpEntry[],
+        deletions: await this.loadDeletions(),
       }),
-      mergeRemote: async (remotePasskeys, remoteTotpEntries, sourceDeviceId) => {
-        const localPasskeys = await this.loadPasskeys();
-        const passkeys = new Map(localPasskeys.map((entry) => [entry.id, entry]));
-        for (const remote of remotePasskeys) {
-          const local = passkeys.get(remote.id);
-          if (!local || remote.createdAt > local.createdAt) {
-            remote.counter = Math.max(remote.counter || 0, local?.counter || 0);
-            remote.syncSource = sourceDeviceId;
-            remote.syncTimestamp = Date.now();
-            passkeys.set(remote.id, remote as StoredPasskey);
-          } else if ((remote.counter || 0) > (local.counter || 0)) {
-            local.counter = remote.counter;
+      onPublished: (snapshot) =>
+        this.withVault(async () => {
+          const current = await this.syncVaultAdapter().getSnapshot();
+          if (JSON.stringify(current) !== JSON.stringify(snapshot)) {
+            return;
           }
-        }
-        await this.savePasskeys([...passkeys.values()]);
-
-        const localTotp = await loadTotpEntries();
-        const totp = new Map(localTotp.map((entry) => [entry.id, entry]));
-        for (const remote of remoteTotpEntries) {
-          const local = totp.get(remote.id);
-          if (!local || remote.createdAt > local.createdAt) totp.set(remote.id, remote);
-        }
-        await saveTotpEntries([...totp.values()]);
-      },
+          await this.updateSyncStatus({
+            lastSyncSuccess: Date.now(),
+            pendingChanges: 0,
+            syncedPasskeyCount: current.passkeys.length,
+          });
+        }),
+      mergeRemote: (remotePasskeys, remoteTotpEntries, sourceDeviceId, remoteDeletions = []) =>
+        this.withVault(async () => {
+          void sourceDeviceId;
+          const deletions = mergeDeletions(await this.loadDeletions(), remoteDeletions);
+          // Persist deletion records first, so interrupted merges cannot resurrect entries.
+          await chrome.storage.local.set({ [SYNC_DELETIONS_KEY]: deletions });
+          await this.savePasskeys(
+            mergeRecords(
+              await this.loadPasskeys(),
+              remotePasskeys as StoredPasskey[],
+              deletions,
+              'passkey'
+            )
+          );
+          await saveTotpEntries(
+            mergeRecords(await loadTotpEntries(), remoteTotpEntries, deletions, 'totp')
+          );
+        }),
     };
   }
 
@@ -406,7 +439,7 @@ class BackgroundService {
     sendResponse: (response?: unknown) => void
   ): Promise<void> {
     try {
-      const response = await this.routeMessage(message);
+      const response = await this.withVault(() => this.routeMessage(message));
       sendResponse(response);
     } catch (error: unknown) {
       const message_str = error instanceof Error ? error.message : String(error);
@@ -981,6 +1014,11 @@ class BackgroundService {
       );
 
       if (filtered.length < passkeys.length) {
+        await this.recordDeletions(
+          passkeys
+            .filter((entry) => !filtered.includes(entry))
+            .map(({ id }) => ({ kind: 'passkey', id, deletedAt: Date.now() }))
+        );
         await this.savePasskeys(filtered);
         this.logSync('PASSKEY_DELETED', { credentialId });
         await this.incrementPendingChanges();
@@ -1017,6 +1055,15 @@ class BackgroundService {
     if (incomingPasskeys.some((entry) => !entry?.id || !entry.rpId || !entry.privateKey)) {
       return { success: false, error: 'Backup contains an invalid passkey' };
     }
+    const deletions = await this.loadDeletions();
+    for (const item of incomingPasskeys) {
+      Object.assign(item, restoreRecord(item, deletions, 'passkey'));
+    }
+    for (const item of incomingTotp) {
+      if (item?.id) {
+        Object.assign(item, restoreRecord(item, deletions, 'totp'));
+      }
+    }
     const passkeys = await this.loadPasskeys();
     const knownPasskeys = new Set(passkeys.map((entry) => entry.id));
     const newPasskeys = incomingPasskeys.filter((entry) => !knownPasskeys.has(entry.id));
@@ -1038,12 +1085,18 @@ class BackgroundService {
     return {
       success: true,
       exportedAt: new Date().toISOString(),
+      deletions: await this.loadDeletions(),
       passkeys: await this.loadPasskeys(),
       totpEntries: await loadTotpEntries(),
     };
   }
 
   private async handleClearVault(): Promise<unknown> {
+    const deletedAt = Date.now();
+    await this.recordDeletions([
+      ...(await this.loadPasskeys()).map(({ id }) => ({ kind: 'passkey' as const, id, deletedAt })),
+      ...(await loadTotpEntries()).map(({ id }) => ({ kind: 'totp' as const, id, deletedAt })),
+    ]);
     await this.savePasskeys([]);
     await saveTotpEntries([]);
     await this.incrementPendingChanges();
@@ -1123,6 +1176,10 @@ class BackgroundService {
     try {
       const id = payload.id as string;
       if (!id) return { success: false, error: 'Missing id' };
+      if (!(await loadTotpEntries()).some((entry) => entry.id === id)) {
+        return { success: false, error: 'Entry not found' };
+      }
+      await this.recordDeletions([{ kind: 'totp', id, deletedAt: Date.now() }]);
       const deleted = await deleteTotpEntryStore(id);
       if (!deleted) return { success: false, error: 'Entry not found' };
       this.logSync('TOTP_DELETED', { id });
@@ -1531,6 +1588,7 @@ class BackgroundService {
     await this.updateSyncStatus({
       lastSyncAttempt: Date.now(),
       connectionStatus: 'connecting',
+      pendingChanges: Math.max(1, this.syncStatus.pendingChanges),
     });
 
     try {
@@ -1557,15 +1615,12 @@ class BackgroundService {
       await syncService.requestSync();
 
       await this.updateSyncStatus({
-        lastSyncSuccess: Date.now(),
-        pendingChanges: 0,
         connectionStatus: 'connected',
         lastError: null,
         localPasskeyCount: passkeys.length,
-        syncedPasskeyCount: passkeys.length,
       });
 
-      this.logSync('SYNC_COMPLETE', { passkeyCount: passkeys.length });
+      this.logSync('SYNC_QUEUED', { passkeyCount: passkeys.length });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       await this.updateSyncStatus({

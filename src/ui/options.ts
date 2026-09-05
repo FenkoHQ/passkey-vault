@@ -859,7 +859,9 @@ async function importAllData(e: Event): Promise<void> {
 }
 
 async function clearPasskeys(): Promise<void> {
-  if (!confirm(t('optionsClearConfirm'))) return;
+  if (!confirm(`${t('optionsClearConfirm')} ${t('syncDeletionNotice')}`)) {
+    return;
+  }
 
   const result = await sendMessage('CLEAR_VAULT');
   if (!result.success) {

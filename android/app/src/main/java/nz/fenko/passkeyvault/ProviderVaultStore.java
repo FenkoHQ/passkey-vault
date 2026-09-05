@@ -5,6 +5,8 @@ import android.content.SharedPreferences;
 import android.os.Bundle;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Set;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -20,7 +22,7 @@ final class ProviderVaultStore {
 
     private ProviderVaultStore() {}
 
-    static JSONObject loadSnapshot(Context context) {
+    static synchronized JSONObject loadSnapshot(Context context) {
         SharedPreferences prefs = prefs(context);
         JSONObject out = new JSONObject();
         putJson(out, "passkeys", prefs.getString(PASSKEYS, "[]"), new JSONArray());
@@ -31,24 +33,90 @@ final class ProviderVaultStore {
         return out;
     }
 
-    static void saveSnapshot(
+    static synchronized void saveSnapshot(
             Context context,
             String passkeysJson,
             String totpJson,
             String syncConfigJson,
             String syncDevicesJson,
             String customRelaysJson) {
-        prefs(context)
-                .edit()
-                .putString(PASSKEYS, normalizeArray(passkeysJson))
-                .putString(TOTP, normalizeArray(totpJson))
-                .putString(SYNC_CONFIG, normalizeObject(syncConfigJson))
+        SharedPreferences store = prefs(context);
+        if (syncConfigJson != null && syncConfigJson.equals("{\"resetVault\":true}")) {
+            store.edit().clear().apply();
+            return;
+        }
+        JSONObject config = mergeConfig(store.getString(SYNC_CONFIG, "{}"), syncConfigJson);
+        JSONArray deletions = config.optJSONArray("deletions");
+        store.edit()
+                .putString(PASSKEYS, mergeEntries(store.getString(PASSKEYS, "[]"), passkeysJson, deletions, "passkey"))
+                .putString(TOTP, mergeEntries(store.getString(TOTP, "[]"), totpJson, deletions, "totp"))
+                .putString(SYNC_CONFIG, config.toString())
                 .putString(SYNC_DEVICES, normalizeJson(syncDevicesJson, "null"))
                 .putString(CUSTOM_RELAYS, normalizeArray(customRelaysJson))
                 .apply();
     }
 
-    static List<PasskeyRecord> loadPasskeys(Context context) {
+    private static JSONObject mergeConfig(String oldJson, String newJson) {
+        try {
+            JSONObject old = new JSONObject(oldJson);
+            JSONObject next = new JSONObject(newJson);
+            Map<String, JSONObject> records = new LinkedHashMap<>();
+            for (JSONObject config : new JSONObject[]{old, next}) {
+                JSONArray list = config.optJSONArray("deletions");
+                if (list == null) { continue; }
+                for (int i = 0; i < list.length(); i++) {
+                    JSONObject item = list.optJSONObject(i);
+                    if (item == null) { continue; }
+                    String key = item.optString("kind") + ":" + item.optString("id");
+                    JSONObject current = records.get(key);
+                    if (current == null || item.optLong("deletedAt") > current.optLong("deletedAt")) {
+                        records.put(key, item);
+                    }
+                }
+            }
+            next.put("deletions", new JSONArray(records.values()));
+            return next;
+        } catch (JSONException error) {
+            throw new IllegalArgumentException("Invalid sync configuration", error);
+        }
+    }
+
+    private static String mergeEntries(String local, String incoming, JSONArray deletions, String kind) {
+        Map<String, JSONObject> records = new LinkedHashMap<>();
+        try {
+            // A stale WebView cannot remove credentials created by the native provider.
+            for (String raw : new String[]{local, incoming}) {
+                JSONArray list = new JSONArray(raw);
+                for (int i = 0; i < list.length(); i++) {
+                    JSONObject item = list.getJSONObject(i);
+                    String id = item.optString("id", item.optString("credentialId"));
+                    JSONObject current = records.get(id);
+                    long counter = Math.max(item.optLong("counter"), current == null ? 0 : current.optLong("counter"));
+                    long version = item.optLong("updatedAt", item.optLong("createdAt"));
+                    long currentVersion = current == null ? -1 : current.optLong("updatedAt", current.optLong("createdAt"));
+                    JSONObject winner = current == null || version > currentVersion ? item : current;
+                    winner.put("counter", counter);
+                    records.put(id, winner);
+                }
+            }
+            if (deletions != null) {
+                for (int i = 0; i < deletions.length(); i++) {
+                    JSONObject item = deletions.getJSONObject(i);
+                    if (!kind.equals(item.optString("kind"))) { continue; }
+                    String id = item.optString("id");
+                    JSONObject record = records.get(id);
+                    if (record != null && record.optLong("updatedAt", record.optLong("createdAt")) <= item.optLong("deletedAt")) {
+                        records.remove(id);
+                    }
+                }
+            }
+            return new JSONArray(records.values()).toString();
+        } catch (JSONException error) {
+            throw new IllegalArgumentException("Invalid vault snapshot", error);
+        }
+    }
+
+    static synchronized List<PasskeyRecord> loadPasskeys(Context context) {
         String raw = prefs(context).getString(PASSKEYS, "[]");
         JSONArray array = parseArray(raw);
         List<PasskeyRecord> out = new ArrayList<PasskeyRecord>();
@@ -61,7 +129,7 @@ final class ProviderVaultStore {
         return out;
     }
 
-    static void savePasskeys(Context context, List<PasskeyRecord> passkeys) {
+    static synchronized void savePasskeys(Context context, List<PasskeyRecord> passkeys) {
         JSONArray array = new JSONArray();
         for (PasskeyRecord passkey : passkeys) {
             array.put(passkey.toJson());
@@ -77,7 +145,7 @@ final class ProviderVaultStore {
         return null;
     }
 
-    static void upsertPasskey(Context context, PasskeyRecord passkey) {
+    static synchronized void upsertPasskey(Context context, PasskeyRecord passkey) {
         List<PasskeyRecord> passkeys = loadPasskeys(context);
         boolean replaced = false;
         for (int i = 0; i < passkeys.size(); i++) {

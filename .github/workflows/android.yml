@@ -39,7 +39,7 @@ jobs:
         run: npm ci
 
       - name: Typecheck
-        run: npx tsc --noEmit -p tsconfig.json
+        run: npm run typecheck && npm run typecheck:mobile
 
       - name: Run tests
         run: npm test
@@ -49,6 +49,9 @@ jobs:
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
             "build-tools;36.0.0" "platforms;android-36" > /dev/null
+
+      - name: Test native snapshot merge
+        run: ANDROID_PLATFORM="$ANDROID_HOME/platforms/android-36/android.jar" bash android/test-sync.sh
 
       - name: Restore release keystore
         env:

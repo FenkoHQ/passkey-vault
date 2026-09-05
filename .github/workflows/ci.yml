@@ -39,7 +39,7 @@ jobs:
         run: npm run lint
 
       - name: Typecheck
-        run: npm run typecheck
+        run: npm run typecheck && npm run typecheck:mobile
 
       - name: Run tests
         run: npm test

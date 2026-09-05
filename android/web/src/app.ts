@@ -1,3 +1,19 @@
+import {
+  NOSTR_EVENT_KIND,
+  SYNC_BUNDLE_VERSION,
+  SYNC_SEND_INTERVAL_MS,
+  SYNC_HEARTBEAT_MS,
+  SYNC_RECONNECT_MS,
+  SYNC_LOOKBACK_SECONDS,
+  MAX_SYNC_EVENTS,
+} from '../../../src/sync/protocol';
+import {
+  restoreRecord,
+  mergeRecords,
+  mergeDeletions,
+  SYNC_DELETIONS_KEY,
+  type SyncDeletion,
+} from '../../../src/sync/merge';
 import * as secp256k1 from '@noble/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
@@ -32,6 +48,7 @@ declare global {
       canUseBiometrics?(): boolean;
       requestBiometricUnlock?(): void;
     };
+    __fenkoNativeRefresh?: (snapshot?: string) => void;
     __fenkoBiometricResult?: (ok: boolean) => void;
   }
 }
@@ -51,6 +68,7 @@ interface StoredTotpEntry {
   counter: number;
   createdAt: number;
   lastUsed?: number;
+  updatedAt?: number;
 }
 
 interface StoredPasskey {
@@ -67,6 +85,7 @@ interface StoredPasskey {
   privateKey: string;
   publicKey: string;
   createdAt: number;
+  updatedAt?: number;
   counter: number;
   prfKey?: string;
   syncSource?: string;
@@ -192,7 +211,7 @@ function mirrorVaultToAndroid(): void {
   bridge.saveVaultSnapshot(
     localStorage.getItem(PASSKEY_STORAGE_KEY) || '[]',
     localStorage.getItem(TOTP_STORAGE_KEY) || '[]',
-    localStorage.getItem(SYNC_CONFIG_KEY) || '{}',
+    JSON.stringify({ ...getSyncConfig(), deletions: loadJson(SYNC_DELETIONS_KEY, []) }),
     localStorage.getItem(SYNC_DEVICES_KEY) || 'null',
     localStorage.getItem(CUSTOM_RELAYS_KEY) || '[]'
   );
@@ -212,25 +231,36 @@ function mergeById<T extends { id?: string; credentialId?: string; createdAt?: n
   return Array.from(items.values());
 }
 
-function mergeNativeSnapshot(): void {
+function mergeNativeSnapshot(snapshotJson?: string): void {
   const bridge = window.AndroidBridge;
-  if (!bridge?.loadVaultSnapshot) return;
+  if (!snapshotJson && !bridge?.loadVaultSnapshot) return;
   try {
-    const snapshot = JSON.parse(bridge.loadVaultSnapshot());
+    const snapshot = JSON.parse(snapshotJson ?? bridge!.loadVaultSnapshot!());
+    const deletions = mergeDeletions(
+      loadJson(SYNC_DELETIONS_KEY, []),
+      snapshot.syncConfig?.deletions || []
+    );
+    localStorage.setItem(SYNC_DELETIONS_KEY, JSON.stringify(deletions));
     if (Array.isArray(snapshot.passkeys)) {
-      saveJson(PASSKEY_STORAGE_KEY, mergeById(getPasskeys(), snapshot.passkeys));
+      localStorage.setItem(
+        PASSKEY_STORAGE_KEY,
+        JSON.stringify(mergeRecords(getPasskeys(), snapshot.passkeys, deletions, 'passkey'))
+      );
     }
     if (Array.isArray(snapshot.totpEntries)) {
-      saveJson(TOTP_STORAGE_KEY, mergeById(getTotpEntries(), snapshot.totpEntries));
+      localStorage.setItem(
+        TOTP_STORAGE_KEY,
+        JSON.stringify(mergeRecords(getTotpEntries(), snapshot.totpEntries, deletions, 'totp'))
+      );
     }
     if (snapshot.syncConfig && !getSyncConfig().enabled) {
-      saveJson(SYNC_CONFIG_KEY, snapshot.syncConfig);
+      localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify(snapshot.syncConfig));
     }
     if (snapshot.syncDevices && !localStorage.getItem(SYNC_DEVICES_KEY)) {
-      saveJson(SYNC_DEVICES_KEY, snapshot.syncDevices);
+      localStorage.setItem(SYNC_DEVICES_KEY, JSON.stringify(snapshot.syncDevices));
     }
     if (Array.isArray(snapshot.customRelays) && !localStorage.getItem(CUSTOM_RELAYS_KEY)) {
-      saveJson(CUSTOM_RELAYS_KEY, snapshot.customRelays);
+      localStorage.setItem(CUSTOM_RELAYS_KEY, JSON.stringify(snapshot.customRelays));
     }
   } catch {
     // A bad native snapshot must not stop the WebView app from opening.
@@ -324,7 +354,7 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function base64ToBytes(value: string): Uint8Array {
+function base64ToBytes(value: string): Uint8Array<ArrayBuffer> {
   const binary = atob(value);
   const out = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
@@ -343,10 +373,6 @@ function uuid(): string {
   return crypto.randomUUID
     ? crypto.randomUUID()
     : base64Url(crypto.getRandomValues(new Uint8Array(16)));
-}
-
-function randomHex(bytes: number): string {
-  return bytesToHex(crypto.getRandomValues(new Uint8Array(bytes)));
 }
 
 function copyText(value: string): void {
@@ -383,7 +409,7 @@ function backupFileName(prefix: string): string {
 
 async function sha256Hex(data: Uint8Array | string): Promise<string> {
   const input = typeof data === 'string' ? new TextEncoder().encode(data) : data;
-  const digest = await crypto.subtle.digest('SHA-256', input);
+  const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(input));
   return bytesToHex(new Uint8Array(digest));
 }
 
@@ -446,12 +472,13 @@ async function requestDelete(kind: 'passkey' | 'totp', id: string): Promise<void
     const ok = await confirmDialog(
       `Delete passkey for ${passkey.rpId}?`,
       'It moves to the recycle bin in Tools and is gone for good after 7 days. ' +
-        'You may lose access to this account.'
+        'This deletion also syncs to your other devices. You may lose access to this account.'
     );
     if (!ok) return;
     const bin = getRecycleBin();
     bin.push({ kind: 'passkey', deletedAt: Date.now(), passkey });
     saveJson(RECYCLE_BIN_KEY, bin);
+    recordDeletion('passkey', passkey.id);
     setPasskeys(getPasskeys().filter((item) => item.id !== id && item.credentialId !== id));
     void state.sync?.broadcastUpdate();
     setStatus('Passkey moved to recycle bin.');
@@ -461,12 +488,13 @@ async function requestDelete(kind: 'passkey' | 'totp', id: string): Promise<void
     const ok = await confirmDialog(
       `Delete 2FA code for ${totp.issuer || totp.account || 'this account'}?`,
       'It moves to the recycle bin in Tools and is gone for good after 7 days. ' +
-        'You may lose access to this account.'
+        'This deletion also syncs to your other devices. You may lose access to this account.'
     );
     if (!ok) return;
     const bin = getRecycleBin();
     bin.push({ kind: 'totp', deletedAt: Date.now(), totp });
     saveJson(RECYCLE_BIN_KEY, bin);
+    recordDeletion('totp', totp.id);
     setTotpEntries(getTotpEntries().filter((entry) => entry.id !== id));
     void state.sync?.broadcastUpdate();
     setStatus('2FA code moved to recycle bin.');
@@ -474,14 +502,29 @@ async function requestDelete(kind: 'passkey' | 'totp', id: string): Promise<void
   render();
 }
 
+function recordDeletion(kind: SyncDeletion['kind'], id: string): void {
+  saveJson(
+    SYNC_DELETIONS_KEY,
+    mergeDeletions(loadJson(SYNC_DELETIONS_KEY, []), [{ kind, id, deletedAt: Date.now() }])
+  );
+}
+
 function restoreFromBin(index: number): void {
   const bin = getRecycleBin();
   const entry = bin[index];
   if (!entry) return;
   if (entry.kind === 'passkey' && entry.passkey) {
-    setPasskeys(mergeById(getPasskeys(), [entry.passkey]));
+    setPasskeys(
+      mergeById(getPasskeys(), [
+        restoreRecord(entry.passkey, loadJson(SYNC_DELETIONS_KEY, []), 'passkey'),
+      ])
+    );
   } else if (entry.kind === 'totp' && entry.totp) {
-    setTotpEntries(mergeById(getTotpEntries(), [entry.totp]));
+    setTotpEntries(
+      mergeById(getTotpEntries(), [
+        restoreRecord(entry.totp, loadJson(SYNC_DELETIONS_KEY, []), 'totp'),
+      ])
+    );
   }
   bin.splice(index, 1);
   saveJson(RECYCLE_BIN_KEY, bin);
@@ -591,7 +634,7 @@ async function deriveBackupKey(password: string, salt: Uint8Array): Promise<Cryp
     ['deriveKey']
   );
   return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt: new Uint8Array(salt), iterations: 100000, hash: 'SHA-256' },
     material,
     { name: 'AES-GCM', length: 256 },
     false,
@@ -680,6 +723,7 @@ function exportVault(): void {
     exportedAt: Date.now(),
     passkeys: getPasskeys(),
     totpEntries: getTotpEntries(),
+    deletions: loadJson<SyncDeletion[]>(SYNC_DELETIONS_KEY, []),
     syncConfig: getSyncConfig(),
     syncDevices: loadJson<SyncChain | null>(SYNC_DEVICES_KEY, null),
     customRelays: getRelays(),
@@ -697,6 +741,7 @@ async function exportEncryptedVault(password: string): Promise<void> {
     exportedAt: new Date().toISOString(),
     passkeys: getPasskeys(),
     totpEntries: getTotpEntries(),
+    deletions: loadJson<SyncDeletion[]>(SYNC_DELETIONS_KEY, []),
     syncConfig: getSyncConfig(),
     syncDevices: loadJson<SyncChain | null>(SYNC_DEVICES_KEY, null),
     customRelays: getRelays(),
@@ -787,6 +832,17 @@ async function importVault(raw: string): Promise<void> {
     const counter = Number.isInteger(counterRaw) && counterRaw >= 0 ? counterRaw : 0;
     return { ...entry, id: String(entry.id || ''), type, algorithm, digits, period, counter };
   });
+  saveJson(
+    SYNC_DELETIONS_KEY,
+    mergeDeletions(loadJson(SYNC_DELETIONS_KEY, []), payload.deletions || [])
+  );
+  const deletions = loadJson<SyncDeletion[]>(SYNC_DELETIONS_KEY, []);
+  for (const item of passkeys) {
+    Object.assign(item, restoreRecord(item, deletions, 'passkey'));
+  }
+  for (const item of totpEntries) {
+    Object.assign(item, restoreRecord(item, deletions, 'totp'));
+  }
   const passkeyMap = new Map(getPasskeys().map((item) => [item.id, item]));
   for (const passkey of passkeys) passkeyMap.set(passkey.id || passkey.credentialId, passkey);
   const totpMap = new Map(getTotpEntries().map((item) => [item.id, item]));
@@ -817,6 +873,15 @@ class AndroidSync {
   private nostrPrivateKey: Uint8Array | null = null;
   private nostrPublicKey: string | null = null;
   private sequence = 0;
+  private stopped = false;
+  private reconnectTimer: number | null = null;
+  private heartbeatTimer: number | null = null;
+  private incoming = Promise.resolve();
+  private pending = new Map<string, SyncMessage>();
+  private sendTimer: number | null = null;
+  private sending = false;
+  private awaitingAck = new Map<string, { id: string; msg: SyncMessage }>();
+  private lastSend = 0;
   private processed = new Set<string>();
   public connected = false;
   public lastError = '';
@@ -824,6 +889,7 @@ class AndroidSync {
   constructor(private config: SyncConfig) {}
 
   async start(): Promise<void> {
+    this.stopped = false;
     if (
       !this.config.enabled ||
       !this.config.chainId ||
@@ -836,6 +902,21 @@ class AndroidSync {
   }
 
   stop(): void {
+    this.stopped = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+    }
+    if (this.sendTimer) {
+      clearTimeout(this.sendTimer);
+    }
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+    }
+    this.reconnectTimer = null;
+    this.sendTimer = null;
+    this.heartbeatTimer = null;
+    this.pending.clear();
+    this.awaitingAck.clear();
     this.ws?.close();
     this.ws = null;
     this.connected = false;
@@ -850,12 +931,8 @@ class AndroidSync {
       false,
       ['deriveKey', 'deriveBits']
     );
-    const encryptionSalt = this.config.syncSalt
-      ? encoder.encode(this.config.syncSalt)
-      : encoder.encode(`pkvault-sync-${this.config.chainId}-enc`);
-    const nostrSalt = this.config.syncSalt
-      ? encoder.encode(`${this.config.syncSalt}-nostr`)
-      : encoder.encode(`pkvault-sync-${this.config.chainId}-nostr`);
+    const encryptionSalt = encoder.encode(`pkvault-sync-${this.config.chainId}-enc`);
+    const nostrSalt = encoder.encode(`pkvault-sync-${this.config.chainId}-nostr`);
     this.encryptionKey = await crypto.subtle.deriveKey(
       { name: 'PBKDF2', salt: encryptionSalt, iterations: 100000, hash: 'SHA-256' },
       keyMaterial,
@@ -874,6 +951,9 @@ class AndroidSync {
 
   private connect(): void {
     const relays = getRelays();
+    if (this.stopped) {
+      return;
+    }
     const relay = relays[this.relayIndex % relays.length];
     this.ws = new WebSocket(relay);
     this.ws.onopen = () => {
@@ -881,9 +961,23 @@ class AndroidSync {
       this.lastError = '';
       this.subscribe();
       void this.announce();
+      void this.broadcastUpdate();
+      void this.requestSync();
+      if (!this.heartbeatTimer) {
+        this.heartbeatTimer = window.setInterval(() => {
+          void this.broadcastUpdate();
+          void this.requestSync();
+        }, SYNC_HEARTBEAT_MS);
+      }
       render();
     };
-    this.ws.onmessage = (event) => void this.handleRelayMessage(String(event.data));
+    this.ws.onmessage = (event) => {
+      this.incoming = this.incoming
+        .then(() => this.handleRelayMessage(String(event.data)))
+        .catch((error) => {
+          this.lastError = String(error);
+        });
+    };
     this.ws.onerror = () => {
       this.lastError = `Relay error: ${relay}`;
       render();
@@ -891,9 +985,9 @@ class AndroidSync {
     this.ws.onclose = () => {
       this.connected = false;
       render();
-      if (getSyncConfig().enabled) {
+      if (!this.stopped && getSyncConfig().enabled) {
         this.relayIndex = (this.relayIndex + 1) % getRelays().length;
-        window.setTimeout(() => this.connect(), 5000);
+        this.reconnectTimer = window.setTimeout(() => this.connect(), SYNC_RECONNECT_MS);
       }
     };
   }
@@ -906,11 +1000,12 @@ class AndroidSync {
         'REQ',
         subId,
         {
-          kinds: [30078],
+          kinds: [NOSTR_EVENT_KIND],
           '#d': [`pksync-${this.config.chainId}`],
-          since: Math.floor(Date.now() / 1000) - 3600,
+          since: Math.floor(Date.now() / 1000) - SYNC_LOOKBACK_SECONDS,
           limit: 50,
         },
+        { kinds: [NOSTR_EVENT_KIND], authors: [this.nostrPublicKey], '#h': [this.config.chainId] },
       ])
     );
   }
@@ -957,24 +1052,72 @@ class AndroidSync {
   }
 
   private async broadcast(msg: SyncMessage): Promise<void> {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    const encrypted = await this.encryptMessage(msg);
-    const event = await this.createEvent(encrypted);
-    this.ws.send(JSON.stringify(['EVENT', event]));
+    this.pending.set(msg.type, msg);
+    await this.flushMessages();
   }
 
-  private async createEvent(content: string) {
+  private async flushMessages(): Promise<void> {
+    if (this.stopped || this.sending || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    if (Date.now() - this.lastSend < SYNC_SEND_INTERVAL_MS) {
+      this.scheduleSend();
+      return;
+    }
+    const msg = this.pending.values().next().value as SyncMessage | undefined;
+    if (!msg) {
+      return;
+    }
+    this.sending = true;
+    this.lastSend = Date.now();
+    try {
+      const encrypted = await this.encryptMessage(msg);
+      const event = await this.createEvent(encrypted, msg.type);
+      this.awaitingAck.set(msg.type, { id: event.id, msg });
+      this.ws.send(JSON.stringify(['EVENT', event]));
+      if (this.pending.get(msg.type) === msg) {
+        this.pending.delete(msg.type);
+        this.pending.set(msg.type, msg);
+      }
+    } catch (error) {
+      this.lastError = String(error);
+    } finally {
+      this.sending = false;
+      this.scheduleSend();
+    }
+  }
+
+  private scheduleSend(): void {
+    if (this.sendTimer || this.stopped || this.pending.size === 0) {
+      return;
+    }
+    this.sendTimer = window.setTimeout(
+      () => {
+        this.sendTimer = null;
+        void this.flushMessages();
+      },
+      Math.max(0, SYNC_SEND_INTERVAL_MS - (Date.now() - this.lastSend))
+    );
+  }
+
+  private async createEvent(content: string, type?: SyncMessage['type']) {
     if (!this.nostrPrivateKey || !this.nostrPublicKey) throw new Error('Sync keys are not ready');
     const created_at = Math.floor(Date.now() / 1000);
-    const tags = [['d', `pksync-${this.config.chainId}`]];
-    const data = [0, this.nostrPublicKey, created_at, 30078, tags, content];
+    const snapshot = type === 'update';
+    const tags = snapshot
+      ? [
+          ['d', `pksync-${this.config.chainId}-${this.config.deviceId}`],
+          ['h', this.config.chainId!],
+        ]
+      : [['d', `pksync-${this.config.chainId}`]];
+    const data = [0, this.nostrPublicKey, created_at, NOSTR_EVENT_KIND, tags, content];
     const hash = sha256(new TextEncoder().encode(JSON.stringify(data)));
     const sig = await secp256k1.schnorr.signAsync(hash, this.nostrPrivateKey);
     return {
       id: bytesToHex(hash),
       pubkey: this.nostrPublicKey,
       created_at,
-      kind: 30078,
+      kind: NOSTR_EVENT_KIND,
       tags,
       content,
       sig: bytesToHex(sig),
@@ -1013,6 +1156,7 @@ class AndroidSync {
     const totpEntries = getTotpEntries();
     const payload = {
       passkeys,
+      deletions: loadJson<SyncDeletion[]>(SYNC_DELETIONS_KEY, []),
       passkeyIds: passkeys.map((item) => item.id),
       totpEntries,
       totpIds: totpEntries.map((item) => item.id),
@@ -1026,7 +1170,7 @@ class AndroidSync {
       new TextEncoder().encode(JSON.stringify(payload))
     );
     return {
-      version: '2.0',
+      version: SYNC_BUNDLE_VERSION,
       deviceId: this.config.deviceId!,
       timestamp: Date.now(),
       nonce: bytesToBase64(nonce),
@@ -1039,6 +1183,7 @@ class AndroidSync {
   private async decryptBundle(bundle: EncryptedPasskeyBundle): Promise<{
     passkeys: StoredPasskey[];
     totpEntries: StoredTotpEntry[];
+    deletions: SyncDeletion[];
   }> {
     if (!this.encryptionKey) throw new Error('Encryption key is not ready');
     const decrypted = await crypto.subtle.decrypt(
@@ -1047,19 +1192,36 @@ class AndroidSync {
       base64ToBytes(bundle.ciphertext)
     );
     const payload = JSON.parse(new TextDecoder().decode(decrypted));
-    if (Array.isArray(payload)) return { passkeys: payload, totpEntries: [] };
+    if (Array.isArray(payload)) return { passkeys: payload, totpEntries: [], deletions: [] };
     return {
       passkeys: payload.passkeys || [],
       totpEntries: payload.totpEntries || [],
+      deletions: payload.deletions || [],
     };
   }
 
   private async handleRelayMessage(raw: string): Promise<void> {
     const parsed = JSON.parse(raw);
+    if (parsed[0] === 'OK') {
+      if (parsed[2] !== true) {
+        this.lastError = String(parsed[3] || 'Relay rejected update');
+        return;
+      }
+      this.lastError = '';
+      for (const [type, pending] of this.awaitingAck) {
+        if (pending.id !== parsed[1]) {
+          continue;
+        }
+        this.awaitingAck.delete(type);
+        if (this.pending.get(type) === pending.msg) {
+          this.pending.delete(type);
+        }
+      }
+      return;
+    }
     if (parsed[0] !== 'EVENT' || !parsed[2]) return;
     const event = parsed[2];
     if (!event.id || this.processed.has(event.id)) return;
-    this.processed.add(event.id);
     const expected = bytesToHex(
       sha256(
         new TextEncoder().encode(
@@ -1075,7 +1237,7 @@ class AndroidSync {
       )
     );
     if (expected !== event.id) return;
-    const ok = await secp256k1.schnorr.verify(
+    const ok = await secp256k1.schnorr.verifyAsync(
       hexToBytes(event.sig),
       hexToBytes(event.id),
       hexToBytes(event.pubkey)
@@ -1102,7 +1264,11 @@ class AndroidSync {
     }
     if ((msg.type === 'response' || msg.type === 'update') && msg.payload.bundle) {
       const bundle = await this.decryptBundle(msg.payload.bundle);
-      this.mergeVault(bundle.passkeys, bundle.totpEntries, msg.deviceId);
+      this.mergeVault(bundle.passkeys, bundle.totpEntries, msg.deviceId, bundle.deletions);
+    }
+    this.processed.add(event.id);
+    if (this.processed.size > MAX_SYNC_EVENTS) {
+      this.processed.delete(this.processed.values().next().value!);
     }
     render();
   }
@@ -1129,26 +1295,17 @@ class AndroidSync {
   private mergeVault(
     passkeys: StoredPasskey[],
     totpEntries: StoredTotpEntry[],
-    sourceDeviceId: string
+    sourceDeviceId: string,
+    remoteDeletions: SyncDeletion[] = []
   ): void {
-    const localPasskeys = new Map(getPasskeys().map((item) => [item.id, item]));
-    for (const remote of passkeys) {
-      const local = localPasskeys.get(remote.id);
-      if (!local || remote.createdAt > local.createdAt) {
-        localPasskeys.set(remote.id, {
-          ...remote,
-          syncSource: sourceDeviceId,
-          syncTimestamp: Date.now(),
-        });
-      }
-    }
-    const localTotp = new Map(getTotpEntries().map((item) => [item.id, item]));
-    for (const remote of totpEntries) {
-      const local = localTotp.get(remote.id);
-      if (!local || remote.createdAt > local.createdAt) localTotp.set(remote.id, remote);
-    }
-    setPasskeys(Array.from(localPasskeys.values()));
-    setTotpEntries(Array.from(localTotp.values()));
+    void sourceDeviceId;
+    const deletions = mergeDeletions(
+      loadJson<SyncDeletion[]>(SYNC_DELETIONS_KEY, []),
+      remoteDeletions
+    );
+    saveJson(SYNC_DELETIONS_KEY, deletions);
+    setPasskeys(mergeRecords(getPasskeys(), passkeys, deletions, 'passkey'));
+    setTotpEntries(mergeRecords(getTotpEntries(), totpEntries, deletions, 'totp'));
   }
 }
 
@@ -1216,8 +1373,7 @@ async function configureSync(
   const keypair = await deriveEd25519Keypair(seedBytes);
   const seedHash = await sha256Hex(seedBytes);
   const chainId = seedHash.slice(0, 32);
-  const syncSalt =
-    localStorage.getItem('android_sync_deterministic_salt') === '1' ? null : randomHex(32);
+  const syncSalt = null;
   const deviceId = uuid();
   const publicKey = bytesToHex(keypair.publicKey);
   const device: SyncDevice = {
@@ -1638,14 +1794,6 @@ function renderSync(): string {
       </form>`
       }
       <div class="panel stack">
-        <h2>Compatibility</h2>
-        <p class="muted">Default mode matches the extension's current salt field. Deterministic mode is useful for Android-to-Android tests.</p>
-        <label class="row">
-          <input id="deterministic-salt" type="checkbox" ${localStorage.getItem('android_sync_deterministic_salt') === '1' ? 'checked' : ''} />
-          <span>Use deterministic sync salt</span>
-        </label>
-      </div>
-      <div class="panel stack">
         <h2>Relays</h2>
         <textarea id="relay-list" spellcheck="false">${escapeHtml(relays.join('\n'))}</textarea>
         <button id="save-relays">Save relays</button>
@@ -1904,11 +2052,6 @@ function bindSync(): void {
     pendingMnemonic = null;
     render();
   });
-  document.getElementById('deterministic-salt')?.addEventListener('change', (event) => {
-    const checked = (event.currentTarget as HTMLInputElement).checked;
-    if (checked) localStorage.setItem('android_sync_deterministic_salt', '1');
-    else localStorage.removeItem('android_sync_deterministic_salt');
-  });
   document.getElementById('save-relays')?.addEventListener('click', () => {
     const raw = (document.getElementById('relay-list') as HTMLTextAreaElement).value;
     setRelays(raw);
@@ -1962,7 +2105,7 @@ function bindTools(): void {
   document.getElementById('wipe-vault')?.addEventListener('click', () => {
     if (!confirm('Wipe all local vault data?')) return;
     localStorage.clear();
-    mirrorVaultToAndroid();
+    window.AndroidBridge?.saveVaultSnapshot?.('[]', '[]', '{"resetVault":true}', 'null', '[]');
     state.sync?.stop();
     state.sync = null;
     setStatus('Vault wiped.', 'warn');
@@ -2038,6 +2181,15 @@ function setupPullToRefresh(): void {
 }
 
 let pointerDown = false;
+
+window.__fenkoNativeRefresh = (snapshot?: string) => {
+  const before = JSON.stringify([getPasskeys(), getTotpEntries()]);
+  mergeNativeSnapshot(snapshot);
+  if (before !== JSON.stringify([getPasskeys(), getTotpEntries()])) {
+    void state.sync?.broadcastUpdate();
+    render();
+  }
+};
 
 async function boot(): Promise<void> {
   localStorage.removeItem(LEGACY_LOCK_KEY);

@@ -93,6 +93,7 @@ const en: TranslationMap = {
   popupDetails: 'Details',
   popupDel: 'Del',
   popupDeletePasskeyTitle: 'Delete Passkey?',
+  syncDeletionNotice: 'When sync is enabled, this deletion also applies to your other devices.',
   popupDeletePasskeyMessage: 'You will no longer be able to sign in to {site} using this passkey.',
   popupPasskeyDeleted: 'Passkey deleted successfully',
   popupPasskeyNotFound: 'Passkey not found',
