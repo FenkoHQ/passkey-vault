@@ -22,6 +22,14 @@ export type SignCounterMode = 'increment' | 'zero';
 /** What `authenticatorAttachment` says on the returned credential. */
 export type AttachmentMode = 'cross-platform' | 'platform';
 
+/**
+ * Transport hints for AuthenticatorAttestationResponse.getTransports(),
+ * derived from the attachment claim so the two never contradict each other.
+ */
+export function transportsFor(attachment: AttachmentMode): AuthenticatorTransport[] {
+  return attachment === 'platform' ? ['internal'] : ['hybrid', 'internal'];
+}
+
 /** Identify the authenticator model, or stay anonymous with an all-zero AAGUID. */
 export type AaguidMode = 'vault' | 'zero';
 

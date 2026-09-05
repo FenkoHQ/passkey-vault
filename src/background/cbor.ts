@@ -35,6 +35,9 @@ export function encodeByteString(bytes: Uint8Array): number[] {
   return [0x59, (bytes.length >> 8) & 0xff, bytes.length & 0xff, ...bytes];
 }
 
+/** COSE algorithm identifier for ES256 (RFC 9053), the only key type the vault issues. */
+export const COSE_ALG_ES256 = -7;
+
 /**
  * Encode a raw P-256 public key (65 bytes, uncompressed) into COSE Key format.
  */
