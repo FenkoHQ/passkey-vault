@@ -1304,7 +1304,9 @@ class AndroidSync {
         this.deliveries.delete(type);
         if (this.pending.get(type) === delivery.msg) {
           this.pending.delete(type);
-          this.lastError = '';
+          if (![...this.deliveries.values()].some(({ batch }) => batch.exhausted)) {
+            this.lastError = '';
+          }
         }
       }
       return;

@@ -740,7 +740,9 @@ export class SyncService {
             this.deliveries.delete(type);
             if (this.pendingMessages.get(type) === delivery.msg) {
               this.pendingMessages.delete(type);
-              this.lastError = '';
+              if (![...this.deliveries.values()].some(({ batch }) => batch.exhausted)) {
+                this.lastError = '';
+              }
               if (
                 type === 'update' &&
                 delivery.msg.payload.bundle &&

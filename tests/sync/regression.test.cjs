@@ -667,3 +667,22 @@ for (const fixture of require('./merge-fixtures.json')) {
     }
   });
 }
+
+test('acknowledging presence cannot hide an exhausted snapshot', async () => {
+  const { s, context } = await browser();
+  const frames = [];
+  const conn = { ws: { readyState: 1, send: (frame) => frames.push(JSON.parse(frame)) } };
+  s.relayConnections = [conn];
+  await s.broadcastMessage({ type: 'update', payload: {} });
+  for (let i = 0; i < 6; i++) {
+    context.Date = class extends Date {
+      static now() {
+        return Date.now() + (i + 1) * 600000;
+      }
+    };
+    await s.flushBroadcast();
+  }
+  await s.broadcastMessage({ type: 'announce', payload: { action: 'online' } });
+  await s.handleWebSocketMessage(JSON.stringify(['OK', frames.at(-1)[1].id, true, '']), conn);
+  assert.ok(s.getStatus().lastError, 'presence ACK is not a snapshot ACK');
+});
