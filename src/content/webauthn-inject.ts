@@ -359,12 +359,17 @@
 
   /** AuthenticationResponseJSON (WebAuthn Level 3 §5.8.1.2). */
   function authenticationResponseJSON(raw: SerializedResponse) {
-    return {
+    const json: Record<string, unknown> = {
       clientDataJSON: toBase64URL(raw.clientDataJSON),
       authenticatorData: toBase64URL(raw.authenticatorData),
       signature: toBase64URL(raw.signature),
-      userHandle: raw.userHandle ? toBase64URL(raw.userHandle) : null,
     };
+
+    // JSON omits an absent handle; the response object still exposes null.
+    if (raw.userHandle != null) {
+      json.userHandle = toBase64URL(raw.userHandle);
+    }
+    return json;
   }
 
   /**

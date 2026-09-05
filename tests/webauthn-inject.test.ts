@@ -303,11 +303,12 @@ describe('webauthn-inject credential shape', () => {
       expect(bytesOf(cred.response.userHandle)).toEqual(Array.from(USER_HANDLE));
     });
 
-    it('reports a missing userHandle as null', async () => {
+    it('keeps a missing userHandle null on the response and omits it from JSON', async () => {
       const cred = await runGet(getPayload(null));
 
       expect(cred.response.userHandle).toBeNull();
-      expect(cred.toJSON().response.userHandle).toBeNull();
+      expect(cred.toJSON().response).not.toHaveProperty('userHandle');
+      expect(JSON.parse(JSON.stringify(cred)).response).not.toHaveProperty('userHandle');
     });
 
     it('never falls through to a native member', async () => {

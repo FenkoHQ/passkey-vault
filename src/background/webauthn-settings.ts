@@ -23,11 +23,11 @@ export type SignCounterMode = 'increment' | 'zero';
 export type AttachmentMode = 'cross-platform' | 'platform';
 
 /**
- * Transport hints for AuthenticatorAttestationResponse.getTransports(),
- * derived from the attachment claim so the two never contradict each other.
+ * Only claim the local platform transport. Cross-platform attachment alone
+ * does not establish support for any particular transport.
  */
 export function transportsFor(attachment: AttachmentMode): AuthenticatorTransport[] {
-  return attachment === 'platform' ? ['internal'] : ['hybrid', 'internal'];
+  return attachment === 'platform' ? ['internal'] : [];
 }
 
 /** Identify the authenticator model, or stay anonymous with an all-zero AAGUID. */
