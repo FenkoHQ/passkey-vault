@@ -11,3 +11,15 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - run: bash ios/test-sync.sh
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: bash ios/build-web.sh
+      - run: brew install xcodegen
+      - name: Build app and credential provider without signing
+        working-directory: ios
+        run: |
+          xcodegen generate
+          xcodebuild -project FenkoVault.xcodeproj -scheme FenkoVault \
+            -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build

@@ -37,4 +37,18 @@ vault.upsert(signed)
 let result = vault.loadPasskeys()[0].toJSON()
 require(result["prfKey"] as? String == "keep-prf", "native sign discarded PRF key")
 require(result["updatedAt"] as? Double == 3.0, "native sign discarded restore revision")
+var a = restored
+a["updatedAt"] = 4.5
+a["label"] = "a"
+var z = a
+z["label"] = "z"
+for pair in [[a, z], [z, a]] {
+    defaults.set(json([pair[0]]), forKey: "passkeys")
+    vault.saveSnapshotFromWeb(passkeys: json([pair[1]]), totp: nil, syncConfig: "{}", syncDevices: nil, customRelays: nil)
+    require(vault.loadPasskeys()[0].toJSON()["label"] as? String == "z", "equal revision depends on arrival order")
+}
+vault.saveSnapshotFromWeb(passkeys: "[]", totp: nil, syncConfig: "{\"resetVault\":true}", syncDevices: nil, customRelays: nil)
+require(vault.loadPasskeys().count == 1, "config must not reset the vault")
+vault.resetVault()
+require(vault.loadPasskeys().isEmpty, "explicit reset failed")
 print("iOS native snapshot merge: PASS")
