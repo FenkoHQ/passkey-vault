@@ -34,7 +34,7 @@ before(async () => {
   );
   mobileCode = await bundle(
     'android/web/src/app.ts',
-    '\nrender = () => {}; export { AndroidSync, getPasskeys, setPasskeys, getTotpEntries, setTotpEntries, mergeNativeSnapshot, restoreFromBin };',
+    '\nrender = () => {}; export { AndroidSync, getPasskeys, setPasskeys, getTotpEntries, setTotpEntries, mergeNativeSnapshot, restoreFromBin, getSyncConfig };',
     'void boot().catch'
   );
 });
@@ -444,4 +444,95 @@ test('a temporary storage failure does not permanently discard a snapshot', asyn
   await b.s.handleWebSocketMessage(frame, { url: 'test' });
   await b.s.handleWebSocketMessage(frame, { url: 'test' });
   assert.equal(merges, 2);
+});
+
+
+test('equal revisions ignore property order and keep counter-independent winners', () => {
+  const e = env(mobileCode), m = new e.api.AndroidSync({ ...config });
+  const a = { ...passkey, label: 'a', counter: 99 };
+  const z = { label: 'z', ...passkey, counter: 1 };
+  e.api.setPasskeys([a]);
+  m.mergeVault([z], [], 'peer');
+  assert.equal(e.api.getPasskeys()[0].label, 'z');
+  assert.equal(e.api.getPasskeys()[0].counter, 99);
+  m.mergeVault([a], [], 'peer');
+  assert.equal(e.api.getPasskeys()[0].label, 'z');
+});
+
+test('both readers reject unsupported bundle versions', async () => {
+  const { b, m } = await clients();
+  const bundle = await m.createBundle();
+  for (const version of ['2.0', '3.0', '99.0', undefined]) {
+    await assert.rejects(b.s.decryptBundle({ ...bundle, version }), /version/i);
+    await assert.rejects(m.decryptBundle({ ...bundle, version }), /version/i);
+  }
+});
+
+test('sync v4 cannot publish into legacy relay namespaces or use legacy keys', async () => {
+  const { s } = await browser();
+  for (const type of ['update', 'response', 'announce', 'request']) {
+    const event = await s.createNostrEvent('test', type);
+    assert.ok(event.tags.find(t => t[0] === 'd')[1].startsWith('pksync-v4-'));
+  }
+});
+
+test('legacy sync salts are removed from mobile stored configuration', () => {
+  const e = env(mobileCode);
+  e.storage.set('sync_config', JSON.stringify(config));
+  assert.equal('syncSalt' in e.api.getSyncConfig(), false);
+  assert.equal('syncSalt' in JSON.parse(e.storage.get('sync_config')), false);
+});
+
+test('a stalled sync request does not block a passkey lookup', async () => {
+  const e = env(backgroundCode);
+  const owner = Object.create(e.api.BackgroundService.prototype);
+  owner.vaultJobs = Promise.resolve();
+  let release;
+  owner.handleTriggerSync = () => new Promise(resolve => { release = resolve; });
+  owner.handleListPasskeys = async () => ({ success: true });
+  const sync = owner.handleMessage({ type: 'TRIGGER_SYNC' }, () => {});
+  await new Promise(resolve => setImmediate(resolve));
+  let replied = false;
+  const lookup = owner.handleMessage({ type: 'LIST_PASSKEYS' }, () => { replied = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  const completed = replied;
+  release();
+  await Promise.all([sync, lookup]);
+  assert.equal(completed, true);
+});
+
+for (const platform of ['browser', 'mobile']) {
+  test(`${platform} stops retrying an unacknowledged snapshot`, async () => {
+    const e = platform === 'browser' ? await browser() : env(mobileCode);
+    const s = e.s || new e.api.AndroidSync({ ...config });
+    if (!e.s) await s.deriveKeys();
+    const frames = [];
+    const ws = { readyState: 1, send: frame => frames.push(JSON.parse(frame)) };
+    if (e.s) s.relayConnections = [{ ws }]; else s.ws = ws;
+    const send = () => e.s ? s.flushBroadcast() : s.flushMessages();
+    await (e.s ? s.broadcastMessage({ type: 'update', payload: {} }) : s.broadcast({ type: 'update', payload: {} }));
+    for (let i = 0; i < 12; i++) {
+      e.context.Date = class extends Date { static now() { return Date.now() + (i + 1) * 600000; } };
+      await send();
+    }
+    assert.ok(frames.length <= 5, `sent ${frames.length} times`);
+    assert.ok(s.lastError, 'retry exhaustion must be visible');
+    assert.equal(new Set(frames.map(frame => frame[1].id)).size, 1, 'retries reuse event IDs');
+  });
+}
+
+test('large deletion history travels in bounded signed frames and reassembles', async () => {
+  const { b, owner, mobile, m } = await clients();
+  const deletions = Array.from({ length: 3000 }, (_, i) => ({ kind: 'passkey', id: `deleted-${i}`, deletedAt: 2 }));
+  b.s.vaultAdapter.getSnapshot = async () => ({ passkeys: [], totpEntries: [], deletions });
+  const frames = [];
+  b.s.isConnected = true;
+  b.s.relayConnections = [{ ws: { readyState: 1, send: frame => frames.push(JSON.parse(frame)) } }];
+  await b.s.broadcastPasskeyUpdate([], []);
+  assert.ok(frames.length > 1, 'large snapshot must be split');
+  for (const frame of frames.reverse()) {
+    assert.ok(Buffer.byteLength(JSON.stringify(frame)) <= 16384);
+    await m.handleRelayMessage(JSON.stringify(['EVENT', 'test', frame[1]]));
+  }
+  assert.equal(JSON.parse(mobile.storage.get('sync_deletions')).length, deletions.length);
 });

@@ -1,0 +1,13 @@
+name: iOS sync tests
+on:
+  pull_request:
+  push:
+    branches: [main, fix/cross-device-sync]
+permissions:
+  contents: read
+jobs:
+  native-sync:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - run: bash ios/test-sync.sh

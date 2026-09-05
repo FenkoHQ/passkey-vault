@@ -22,6 +22,7 @@ public final class VaultSyncSelfTest {
                         values.put((String) arguments[0], (String) arguments[1]);
                         return proxy;
                     }
+                    if (method.getName().equals("clear")) { values.clear(); return proxy; }
                     if (method.getName().equals("commit")) { return true; }
                     return null;
                 });
@@ -50,6 +51,13 @@ public final class VaultSyncSelfTest {
         ProviderVaultStore.saveSnapshot(context, "[" + record.replace("\"createdAt\":1", "\"createdAt\":1,\"updatedAt\":3") + "]", "[]", "{}", "null", "[]");
         require(ProviderVaultStore.loadPasskeys(context).size() == 1, "explicit restore was ignored");
         require("keep-prf".equals(ProviderVaultStore.loadPasskeys(context).get(0).toJson().optString("prfKey")), "lost PRF material");
+        String a = record.replace("\"createdAt\":1", "\"createdAt\":1,\"updatedAt\":4,\"label\":\"a\"");
+        String z = a.replace("\"label\":\"a\"", "\"label\":\"z\"");
+        ProviderVaultStore.saveSnapshot(context, "[" + a + "]", "[]", "{}", "null", "[]");
+        ProviderVaultStore.saveSnapshot(context, "[" + z + "]", "[]", "{}", "null", "[]");
+        require(ProviderVaultStore.loadSnapshot(context).getJSONArray("passkeys").getJSONObject(0).getString("label").equals("z"), "equal revision must choose canonical winner");
+        ProviderVaultStore.saveSnapshot(context, "[]", "[]", "{\"resetVault\":true}", "null", "[]");
+        require(ProviderVaultStore.loadPasskeys(context).size() == 1, "config must not reset vault");
         System.out.println("Native snapshot merge: PASS");
     }
 
