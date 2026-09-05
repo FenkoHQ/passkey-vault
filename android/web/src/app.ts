@@ -1,6 +1,15 @@
 import {
+  ChunkCollector,
+  Delivery,
+  splitMessage,
+  MAX_EVENT_BYTES,
+} from '../../../src/sync/transport';
+import { cleanSyncConfig } from '../../../src/sync/config';
+import {
   NOSTR_EVENT_KIND,
   SYNC_BUNDLE_VERSION,
+  SYNC_KEY_PREFIX,
+  SYNC_EVENT_PREFIX,
   SYNC_SEND_INTERVAL_MS,
   SYNC_HEARTBEAT_MS,
   SYNC_RECONNECT_MS,
@@ -38,6 +47,7 @@ declare global {
       toast(value: string): void;
       saveFile?(suggestedName: string, mimeType: string, content: string): void;
       loadVaultSnapshot?(): string;
+      resetVault?(): void;
       saveVaultSnapshot?(
         passkeysJson: string,
         totpJson: string,
@@ -98,7 +108,6 @@ interface SyncConfig {
   deviceId: string | null;
   deviceName: string | null;
   seedHash: string | null;
-  syncSalt: string | null;
 }
 
 interface SyncDevice {
@@ -284,18 +293,22 @@ function setPasskeys(passkeys: StoredPasskey[]): void {
 }
 
 function getSyncConfig(): SyncConfig {
-  return loadJson<SyncConfig>(SYNC_CONFIG_KEY, {
+  const stored = loadJson<SyncConfig>(SYNC_CONFIG_KEY, {
     enabled: false,
     chainId: null,
     deviceId: null,
     deviceName: null,
     seedHash: null,
-    syncSalt: null,
   });
+  const config = cleanSyncConfig(stored);
+  if (JSON.stringify(stored) !== JSON.stringify(config)) {
+    localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify(config));
+  }
+  return config;
 }
 
 function setSyncConfig(config: SyncConfig): void {
-  saveJson(SYNC_CONFIG_KEY, config);
+  saveJson(SYNC_CONFIG_KEY, cleanSyncConfig(config));
 }
 
 function getRelays(): string[] {
@@ -880,7 +893,12 @@ class AndroidSync {
   private pending = new Map<string, SyncMessage>();
   private sendTimer: number | null = null;
   private sending = false;
-  private awaitingAck = new Map<string, { id: string; msg: SyncMessage }>();
+  private deliveries = new Map<
+    string,
+    { msg: SyncMessage; batch: Delivery<Awaited<ReturnType<AndroidSync['createEvent']>>> }
+  >();
+  private chunks = new ChunkCollector();
+  private preparing = Promise.resolve();
   private lastSend = 0;
   private processed = new Set<string>();
   public connected = false;
@@ -916,7 +934,8 @@ class AndroidSync {
     this.sendTimer = null;
     this.heartbeatTimer = null;
     this.pending.clear();
-    this.awaitingAck.clear();
+    this.deliveries.clear();
+    this.chunks.clear();
     this.ws?.close();
     this.ws = null;
     this.connected = false;
@@ -931,8 +950,8 @@ class AndroidSync {
       false,
       ['deriveKey', 'deriveBits']
     );
-    const encryptionSalt = encoder.encode(`pkvault-sync-${this.config.chainId}-enc`);
-    const nostrSalt = encoder.encode(`pkvault-sync-${this.config.chainId}-nostr`);
+    const encryptionSalt = encoder.encode(`${SYNC_KEY_PREFIX}-${this.config.chainId}-enc`);
+    const nostrSalt = encoder.encode(`${SYNC_KEY_PREFIX}-${this.config.chainId}-nostr`);
     this.encryptionKey = await crypto.subtle.deriveKey(
       { name: 'PBKDF2', salt: encryptionSalt, iterations: 100000, hash: 'SHA-256' },
       keyMaterial,
@@ -1001,7 +1020,7 @@ class AndroidSync {
         subId,
         {
           kinds: [NOSTR_EVENT_KIND],
-          '#d': [`pksync-${this.config.chainId}`],
+          '#d': [`${SYNC_EVENT_PREFIX}-${this.config.chainId}`],
           since: Math.floor(Date.now() / 1000) - SYNC_LOOKBACK_SECONDS,
           limit: 50,
         },
@@ -1052,43 +1071,98 @@ class AndroidSync {
   }
 
   private async broadcast(msg: SyncMessage): Promise<void> {
-    this.pending.set(msg.type, msg);
+    // Serialize preparation so encryption cannot enqueue an older snapshot last.
+    const task = this.preparing.then(async () => {
+      const current = this.pending.get(msg.type);
+      if (current) {
+        if (
+          !msg.payload.bundle &&
+          !current.payload.bundle &&
+          (msg.type === 'announce' || msg.type === 'request')
+        ) {
+          return;
+        }
+        if (
+          msg.payload.bundle &&
+          current.payload.bundle &&
+          JSON.stringify(await this.decryptBundle(msg.payload.bundle)) ===
+            JSON.stringify(await this.decryptBundle(current.payload.bundle))
+        ) {
+          return;
+        }
+      }
+      this.pending.set(msg.type, msg);
+      this.deliveries.delete(msg.type);
+    });
+    this.preparing = task.catch(() => {});
+    await task;
     await this.flushMessages();
   }
 
   private async flushMessages(): Promise<void> {
-    if (this.stopped || this.sending || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+    if (this.stopped || !this.ws || this.ws.readyState !== WebSocket.OPEN || this.sending) {
       return;
     }
-    if (Date.now() - this.lastSend < SYNC_SEND_INTERVAL_MS) {
+    const eligible = [...this.pending.values()].filter((msg) => {
+      const batch = this.deliveries.get(msg.type)?.batch;
+      if (batch?.exhausted) {
+        this.lastError = 'Sync was not acknowledged. Check relays and press Sync now to retry.';
+        return false;
+      }
+      return !batch || batch.delay === 0;
+    });
+    const msg = eligible[0];
+    if (!msg || Date.now() - this.lastSend < SYNC_SEND_INTERVAL_MS) {
+      render();
       this.scheduleSend();
       return;
     }
-    const msg = this.pending.values().next().value as SyncMessage | undefined;
-    if (!msg) {
-      return;
-    }
     this.sending = true;
-    this.lastSend = Date.now();
     try {
-      const encrypted = await this.encryptMessage(msg);
-      const event = await this.createEvent(encrypted, msg.type);
-      this.awaitingAck.set(msg.type, { id: event.id, msg });
-      this.ws.send(JSON.stringify(['EVENT', event]));
-      if (this.pending.get(msg.type) === msg) {
-        this.pending.delete(msg.type);
-        this.pending.set(msg.type, msg);
+      let delivery = this.deliveries.get(msg.type);
+      if (!delivery) {
+        const encrypted = await this.encryptMessage(msg);
+        const frames = [];
+        for (const [index, content] of splitMessage(encrypted).entries()) {
+          const event = await this.createEvent(content, msg.type, index);
+          if (new TextEncoder().encode(JSON.stringify(['EVENT', event])).length > MAX_EVENT_BYTES) {
+            throw new Error('Sync event exceeds relay message limit');
+          }
+          frames.push(event);
+        }
+        // A newer snapshot may have arrived during signing.
+        if (this.pending.get(msg.type) !== msg) {
+          return;
+        }
+        delivery = { msg, batch: new Delivery(frames) };
+        this.deliveries.set(msg.type, delivery);
+      }
+      this.lastSend = Date.now();
+      for (const event of delivery.batch.take()) {
+        const frame = JSON.stringify(['EVENT', event]);
+        this.ws!.send(frame);
       }
     } catch (error) {
       this.lastError = String(error);
+      // Encoding/size failures need an explicit retry, not a tight timer loop.
+      this.pending.delete(msg.type);
+      this.deliveries.delete(msg.type);
     } finally {
       this.sending = false;
+      render();
       this.scheduleSend();
     }
   }
 
   private scheduleSend(): void {
-    if (this.sendTimer || this.stopped || this.pending.size === 0) {
+    if (this.sendTimer || this.stopped) {
+      return;
+    }
+    const delays = [...this.pending.keys()].flatMap((type) => {
+      const batch = this.deliveries.get(type)?.batch;
+      return batch?.exhausted ? [] : [batch?.delay || 0];
+    });
+    if (delays.length === 0) {
       return;
     }
     this.sendTimer = window.setTimeout(
@@ -1096,20 +1170,31 @@ class AndroidSync {
         this.sendTimer = null;
         void this.flushMessages();
       },
-      Math.max(0, SYNC_SEND_INTERVAL_MS - (Date.now() - this.lastSend))
+      Math.max(0, SYNC_SEND_INTERVAL_MS - (Date.now() - this.lastSend), Math.min(...delays))
     );
   }
 
-  private async createEvent(content: string, type?: SyncMessage['type']) {
+  retryPending(): void {
+    this.lastError = '';
+    for (const { batch } of this.deliveries.values()) {
+      batch.retry();
+    }
+    void this.flushMessages();
+  }
+
+  private async createEvent(content: string, type?: SyncMessage['type'], part = 0) {
     if (!this.nostrPrivateKey || !this.nostrPublicKey) throw new Error('Sync keys are not ready');
     const created_at = Math.floor(Date.now() / 1000);
-    const snapshot = type === 'update';
+    const snapshot = type === 'update' || type === 'response';
     const tags = snapshot
       ? [
-          ['d', `pksync-${this.config.chainId}-${this.config.deviceId}`],
+          [
+            'd',
+            `${SYNC_EVENT_PREFIX}-${this.config.chainId}-${this.config.deviceId}-${type}-${part}`,
+          ],
           ['h', this.config.chainId!],
         ]
-      : [['d', `pksync-${this.config.chainId}`]];
+      : [['d', `${SYNC_EVENT_PREFIX}-${this.config.chainId}`]];
     const data = [0, this.nostrPublicKey, created_at, NOSTR_EVENT_KIND, tags, content];
     const hash = sha256(new TextEncoder().encode(JSON.stringify(data)));
     const sig = await secp256k1.schnorr.signAsync(hash, this.nostrPrivateKey);
@@ -1186,13 +1271,18 @@ class AndroidSync {
     deletions: SyncDeletion[];
   }> {
     if (!this.encryptionKey) throw new Error('Encryption key is not ready');
+    if (bundle.version !== SYNC_BUNDLE_VERSION) {
+      throw new Error('Unsupported sync bundle version');
+    }
     const decrypted = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: base64ToBytes(bundle.nonce) },
       this.encryptionKey,
       base64ToBytes(bundle.ciphertext)
     );
     const payload = JSON.parse(new TextDecoder().decode(decrypted));
-    if (Array.isArray(payload)) return { passkeys: payload, totpEntries: [], deletions: [] };
+    if (Array.isArray(payload)) {
+      throw new Error('Invalid v4 bundle');
+    }
     return {
       passkeys: payload.passkeys || [],
       totpEntries: payload.totpEntries || [],
@@ -1207,21 +1297,27 @@ class AndroidSync {
         this.lastError = String(parsed[3] || 'Relay rejected update');
         return;
       }
-      this.lastError = '';
-      for (const [type, pending] of this.awaitingAck) {
-        if (pending.id !== parsed[1]) {
+      for (const [type, delivery] of this.deliveries) {
+        if (!delivery.batch.acknowledge(parsed[1]) || !delivery.batch.complete) {
           continue;
         }
-        this.awaitingAck.delete(type);
-        if (this.pending.get(type) === pending.msg) {
+        this.deliveries.delete(type);
+        if (this.pending.get(type) === delivery.msg) {
           this.pending.delete(type);
+          this.lastError = '';
         }
       }
       return;
     }
+    if (parsed[0] === 'EOSE' && String(parsed[1]).startsWith('parts_')) {
+      this.ws?.send(JSON.stringify(['CLOSE', parsed[1]]));
+    }
     if (parsed[0] !== 'EVENT' || !parsed[2]) return;
     const event = parsed[2];
     if (!event.id || this.processed.has(event.id)) return;
+    if (event.kind !== NOSTR_EVENT_KIND || event.pubkey !== this.nostrPublicKey) {
+      return;
+    }
     const expected = bytesToHex(
       sha256(
         new TextEncoder().encode(
@@ -1243,7 +1339,15 @@ class AndroidSync {
       hexToBytes(event.pubkey)
     );
     if (!ok) return;
-    const msg = await this.decryptMessage(event.content);
+    const content = this.chunks.accept(event.content);
+    if (content === null) {
+      const address = event.tags.find((tag: string[]) => tag[0] === 'd')?.[1] || '';
+      for (const request of this.chunks.missing(event.content, address, event.pubkey)) {
+        this.ws?.send(request);
+      }
+      return;
+    }
+    const msg = await this.decryptMessage(content);
     if (!msg || msg.chainId !== this.config.chainId || msg.deviceId === this.config.deviceId)
       return;
     this.mergeDevice(msg);
@@ -1373,7 +1477,6 @@ async function configureSync(
   const keypair = await deriveEd25519Keypair(seedBytes);
   const seedHash = await sha256Hex(seedBytes);
   const chainId = seedHash.slice(0, 32);
-  const syncSalt = null;
   const deviceId = uuid();
   const publicKey = bytesToHex(keypair.publicKey);
   const device: SyncDevice = {
@@ -1397,7 +1500,6 @@ async function configureSync(
     deviceId,
     deviceName,
     seedHash,
-    syncSalt,
   };
   setSyncConfig(config);
   saveJson(SYNC_DEVICES_KEY, chain);
@@ -1424,7 +1526,6 @@ function leaveSync(): void {
     deviceId: null,
     deviceName: null,
     seedHash: null,
-    syncSalt: null,
   });
   localStorage.removeItem(SYNC_DEVICES_KEY);
   pendingMnemonic = null;
@@ -2035,12 +2136,11 @@ function bindSync(): void {
       setStatus(String(error), 'bad')
     );
   });
-  document
-    .getElementById('sync-now')
-    ?.addEventListener(
-      'click',
-      () => void state.sync?.requestSync().then(() => setStatus('Sync requested.'))
-    );
+  document.getElementById('sync-now')?.addEventListener('click', () => {
+    state.sync?.retryPending();
+    void state.sync?.broadcastUpdate();
+    void state.sync?.requestSync().then(() => setStatus('Sync requested.'));
+  });
   document.getElementById('leave-sync')?.addEventListener('click', leaveSync);
   document.getElementById('copy-phrase')?.addEventListener('click', () => {
     if (pendingMnemonic) {
@@ -2105,7 +2205,7 @@ function bindTools(): void {
   document.getElementById('wipe-vault')?.addEventListener('click', () => {
     if (!confirm('Wipe all local vault data?')) return;
     localStorage.clear();
-    window.AndroidBridge?.saveVaultSnapshot?.('[]', '[]', '{"resetVault":true}', 'null', '[]');
+    window.AndroidBridge?.resetVault?.();
     state.sync?.stop();
     state.sync = null;
     setStatus('Vault wiped.', 'warn');

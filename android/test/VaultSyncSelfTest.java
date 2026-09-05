@@ -58,6 +58,21 @@ public final class VaultSyncSelfTest {
         require(ProviderVaultStore.loadSnapshot(context).getJSONArray("passkeys").getJSONObject(0).getString("label").equals("z"), "equal revision must choose canonical winner");
         ProviderVaultStore.saveSnapshot(context, "[]", "[]", "{\"resetVault\":true}", "null", "[]");
         require(ProviderVaultStore.loadPasskeys(context).size() == 1, "config must not reset vault");
+        org.json.JSONArray fixtures = new org.json.JSONArray(new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(args[0])), java.nio.charset.StandardCharsets.UTF_8));
+        for (int i = 0; i < fixtures.length(); i++) {
+            JSONObject fixture = fixtures.getJSONObject(i);
+            for (String first : new String[]{"local", "remote"}) {
+                ProviderVaultStore.resetVault(context);
+                String second = first.equals("local") ? "remote" : "local";
+                ProviderVaultStore.saveSnapshot(context, "[" + fixture.getJSONObject(first) + "]", "[]", "{}", "null", "[]");
+                ProviderVaultStore.saveSnapshot(context, "[" + fixture.getJSONObject(second) + "]", "[]", "{}", "null", "[]");
+                JSONObject winner = ProviderVaultStore.loadSnapshot(context).getJSONArray("passkeys").getJSONObject(0);
+                require(winner.getString("label").equals(fixture.getString("winner")), fixture.getString("name"));
+                require(winner.getLong("counter") == fixture.getLong("counter"), "fixture counter floor");
+            }
+        }
+        ProviderVaultStore.resetVault(context);
+        require(ProviderVaultStore.loadPasskeys(context).isEmpty(), "explicit reset failed");
         System.out.println("Native snapshot merge: PASS");
     }
 

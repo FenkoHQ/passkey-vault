@@ -7,4 +7,4 @@ xcrun swiftc "$ROOT/ios/Shared/Base64.swift" \
   "$ROOT/ios/Shared/PasskeyRecord.swift" \
   "$ROOT/ios/Shared/VaultStore.swift" \
   "$ROOT/ios/Tests/main.swift" -o "$OUT/test-sync"
-"$OUT/test-sync"
+"$OUT/test-sync" "$ROOT/tests/sync/merge-fixtures.json"

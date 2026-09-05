@@ -51,4 +51,17 @@ vault.saveSnapshotFromWeb(passkeys: "[]", totp: nil, syncConfig: "{\"resetVault\
 require(vault.loadPasskeys().count == 1, "config must not reset the vault")
 vault.resetVault()
 require(vault.loadPasskeys().isEmpty, "explicit reset failed")
+let fixtureData = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
+let fixtures = try JSONSerialization.jsonObject(with: fixtureData) as! [[String: Any]]
+for fixture in fixtures {
+    for first in ["local", "remote"] {
+        vault.resetVault()
+        let second = first == "local" ? "remote" : "local"
+        vault.saveSnapshotFromWeb(passkeys: json([fixture[first]!]), totp: nil, syncConfig: "{}", syncDevices: nil, customRelays: nil)
+        vault.saveSnapshotFromWeb(passkeys: json([fixture[second]!]), totp: nil, syncConfig: "{}", syncDevices: nil, customRelays: nil)
+        let winner = vault.loadPasskeys()[0].toJSON()
+        require(winner["label"] as? String == fixture["winner"] as? String, fixture["name"] as! String)
+        require(winner["counter"] as? Int == fixture["counter"] as? Int, "fixture counter floor")
+    }
+}
 print("iOS native snapshot merge: PASS")

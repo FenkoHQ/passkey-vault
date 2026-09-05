@@ -369,6 +369,11 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void resetVault() {
+            ProviderVaultStore.resetVault(context);
+        }
+
+        @JavascriptInterface
         public void saveVaultSnapshot(
                 String passkeysJson,
                 String totpJson,

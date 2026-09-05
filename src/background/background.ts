@@ -1,3 +1,4 @@
+import { cleanSyncConfig } from '../sync/config';
 import {
   restoreRecord,
   mergeRecords,
@@ -19,7 +20,6 @@ import {
 } from '../sync/sync-service';
 import { secureStorage } from '../crypto/secure-storage';
 import { encryptWithPassword, decryptWithPassword } from '../crypto/encryption';
-import { randomBytes } from '@noble/hashes/utils';
 import { logger } from '../utils/logger';
 import { arrayBufferToBase64, arrayBufferToBase64URL, base64urlToBase64 } from '../utils/base64';
 import {
@@ -114,7 +114,6 @@ interface SyncConfig {
   deviceId: string | null;
   deviceName: string | null;
   seedHash: string | null;
-  syncSalt: string | null;
 }
 
 interface SyncDevice {
@@ -225,7 +224,6 @@ class BackgroundService {
         deviceId: config.deviceId || '',
         deviceName: config.deviceName || '',
         seedHash: config.seedHash,
-        syncSalt: config.syncSalt || null,
         enabled: config.enabled || false,
       });
     }
@@ -301,7 +299,6 @@ class BackgroundService {
         deviceId: rawConfig.deviceId || '',
         deviceName: rawConfig.deviceName || '',
         seedHash: rawConfig.seedHash,
-        syncSalt: rawConfig.syncSalt || null,
         enabled: rawConfig.enabled || false,
       });
       const publicConfig = { ...rawConfig };
@@ -318,6 +315,10 @@ class BackgroundService {
 
   private async initialize(): Promise<void> {
     try {
+      const saved = (await chrome.storage.local.get(SYNC_CONFIG_KEY))[SYNC_CONFIG_KEY];
+      if (saved) {
+        await chrome.storage.local.set({ [SYNC_CONFIG_KEY]: cleanSyncConfig(saved) });
+      }
       await logger.init();
       logger.info('Background service initializing...');
       await this.initializeSyncService();
@@ -361,7 +362,6 @@ class BackgroundService {
           config.deviceId,
           seedHash,
           config.deviceName || undefined,
-          config.syncSalt || undefined,
           this.syncVaultAdapter()
         );
         await this.updateSyncStatus({ connectionStatus: 'connected' });
@@ -388,16 +388,20 @@ class BackgroundService {
     });
   }
 
+  private async readVaultSnapshot() {
+    return {
+      passkeys: (await this.loadPasskeys()) as SyncPasskey[],
+      totpEntries: (await loadTotpEntries()) as SyncTotpEntry[],
+      deletions: await this.loadDeletions(),
+    };
+  }
+
   private syncVaultAdapter(): SyncVaultAdapter {
     return {
-      getSnapshot: async () => ({
-        passkeys: (await this.loadPasskeys()) as SyncPasskey[],
-        totpEntries: (await loadTotpEntries()) as SyncTotpEntry[],
-        deletions: await this.loadDeletions(),
-      }),
+      getSnapshot: () => this.withVault(() => this.readVaultSnapshot()),
       onPublished: (snapshot) =>
         this.withVault(async () => {
-          const current = await this.syncVaultAdapter().getSnapshot();
+          const current = await this.readVaultSnapshot();
           if (JSON.stringify(current) !== JSON.stringify(snapshot)) {
             return;
           }
@@ -441,7 +445,7 @@ class BackgroundService {
     sendResponse: (response?: unknown) => void
   ): Promise<void> {
     try {
-      const response = await this.withVault(() => this.routeMessage(message));
+      const response = await this.routeMessage(message);
       sendResponse(response);
     } catch (error: unknown) {
       const message_str = error instanceof Error ? error.message : String(error);
@@ -451,7 +455,7 @@ class BackgroundService {
   }
 
   private async routeMessage(message: ExtensionMessage): Promise<unknown> {
-    const { type, payload } = message;
+    const { type } = message;
 
     const lockedTypes = new Set([
       'CREATE_PASSKEY',
@@ -498,6 +502,31 @@ class BackgroundService {
       throw new Error('Export an encrypted backup before changing this upgraded vault.');
     }
 
+    // Serialize read/modify/write operations. Lookups and relay waits stay independent.
+    const mutations = new Set([
+      'CREATE_PASSKEY',
+      'GET_PASSKEY',
+      'DELETE_PASSKEY',
+      'ADD_TOTP_ENTRY',
+      'DELETE_TOTP_ENTRY',
+      'GENERATE_TOTP_CODE',
+      'IMPORT_VAULT',
+      'CLEAR_VAULT',
+      'FACTORY_RESET',
+      'SETUP_MASTER_PASSWORD',
+      'LOCK_SECURE_STORAGE',
+      'RECONCILE_STORAGE',
+      'CHANGE_MASTER_PASSWORD',
+      'REMOVE_MASTER_PASSWORD',
+    ]);
+    if (mutations.has(type)) {
+      return this.withVault(() => this.dispatchMessage(message));
+    }
+    return this.dispatchMessage(message);
+  }
+
+  private async dispatchMessage(message: ExtensionMessage): Promise<unknown> {
+    const { type, payload } = message;
     switch (type) {
       case 'CREATE_PASSKEY':
         return this.handleCreatePasskey(payload || {});
@@ -1260,11 +1289,6 @@ class BackgroundService {
         .join('');
       const chainId = seedHashHex.substring(0, 32);
 
-      const syncSaltBytes = randomBytes(32);
-      const syncSalt = Array.from(syncSaltBytes)
-        .map((b: number) => b.toString(16).padStart(2, '0'))
-        .join('');
-
       const newDevice: SyncDevice = {
         id: deviceId,
         name: deviceName,
@@ -1291,7 +1315,6 @@ class BackgroundService {
           deviceId,
           deviceName,
           seedHash: seedHashHex,
-          syncSalt,
         },
         [SYNC_DEVICES_KEY]: chain,
       });
@@ -1301,7 +1324,6 @@ class BackgroundService {
         deviceId,
         seedHashHex,
         deviceName,
-        syncSalt,
         this.syncVaultAdapter()
       );
       this.logSync('SYNC_CHAIN_CREATED', { chainId, deviceId });
@@ -1325,11 +1347,6 @@ class BackgroundService {
       const deviceId = crypto.randomUUID();
       const seedHashBuffer = await crypto.subtle.digest('SHA-256', new Uint8Array(seedBytes));
       const seedHashHex = Array.from(new Uint8Array(seedHashBuffer))
-        .map((b: number) => b.toString(16).padStart(2, '0'))
-        .join('');
-
-      const syncSaltBytes = randomBytes(32);
-      const syncSalt = Array.from(syncSaltBytes)
         .map((b: number) => b.toString(16).padStart(2, '0'))
         .join('');
 
@@ -1360,7 +1377,6 @@ class BackgroundService {
         deviceId,
         deviceName,
         seedHash: seedHashHex,
-        syncSalt,
       };
 
       await chrome.storage.local.set({
@@ -1373,7 +1389,6 @@ class BackgroundService {
         deviceId,
         seedHashHex,
         deviceName,
-        syncSalt,
         this.syncVaultAdapter()
       );
       await syncService.requestSync();
@@ -1398,7 +1413,6 @@ class BackgroundService {
           deviceId: null,
           deviceName: null,
           seedHash: null,
-          syncSalt: null,
         },
         [SYNC_DEVICES_KEY]: null,
       });
@@ -1500,6 +1514,7 @@ class BackgroundService {
           chainId: config?.chainId || null,
           deviceId: config?.deviceId || null,
           ...this.syncStatus,
+          lastError: syncService.getStatus().lastError || this.syncStatus.lastError,
         },
       };
     } catch (error: unknown) {
@@ -1546,6 +1561,7 @@ class BackgroundService {
   }
 
   private async handleTriggerSync(): Promise<unknown> {
+    syncService.retryPending();
     await this.triggerSync();
     return { success: true };
   }
@@ -1611,7 +1627,6 @@ class BackgroundService {
             config.deviceId,
             config.seedHash,
             config.deviceName || undefined,
-            config.syncSalt || undefined,
             this.syncVaultAdapter()
           );
         }
@@ -1662,7 +1677,6 @@ class BackgroundService {
           deviceId: config.deviceId || '',
           deviceName: config.deviceName || '',
           seedHash: config.seedHash,
-          syncSalt: config.syncSalt || null,
           enabled: config.enabled || false,
         });
         logger.info('Migrated sync config to secure storage');
@@ -1691,12 +1705,16 @@ class BackgroundService {
         return { success: false, error: 'Password is required' };
       }
 
-      const unlocked = await secureStorage.initialize(password);
+      const unlocked = await this.withVault(async () => {
+        const ready = await secureStorage.initialize(password);
+        if (ready) {
+          await this.migrateLegacyRawStorage();
+        }
+        return ready;
+      });
       if (!unlocked) {
         return { success: false, error: 'Invalid password or storage not initialized' };
       }
-
-      await this.migrateLegacyRawStorage();
       // The seed lives in the encrypted store, so sync could not have started
       // while locked. Now that the key is in memory, bring it up.
       await this.initializeSyncService();

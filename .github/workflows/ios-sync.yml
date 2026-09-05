@@ -2,7 +2,7 @@ name: iOS sync tests
 on:
   pull_request:
   push:
-    branches: [main, fix/cross-device-sync]
+    branches: [main]
 permissions:
   contents: read
 jobs:

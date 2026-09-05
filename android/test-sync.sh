@@ -18,4 +18,4 @@ printf '%s  %s\n' 3ea61b2a06e31edf1c91134fe9106b0ebb16628be169f3db75bc7a2b06b457
 javac -cp "$PLATFORM:$JSON_LIB" -d "$OUT" \
   "$ROOT/android/app/src/main/java/nz/fenko/passkeyvault/ProviderVaultStore.java" \
   "$ROOT/android/test/VaultSyncSelfTest.java"
-java -cp "$OUT:$JSON_LIB:$PLATFORM" nz.fenko.passkeyvault.VaultSyncSelfTest
+java -cp "$OUT:$JSON_LIB:$PLATFORM" nz.fenko.passkeyvault.VaultSyncSelfTest "$ROOT/tests/sync/merge-fixtures.json"

@@ -1,6 +1,9 @@
+import { ChunkCollector, Delivery, splitMessage, MAX_EVENT_BYTES } from './transport';
 import {
   NOSTR_EVENT_KIND,
   SYNC_BUNDLE_VERSION,
+  SYNC_KEY_PREFIX,
+  SYNC_EVENT_PREFIX,
   SYNC_SEND_INTERVAL_MS,
   SYNC_LOOKBACK_SECONDS,
 } from './protocol';
@@ -13,7 +16,6 @@ import { type SyncDeletion } from './merge';
 const RECONNECT_DELAY = 5000;
 const MAX_RECONNECT_DELAY = 60000;
 const HEARTBEAT_INTERVAL = 300000; // 5 minutes - relays rate limit aggressively
-const MIN_BROADCAST_INTERVAL = SYNC_SEND_INTERVAL_MS; // Minimum 10s between broadcasts
 const SYNC_DEVICES_KEY = 'sync_devices';
 const MAX_DEBUG_LOGS = 200;
 const MAX_PROCESSED_EVENTS = 1000; // Track last N event IDs for replay protection
@@ -190,7 +192,6 @@ export class SyncService {
   private deviceId: string | null = null;
   private deviceName: string | null = null;
   private seedHash: string | null = null;
-  private syncSalt: string | null = null; // SECURITY FIX: Random salt for PBKDF2
   private encryptionKey: CryptoKey | null = null;
   private nostrPrivateKey: Uint8Array | null = null;
   private nostrPublicKey: string | null = null;
@@ -202,7 +203,10 @@ export class SyncService {
   private pendingMessages = new Map<string, SyncMessage>();
   private broadcastTimer: ReturnType<typeof setTimeout> | null = null;
   private sending = false;
-  private awaitingAck = new Map<string, { id: string; msg: SyncMessage }>();
+  private deliveries = new Map<string, { msg: SyncMessage; batch: Delivery<NostrEvent> }>();
+  private chunks = new ChunkCollector();
+  private preparing = Promise.resolve();
+  private lastError = '';
   private incoming = Promise.resolve();
   private knownDevices = new Set<string>(); // Track devices we've already seen
   private processedEventIds = new Set<string>(); // SECURITY FIX: Replay protection
@@ -310,7 +314,6 @@ export class SyncService {
     deviceId: string,
     seedHash: string,
     deviceName?: string,
-    syncSalt?: string,
     vaultAdapter?: SyncVaultAdapter
   ): Promise<void> {
     if (vaultAdapter) this.vaultAdapter = vaultAdapter;
@@ -323,13 +326,11 @@ export class SyncService {
     this.deviceId = deviceId;
     this.seedHash = seedHash;
     this.deviceName = deviceName || 'Unknown Device';
-    this.syncSalt = syncSalt || null;
 
     this.log('info', 'init', 'Initializing sync service', {
       chainId: chainId.substring(0, 8) + '...',
       deviceId: deviceId.substring(0, 8) + '...',
       deviceName: this.deviceName,
-      hasSyncSalt: !!syncSalt,
     });
 
     await this.deriveKeys(seedHash);
@@ -367,8 +368,8 @@ export class SyncService {
     // derived different keys and could never decrypt each other's events.
     // Different chains still get different keys because chainId derives from the
     // seed. (Per-chain, not per-device — that is the whole point of sync.)
-    const encryptionSalt = encoder.encode(`pkvault-sync-${this.chainId}-enc`);
-    const nostrSalt = encoder.encode(`pkvault-sync-${this.chainId}-nostr`);
+    const encryptionSalt = encoder.encode(`${SYNC_KEY_PREFIX}-${this.chainId}-enc`);
+    const nostrSalt = encoder.encode(`${SYNC_KEY_PREFIX}-${this.chainId}-nostr`);
 
     // Derive AES encryption key for message encryption
     this.encryptionKey = await crypto.subtle.deriveKey(
@@ -579,7 +580,7 @@ export class SyncService {
 
     const filter = {
       kinds: [NOSTR_EVENT_KIND],
-      '#d': [`pksync-${this.chainId}`],
+      '#d': [`${SYNC_EVENT_PREFIX}-${this.chainId}`],
       since: Math.floor(Date.now() / 1000) - SYNC_LOOKBACK_SECONDS,
       limit: 50,
     };
@@ -701,7 +702,16 @@ export class SyncService {
         });
 
         if (event?.content) {
-          const syncMsg = await this.decryptMessage(event.content);
+          const content = this.chunks.accept(event.content);
+          if (content === null) {
+            const address = event.tags.find((tag: string[]) => tag[0] === 'd')?.[1] || '';
+            for (const request of this.chunks.missing(event.content, address, event.pubkey)) {
+              conn.ws?.send(request);
+            }
+            this.processedEventIds.delete(event.id);
+            return;
+          }
+          const syncMsg = await this.decryptMessage(content);
           if (syncMsg) {
             if (syncMsg.deviceId === this.deviceId) {
               this.log('debug', 'msg', 'Ignoring own message');
@@ -723,18 +733,23 @@ export class SyncService {
       } else if (msgType === 'OK') {
         const [, eventId, success, message] = parsed;
         if (success) {
-          for (const [type, pending] of this.awaitingAck) {
-            if (pending.id !== eventId) {
+          for (const [type, delivery] of this.deliveries) {
+            if (!delivery.batch.acknowledge(eventId) || !delivery.batch.complete) {
               continue;
             }
-            this.awaitingAck.delete(type);
-            if (this.pendingMessages.get(type) === pending.msg) {
+            this.deliveries.delete(type);
+            if (this.pendingMessages.get(type) === delivery.msg) {
               this.pendingMessages.delete(type);
-            }
-            if (type === 'update' && pending.msg.payload.bundle && this.vaultAdapter?.onPublished) {
-              await this.vaultAdapter.onPublished(
-                await this.decryptBundle(pending.msg.payload.bundle)
-              );
+              this.lastError = '';
+              if (
+                type === 'update' &&
+                delivery.msg.payload.bundle &&
+                this.vaultAdapter?.onPublished
+              ) {
+                await this.vaultAdapter.onPublished(
+                  await this.decryptBundle(delivery.msg.payload.bundle)
+                );
+              }
             }
           }
           this.log('info', 'nostr', 'Event published successfully', {
@@ -742,6 +757,7 @@ export class SyncService {
             relay: conn.url,
           });
         } else {
+          this.lastError = String(message || 'Relay rejected update');
           this.log('warn', 'nostr', 'Event rejected by relay', {
             eventId: eventId?.substring(0, 8),
             relay: conn.url,
@@ -749,6 +765,9 @@ export class SyncService {
           });
         }
       } else if (msgType === 'EOSE') {
+        if (String(parsed[1]).startsWith('parts_')) {
+          conn.ws?.send(JSON.stringify(['CLOSE', parsed[1]]));
+        }
         this.log('info', 'nostr', 'End of stored events', { relay: conn.url });
       } else if (msgType === 'NOTICE') {
         this.log('info', 'nostr', 'Relay notice', { relay: conn.url, notice: parsed[1] });
@@ -769,6 +788,9 @@ export class SyncService {
   // SECURITY FIX: Verify Nostr event BIP340 Schnorr signature
   private async verifyNostrEventSignature(event: NostrEvent): Promise<boolean> {
     try {
+      if (event.kind !== NOSTR_EVENT_KIND || event.pubkey !== this.nostrPublicKey) {
+        return false;
+      }
       if (
         !event.id ||
         !event.pubkey ||
@@ -925,9 +947,9 @@ export class SyncService {
       requestId: msg.payload.requestId,
     });
 
-    const { passkeys, totpEntries } = await this.vaultSnapshot();
+    const { passkeys, totpEntries, deletions } = await this.vaultSnapshot();
 
-    const bundle = await this.createEncryptedBundle(passkeys, totpEntries);
+    const bundle = await this.createEncryptedBundle(passkeys, totpEntries, deletions);
 
     const response: SyncMessage = {
       type: 'response',
@@ -1006,7 +1028,14 @@ export class SyncService {
       return;
     }
 
-    const bundle = await this.createEncryptedBundle(passkeys, totpEntries);
+    const snapshot = this.vaultAdapter
+      ? await this.vaultSnapshot()
+      : { passkeys, totpEntries, deletions: [] };
+    const bundle = await this.createEncryptedBundle(
+      snapshot.passkeys,
+      snapshot.totpEntries,
+      snapshot.deletions
+    );
 
     const update: SyncMessage = {
       type: 'update',
@@ -1033,77 +1062,144 @@ export class SyncService {
     await this.broadcastPasskeyUpdate(passkeys, totpEntries);
   }
 
-  private scheduleBroadcast(): void {
-    if (this.broadcastTimer || this.pendingMessages.size === 0 || !this.chainId) {
-      return;
-    }
-    const delay = Math.max(0, MIN_BROADCAST_INTERVAL - (Date.now() - this.lastBroadcastTime));
-    this.broadcastTimer = setTimeout(() => {
-      this.broadcastTimer = null;
-      void this.flushBroadcast();
-    }, delay);
-  }
-
   private async broadcastMessage(msg: SyncMessage): Promise<void> {
-    // Full snapshots supersede queued snapshots; other message types keep their slots.
-    this.pendingMessages.set(msg.type, msg);
+    // Serialize preparation so encryption cannot enqueue an older snapshot last.
+    const task = this.preparing.then(async () => {
+      const current = this.pendingMessages.get(msg.type);
+      if (current) {
+        if (
+          !msg.payload.bundle &&
+          !current.payload.bundle &&
+          (msg.type === 'announce' || msg.type === 'request')
+        ) {
+          return;
+        }
+        if (
+          msg.payload.bundle &&
+          current.payload.bundle &&
+          JSON.stringify(await this.decryptBundle(msg.payload.bundle)) ===
+            JSON.stringify(await this.decryptBundle(current.payload.bundle))
+        ) {
+          return;
+        }
+      }
+      this.pendingMessages.set(msg.type, msg);
+      this.deliveries.delete(msg.type);
+    });
+    this.preparing = task.catch(() => {});
+    await task;
     await this.flushBroadcast();
   }
 
   private async flushBroadcast(): Promise<void> {
-    if (this.sending || this.openConnections().length === 0 || !this.chainId) {
+    if (this.openConnections().length === 0 || !this.chainId || this.sending) {
       return;
     }
-    if (Date.now() - this.lastBroadcastTime < MIN_BROADCAST_INTERVAL) {
+    const eligible = [...this.pendingMessages.values()].filter((msg) => {
+      const batch = this.deliveries.get(msg.type)?.batch;
+      if (batch?.exhausted) {
+        this.lastError = 'Sync was not acknowledged. Check relays and press Sync now to retry.';
+        return false;
+      }
+      return !batch || batch.delay === 0;
+    });
+    const msg = eligible[0];
+    if (!msg || Date.now() - this.lastBroadcastTime < SYNC_SEND_INTERVAL_MS) {
       this.scheduleBroadcast();
       return;
     }
-    const msg = this.pendingMessages.values().next().value as SyncMessage | undefined;
-    if (!msg) {
-      return;
-    }
     this.sending = true;
-    this.lastBroadcastTime = Date.now();
     try {
-      const encrypted = await this.encryptMessage(msg);
-      const event = await this.createNostrEvent(encrypted, msg.type);
-      const frame = JSON.stringify(['EVENT', event]);
-      this.awaitingAck.set(msg.type, { id: event.id, msg });
-      let sent = 0;
-      for (const conn of this.openConnections()) {
-        try {
-          conn.ws!.send(frame);
-          sent++;
-        } catch (error) {
-          this.log('warn', 'nostr', String(error));
+      let delivery = this.deliveries.get(msg.type);
+      if (!delivery) {
+        const encrypted = await this.encryptMessage(msg);
+        const frames = [];
+        for (const [index, content] of splitMessage(encrypted).entries()) {
+          const event = await this.createNostrEvent(content, msg.type, index);
+          if (new TextEncoder().encode(JSON.stringify(['EVENT', event])).length > MAX_EVENT_BYTES) {
+            throw new Error('Sync event exceeds relay message limit');
+          }
+          frames.push(event);
+        }
+        // A newer snapshot may have arrived during signing.
+        if (this.pendingMessages.get(msg.type) !== msg) {
+          return;
+        }
+        delivery = { msg, batch: new Delivery(frames) };
+        this.deliveries.set(msg.type, delivery);
+      }
+      this.lastBroadcastTime = Date.now();
+      for (const event of delivery.batch.take()) {
+        const frame = JSON.stringify(['EVENT', event]);
+        for (const conn of this.openConnections()) {
+          try {
+            conn.ws!.send(frame);
+          } catch (error) {
+            this.lastError = String(error);
+          }
         }
       }
-      if (sent > 0 && this.pendingMessages.get(msg.type) === msg) {
-        this.pendingMessages.delete(msg.type);
-        this.pendingMessages.set(msg.type, msg);
-      }
     } catch (error) {
-      this.log('error', 'nostr', String(error));
+      this.lastError = String(error);
+      // Encoding/size failures need an explicit retry, not a tight timer loop.
+      this.pendingMessages.delete(msg.type);
+      this.deliveries.delete(msg.type);
     } finally {
       this.sending = false;
       this.scheduleBroadcast();
     }
   }
 
-  private async createNostrEvent(content: string, type?: SyncMessage['type']): Promise<NostrEvent> {
+  private scheduleBroadcast(): void {
+    if (this.broadcastTimer || !this.chainId) {
+      return;
+    }
+    const delays = [...this.pendingMessages.keys()].flatMap((type) => {
+      const batch = this.deliveries.get(type)?.batch;
+      return batch?.exhausted ? [] : [batch?.delay || 0];
+    });
+    if (delays.length === 0) {
+      return;
+    }
+    this.broadcastTimer = setTimeout(
+      () => {
+        this.broadcastTimer = null;
+        void this.flushBroadcast();
+      },
+      Math.max(
+        0,
+        SYNC_SEND_INTERVAL_MS - (Date.now() - this.lastBroadcastTime),
+        Math.min(...delays)
+      )
+    );
+  }
+
+  retryPending(): void {
+    this.lastError = '';
+    for (const { batch } of this.deliveries.values()) {
+      batch.retry();
+    }
+    void this.flushBroadcast();
+  }
+
+  private async createNostrEvent(
+    content: string,
+    type?: SyncMessage['type'],
+    part = 0
+  ): Promise<NostrEvent> {
     if (!this.nostrPrivateKey || !this.nostrPublicKey) {
       throw new Error('Nostr keys not initialized');
     }
 
     const created_at = Math.floor(Date.now() / 1000);
     const pubkey = this.nostrPublicKey;
-    const snapshot = type === 'update';
+    const snapshot = type === 'update' || type === 'response';
     const tags = snapshot
       ? [
-          ['d', `pksync-${this.chainId}-${this.deviceId}`],
+          ['d', `${SYNC_EVENT_PREFIX}-${this.chainId}-${this.deviceId}-${type}-${part}`],
           ['h', this.chainId!],
         ]
-      : [['d', `pksync-${this.chainId}`]];
+      : [['d', `${SYNC_EVENT_PREFIX}-${this.chainId}`]];
 
     // Create the event data for hashing (NIP-01 format)
     const eventData = [0, pubkey, created_at, NOSTR_EVENT_KIND, tags, content];
@@ -1181,7 +1277,8 @@ export class SyncService {
   // SECURITY FIX: passkeyIds no longer exposed outside encrypted payload
   private async createEncryptedBundle(
     passkeys: SyncPasskey[],
-    totpEntries: SyncTotpEntry[]
+    totpEntries: SyncTotpEntry[],
+    deletions?: SyncDeletion[]
   ): Promise<EncryptedPasskeyBundle> {
     if (!this.encryptionKey) {
       throw new Error('Encryption key not initialized');
@@ -1190,7 +1287,8 @@ export class SyncService {
     // Include passkeyIds INSIDE the encrypted payload
     const bundlePayload = {
       passkeys,
-      deletions: this.vaultAdapter ? (await this.vaultSnapshot()).deletions || [] : [],
+      deletions:
+        deletions ?? (this.vaultAdapter ? (await this.vaultSnapshot()).deletions || [] : []),
       passkeyIds: passkeys.map((p) => p.id),
       totpEntries,
       totpIds: totpEntries.map((e) => e.id),
@@ -1229,6 +1327,9 @@ export class SyncService {
       throw new Error('Encryption key not initialized');
     }
 
+    if (bundle.version !== SYNC_BUNDLE_VERSION) {
+      throw new Error('Unsupported sync bundle version');
+    }
     const nonce = this.base64ToArrayBuffer(bundle.nonce);
     const ciphertext = this.base64ToArrayBuffer(bundle.ciphertext);
 
@@ -1241,9 +1342,9 @@ export class SyncService {
     const decoder = new TextDecoder();
     const payload = JSON.parse(decoder.decode(decrypted));
 
-    // Handle both old format (direct passkeys array) and new format (bundlePayload object)
+    // v4 bundles require explicit collections; legacy peers use separate keys.
     if (Array.isArray(payload)) {
-      return { passkeys: payload, totpEntries: [], deletions: [] };
+      throw new Error('Invalid v4 bundle');
     }
     return {
       passkeys: payload.passkeys || [],
@@ -1270,9 +1371,15 @@ export class SyncService {
     return bytes;
   }
 
-  getStatus(): { connected: boolean; chainId: string | null; deviceId: string | null } {
+  getStatus(): {
+    connected: boolean;
+    chainId: string | null;
+    deviceId: string | null;
+    lastError: string;
+  } {
     return {
       connected: this.isConnected,
+      lastError: this.lastError,
       chainId: this.chainId,
       deviceId: this.deviceId,
     };
@@ -1286,7 +1393,8 @@ export class SyncService {
     }
     this.broadcastTimer = null;
     this.pendingMessages.clear();
-    this.awaitingAck.clear();
+    this.deliveries.clear();
+    this.chunks.clear();
     this.knownDevices.clear();
     this.lastBroadcastTime = 0;
 
@@ -1322,7 +1430,6 @@ export class SyncService {
     }
     this.encryptionKey = null;
     this.seedHash = null;
-    this.syncSalt = null;
 
     this.deviceId = null;
     this.isConnected = false;

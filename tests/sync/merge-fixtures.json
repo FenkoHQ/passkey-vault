@@ -1,0 +1,73 @@
+[
+  {
+    "name": "counter-independent tie",
+    "local": {
+      "id": "p",
+      "credentialId": "cA",
+      "rpId": "example.com",
+      "privateKey": "keep",
+      "createdAt": 1,
+      "counter": 99,
+      "label": "a"
+    },
+    "remote": {
+      "label": "z",
+      "id": "p",
+      "credentialId": "cA",
+      "rpId": "example.com",
+      "privateKey": "keep",
+      "createdAt": 1,
+      "counter": 1
+    },
+    "winner": "z",
+    "counter": 99
+  },
+  {
+    "name": "fractional revision",
+    "local": {
+      "id": "p",
+      "credentialId": "cA",
+      "rpId": "example.com",
+      "privateKey": "keep",
+      "createdAt": 1,
+      "counter": 1,
+      "label": "z",
+      "updatedAt": 2.1
+    },
+    "remote": {
+      "id": "p",
+      "credentialId": "cA",
+      "rpId": "example.com",
+      "privateKey": "keep",
+      "createdAt": 1,
+      "counter": 1,
+      "label": "a",
+      "updatedAt": 2.5
+    },
+    "winner": "a",
+    "counter": 1
+  },
+  {
+    "name": "UTF-16 ordering",
+    "local": {
+      "id": "p",
+      "credentialId": "cA",
+      "rpId": "example.com",
+      "privateKey": "keep",
+      "createdAt": 1,
+      "counter": 1,
+      "label": "😀"
+    },
+    "remote": {
+      "id": "p",
+      "credentialId": "cA",
+      "rpId": "example.com",
+      "privateKey": "keep",
+      "createdAt": 1,
+      "counter": 1,
+      "label": ""
+    },
+    "winner": "",
+    "counter": 1
+  }
+]
