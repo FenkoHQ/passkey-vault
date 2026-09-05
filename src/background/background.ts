@@ -28,11 +28,13 @@ import {
   convertP1363ToDER,
   ANONYMOUS_AAGUID,
   PASSKEY_VAULT_AAGUID,
+  COSE_ALG_ES256,
   type AuthenticatorDataOptions,
 } from './cbor';
 import {
   loadWebAuthnFlags,
   saveWebAuthnFlags,
+  transportsFor,
   type WebAuthnFlagSettings,
 } from './webauthn-settings';
 import { verifyRelatedOrigin } from './related-origins';
@@ -677,6 +679,9 @@ class BackgroundService {
       const publicKeyRaw = await crypto.subtle.exportKey('raw', keyPair.publicKey);
       const publicKeyBase64 = arrayBufferToBase64(publicKeyRaw);
 
+      // SPKI DER for AuthenticatorAttestationResponse.getPublicKey()
+      const publicKeySpki = await crypto.subtle.exportKey('spki', keyPair.publicKey);
+
       const prfKeyBytes = crypto.getRandomValues(new Uint8Array(32));
       const prfKeyBase64 = arrayBufferToBase64URL(prfKeyBytes.buffer);
 
@@ -760,6 +765,10 @@ class BackgroundService {
           response: {
             clientDataJSON: clientDataJSONBase64,
             attestationObject: attestationObjectBase64,
+            authenticatorData: arrayBufferToBase64(authenticatorData),
+            publicKey: arrayBufferToBase64(publicKeySpki),
+            publicKeyAlgorithm: COSE_ALG_ES256,
+            transports: transportsFor(flagSettings.attachment),
           },
           authenticatorAttachment: flagSettings.attachment,
           clientExtensionResults,
