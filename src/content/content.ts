@@ -623,6 +623,10 @@ class ContentScript {
       responseObj = {
         clientDataJSON: resp?.clientDataJSON,
         attestationObject: resp?.attestationObject,
+        authenticatorData: resp?.authenticatorData,
+        publicKey: resp?.publicKey,
+        publicKeyAlgorithm: resp?.publicKeyAlgorithm,
+        transports: resp?.transports,
       };
     } else {
       responseObj = {

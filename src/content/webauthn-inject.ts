@@ -44,6 +44,27 @@
     };
   }
 
+  /** Credential as the content script posts it: buffers are base64 strings. */
+  interface SerializedResponse {
+    clientDataJSON: string;
+    attestationObject?: string;
+    authenticatorData?: string;
+    publicKey?: string | null;
+    publicKeyAlgorithm?: number;
+    transports?: string[];
+    signature?: string;
+    userHandle?: string | null;
+  }
+
+  interface SerializedCredential {
+    id: string;
+    rawId: string;
+    type: string;
+    response: SerializedResponse;
+    authenticatorAttachment?: string | null;
+    clientExtensionResults?: SerializedClientExtensionResults | null;
+  }
+
   // Debug mode controlled by page context (silent by default)
   const DEBUG = false;
 
@@ -65,64 +86,7 @@
         }
 
         if (result.success) {
-          // Convert the plain object to a proper credential-like object with the required methods
-          const credential = result.credential;
-          if (credential) {
-            // Convert base64 back to ArrayBuffer
-            credential.rawId = base64ToArrayBuffer(credential.rawId);
-            credential.response.clientDataJSON = base64ToArrayBuffer(
-              credential.response.clientDataJSON
-            );
-            if (credential.response.attestationObject) {
-              credential.response.attestationObject = base64ToArrayBuffer(
-                credential.response.attestationObject
-              );
-            }
-            if (credential.response.authenticatorData) {
-              credential.response.authenticatorData = base64ToArrayBuffer(
-                credential.response.authenticatorData
-              );
-            }
-            if (credential.response.signature) {
-              credential.response.signature = base64ToArrayBuffer(credential.response.signature);
-            }
-            if (credential.response.userHandle) {
-              credential.response.userHandle = base64ToArrayBuffer(credential.response.userHandle);
-            }
-
-            const normalizedClientExtensions = normalizeClientExtensionResults(
-              credential.clientExtensionResults
-            );
-
-            // Add the required methods
-            credential.getClientExtensionResults = function () {
-              return normalizedClientExtensions;
-            };
-            credential.toJSON = function () {
-              return {
-                id: this.id,
-                rawId: arrayBufferToBase64URL(this.rawId),
-                type: this.type,
-                response: {
-                  clientDataJSON: arrayBufferToBase64URL(this.response.clientDataJSON),
-                  attestationObject: this.response.attestationObject
-                    ? arrayBufferToBase64URL(this.response.attestationObject)
-                    : undefined,
-                  authenticatorData: this.response.authenticatorData
-                    ? arrayBufferToBase64URL(this.response.authenticatorData)
-                    : undefined,
-                  signature: this.response.signature
-                    ? arrayBufferToBase64URL(this.response.signature)
-                    : undefined,
-                  userHandle: this.response.userHandle
-                    ? arrayBufferToBase64URL(this.response.userHandle)
-                    : undefined,
-                },
-                authenticatorAttachment: this.authenticatorAttachment,
-                clientExtensionResults: this.getClientExtensionResults(),
-              };
-            };
-          }
+          const credential = result.credential ? buildCredential(result.credential) : null;
           resolve(credential || result);
         } else if (result.passthrough) {
           if (DEBUG) console.log('Fenko Vault: Passing WebAuthn request to native browser UI');
@@ -309,6 +273,151 @@
         'Fenko Vault: navigator.credentials unavailable (non-secure context), skipping hook'
       );
     }
+  }
+
+  /**
+   * Rebuild the credential on the browser's own prototypes.
+   *
+   * The object arrives through postMessage as a plain `{}`. Sites that branch
+   * on `response instanceof AuthenticatorAttestationResponse` then pick the
+   * wrong serialiser (issue #8). Placing our own data properties on top of the
+   * native prototype makes `instanceof` and `Object.prototype.toString` report
+   * the platform class while every read still hits our property, never a
+   * native getter that would throw "Illegal invocation".
+   *
+   *   PublicKeyCredential.prototype        AuthenticatorAttestationResponse.prototype
+   *              ^                                          ^
+   *   { id, rawId, response, ... }   --->   { clientDataJSON, attestationObject, getTransports, ... }
+   */
+  function buildCredential(raw: SerializedCredential): PublicKeyCredential {
+    const isRegistration = raw.response.attestationObject != null;
+    const response = isRegistration
+      ? buildAttestationResponse(raw.response)
+      : buildAssertionResponse(raw.response);
+    const extensions = normalizeClientExtensionResults(raw.clientExtensionResults);
+    const rawId = base64ToArrayBuffer(raw.rawId);
+    const attachment = raw.authenticatorAttachment ?? null;
+
+    return onNativePrototype('PublicKeyCredential', {
+      id: raw.id,
+      type: raw.type,
+      rawId,
+      response,
+      authenticatorAttachment: attachment,
+      getClientExtensionResults: () => extensions,
+      toJSON: () => ({
+        id: raw.id,
+        rawId: arrayBufferToBase64URL(rawId),
+        type: raw.type,
+        authenticatorAttachment: attachment,
+        clientExtensionResults: extensions,
+        response: isRegistration
+          ? registrationResponseJSON(raw.response)
+          : authenticationResponseJSON(raw.response),
+      }),
+    }) as PublicKeyCredential;
+  }
+
+  function buildAttestationResponse(raw: SerializedResponse): object {
+    const authenticatorData = optionalBuffer(raw.authenticatorData);
+    const publicKey = optionalBuffer(raw.publicKey);
+    const transports = raw.transports ?? [];
+
+    return onNativePrototype('AuthenticatorAttestationResponse', {
+      clientDataJSON: base64ToArrayBuffer(raw.clientDataJSON),
+      attestationObject: base64ToArrayBuffer(raw.attestationObject),
+      getTransports: () => transports.slice(),
+      getAuthenticatorData: () => authenticatorData,
+      getPublicKey: () => publicKey,
+      getPublicKeyAlgorithm: () => raw.publicKeyAlgorithm,
+    });
+  }
+
+  function buildAssertionResponse(raw: SerializedResponse): object {
+    return onNativePrototype('AuthenticatorAssertionResponse', {
+      clientDataJSON: base64ToArrayBuffer(raw.clientDataJSON),
+      authenticatorData: base64ToArrayBuffer(raw.authenticatorData),
+      signature: base64ToArrayBuffer(raw.signature),
+      userHandle: optionalBuffer(raw.userHandle),
+    });
+  }
+
+  /** RegistrationResponseJSON (WebAuthn Level 3 §5.8.1.1). */
+  function registrationResponseJSON(raw: SerializedResponse) {
+    const json: Record<string, unknown> = {
+      clientDataJSON: toBase64URL(raw.clientDataJSON),
+      attestationObject: toBase64URL(raw.attestationObject),
+      authenticatorData: toBase64URL(raw.authenticatorData),
+      publicKeyAlgorithm: raw.publicKeyAlgorithm,
+      transports: raw.transports ?? [],
+    };
+    if (raw.publicKey) {
+      json.publicKey = toBase64URL(raw.publicKey);
+    }
+    return json;
+  }
+
+  /** AuthenticationResponseJSON (WebAuthn Level 3 §5.8.1.2). */
+  function authenticationResponseJSON(raw: SerializedResponse) {
+    const json: Record<string, unknown> = {
+      clientDataJSON: toBase64URL(raw.clientDataJSON),
+      authenticatorData: toBase64URL(raw.authenticatorData),
+      signature: toBase64URL(raw.signature),
+    };
+
+    // JSON omits an absent handle; the response object still exposes null.
+    if (raw.userHandle != null) {
+      json.userHandle = toBase64URL(raw.userHandle);
+    }
+    return json;
+  }
+
+  /**
+   * Create an object inheriting from the named native class (or a plain
+   * object where the realm lacks it) and define `members` as own properties.
+   * defineProperty is required: the native prototypes carry getter-only
+   * accessors, so plain assignment would throw under strict mode.
+   */
+  function onNativePrototype(className: string, members: Record<string, unknown>): object {
+    const ctor = (window as unknown as Record<string, unknown>)[className];
+    const proto = typeof ctor === 'function' ? ctor.prototype : Object.prototype;
+    const obj = Object.create(proto);
+
+    for (const name of Object.keys(members)) {
+      Object.defineProperty(obj, name, {
+        value: members[name],
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+
+    shadowUnknownMembers(obj, proto);
+    return obj;
+  }
+
+  /**
+   * Any native member we did not anticipate (a future spec addition, a vendor
+   * extra) becomes an own `undefined` rather than a trap that throws
+   * "Illegal invocation" on a synthetic receiver.
+   */
+  function shadowUnknownMembers(obj: object, proto: object): void {
+    for (let p = proto; p && p !== Object.prototype; p = Object.getPrototypeOf(p)) {
+      for (const name of Object.getOwnPropertyNames(p)) {
+        if (name === 'constructor' || Object.prototype.hasOwnProperty.call(obj, name)) {
+          continue;
+        }
+        Object.defineProperty(obj, name, { value: undefined, writable: true, configurable: true });
+      }
+    }
+  }
+
+  function optionalBuffer(value: BufferInput): ArrayBuffer | null {
+    return value ? base64ToArrayBuffer(value) : null;
+  }
+
+  function toBase64URL(value: BufferInput): string {
+    return arrayBufferToBase64URL(base64ToArrayBuffer(value));
   }
 
   /**

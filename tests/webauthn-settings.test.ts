@@ -4,7 +4,18 @@ import {
   normalizeWebAuthnFlags,
   loadWebAuthnFlags,
   saveWebAuthnFlags,
+  transportsFor,
 } from '../src/background/webauthn-settings';
+
+describe('transportsFor', () => {
+  it('reports internal transport for the platform attachment', () => {
+    expect(transportsFor('platform')).toEqual(['internal']);
+  });
+
+  it('does not infer transport support from cross-platform attachment', () => {
+    expect(transportsFor('cross-platform')).toEqual([]);
+  });
+});
 
 describe('normalizeWebAuthnFlags', () => {
   it('falls back to the defaults for missing or junk input', () => {
