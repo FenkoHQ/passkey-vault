@@ -797,7 +797,7 @@ import { initTheme } from '../theme';
   async function deletePasskey(credentialId: string, siteName: string): Promise<void> {
     const confirmed = await showConfirmModal(
       t('popupDeletePasskeyTitle'),
-      t('popupDeletePasskeyMessage', { site: siteName }),
+      `${t('popupDeletePasskeyMessage', { site: siteName })} ${t('syncDeletionNotice')}`,
       t('commonDelete'),
       true
     );
@@ -1220,7 +1220,7 @@ import { initTheme } from '../theme';
     const label = entry.issuer || entry.account || t('commonUnknown');
     const confirmed = await showConfirmModal(
       t('popupDeleteTotpTitle'),
-      t('popupDeleteTotpMessage', { issuer: label }),
+      `${t('popupDeleteTotpMessage', { issuer: label })} ${t('syncDeletionNotice')}`,
       t('commonDelete'),
       true
     );

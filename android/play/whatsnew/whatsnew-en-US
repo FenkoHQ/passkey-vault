@@ -1,1 +1,3 @@
-Security hardening: fixes a cross-origin passkey issue, adds a confirmation before a passkey is created, keeps the PRF secret on-device, and resolves sync/storage edge cases so nothing is lost. You can now jump to the Chrome, Firefox, and Android listings straight from the sync screen to set up your other devices.
+Fix cross-device sync conflicts, deletions, restores, and native vault persistence. Large vaults sync in smaller encrypted events, with bounded retries.
+
+Update every device in your sync chain to 0.10.0 together. Local credentials and recovery phrases are preserved. Old relay history is not imported; updated devices republish their local vaults.

@@ -1,10 +1,9 @@
+import { cleanSyncConfig } from '../sync/config';
 /**
  * Secure Storage Module for Fenko Vault
  * Provides encrypted storage for sensitive data like seed hashes and passkeys
  */
 
-import { pbkdf2 } from '@noble/hashes/pbkdf2';
-import { sha256 } from '@noble/hashes/sha256';
 import { gcm } from '@noble/ciphers/aes';
 import { randomBytes } from '@noble/hashes/utils';
 import { uint8ArrayToBase64, base64ToUint8Array } from '../utils/base64';
@@ -31,7 +30,6 @@ export interface SecureStorageConfig {
   deviceId: string;
   deviceName: string;
   enabled: boolean;
-  syncSalt: string | null;
 }
 
 export interface EncryptedData {
@@ -42,10 +40,23 @@ export interface EncryptedData {
 }
 
 async function deriveKeyFromPassword(password: string, salt: Uint8Array): Promise<Uint8Array> {
-  const key = pbkdf2(sha256, new TextEncoder().encode(password), salt, {
-    c: ENCRYPTION_CONFIG.iterations,
-    dkLen: ENCRYPTION_CONFIG.keyLength,
-  });
+  const material = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(password),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  const key = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      hash: 'SHA-256',
+      salt: new Uint8Array(salt),
+      iterations: ENCRYPTION_CONFIG.iterations,
+    },
+    material,
+    ENCRYPTION_CONFIG.keyLength * 8
+  );
   return new Uint8Array(key);
 }
 
@@ -200,7 +211,7 @@ export class SecureStorage {
   async storeSyncConfig(config: SecureStorageConfig): Promise<void> {
     this.ensureUnlocked();
 
-    const encrypted = encryptData(JSON.stringify(config), this.encryptionKey!);
+    const encrypted = encryptData(JSON.stringify(cleanSyncConfig(config)), this.encryptionKey!);
     await chrome.storage.local.set({
       [STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG]: encrypted,
     });
@@ -225,7 +236,12 @@ export class SecureStorage {
         this.encryptionKey!
       );
       this.resetAutoLock();
-      return JSON.parse(decrypted);
+      const stored = JSON.parse(decrypted);
+      const config = cleanSyncConfig(stored);
+      if (JSON.stringify(stored) !== JSON.stringify(config)) {
+        await this.storeSyncConfig(config);
+      }
+      return config;
     } catch (error) {
       console.error('Failed to decrypt sync config:', error);
       return null;

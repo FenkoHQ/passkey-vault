@@ -42,6 +42,14 @@ public final class MainActivity extends Activity {
     private static final int CREATE_FILE_REQUEST = 43;
     private static final String APP_ORIGIN = "app.passkey-vault.local";
     private WebView webView;
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (webView != null) {
+            webView.evaluateJavascript("window.__fenkoNativeRefresh?.()", null);
+        }
+    }
     private byte[] pendingFileBytes;
 
     @Override
@@ -361,6 +369,11 @@ public final class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void resetVault() {
+            ProviderVaultStore.resetVault(context);
+        }
+
+        @JavascriptInterface
         public void saveVaultSnapshot(
                 String passkeysJson,
                 String totpJson,
@@ -374,6 +387,7 @@ public final class MainActivity extends Activity {
                     syncConfigJson,
                     syncDevicesJson,
                     customRelaysJson);
+            context.runOnUiThread(() -> context.webView.evaluateJavascript("window.__fenkoNativeRefresh?.()", null));
         }
     }
 }

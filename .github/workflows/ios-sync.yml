@@ -1,0 +1,38 @@
+name: iOS sync tests
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  native-sync:
+    runs-on: macos-15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - name: Verify Xcode and iOS SDK
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+      - run: bash ios/test-sync.sh
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: bash ios/build-web.sh
+      - run: brew install xcodegen
+      - name: Build app and credential provider without signing
+        working-directory: ios
+        run: |
+          xcodegen generate
+          xcodebuild -project FenkoVault.xcodeproj -scheme FenkoVault \
+            -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+      - name: Archive for iOS without signing
+        working-directory: ios
+        run: |
+          xcodebuild -project FenkoVault.xcodeproj -scheme FenkoVault \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/FenkoVault.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO archive

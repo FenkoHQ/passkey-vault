@@ -35,7 +35,9 @@ struct WebVaultView: UIViewRepresentable {
         return webView
     }
 
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        context.coordinator.refresh(uiView)
+    }
 
     /// Defines `window.AndroidBridge` (the contract app.ts expects) backed by a
     /// WKScriptMessageHandler. Synchronous calls (loadVaultSnapshot, canUseBiometrics)
@@ -49,6 +51,7 @@ struct WebVaultView: UIViewRepresentable {
           window.AndroidBridge = {
             copyText: function (v) { post({ action: 'copy', value: v }); },
             toast: function (v) { post({ action: 'toast', value: v }); },
+            resetVault: function () { post({ action: 'reset' }); },
             loadVaultSnapshot: function () { return window.__fenkoSnapshot || ''; },
             saveVaultSnapshot: function (p, t, s, d, r) {
               post({ action: 'save', passkeys: p, totp: t, syncConfig: s, syncDevices: d, customRelays: r });
@@ -61,6 +64,33 @@ struct WebVaultView: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+        private weak var webView: WKWebView?
+        private var observer: NSObjectProtocol?
+
+        override init() {
+            super.init()
+            observer = NotificationCenter.default.addObserver(
+                forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                if let webView = self?.webView { self?.refresh(webView) }
+            }
+        }
+
+        deinit {
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+        }
+
+        func refresh(_ webView: WKWebView) {
+            self.webView = webView
+            guard let data = try? JSONEncoder().encode(VaultStore.shared.snapshotJSON()),
+                  let literal = String(data: data, encoding: .utf8) else { return }
+            webView.evaluateJavaScript("window.__fenkoSnapshot = \(literal); window.__fenkoNativeRefresh?.(window.__fenkoSnapshot)")
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            refresh(webView)
+        }
+
         /// Keep the vault itself in the WebView and push everything else (the
         /// feedback form, any future external link) out to the system browser.
         /// Without this, tapping a link would replace the vault UI with a remote
@@ -93,6 +123,10 @@ struct WebVaultView: UIViewRepresentable {
                     syncConfig: body["syncConfig"] as? String,
                     syncDevices: body["syncDevices"] as? String,
                     customRelays: body["customRelays"] as? String)
+                if let webView = message.webView { refresh(webView) }
+            case "reset":
+                VaultStore.shared.resetVault()
+                if let webView = message.webView { refresh(webView) }
             case "copy":
                 if let v = body["value"] as? String { UIPasteboard.general.string = v }
             default:

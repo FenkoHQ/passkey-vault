@@ -1,5 +1,6 @@
 import Foundation
 import AuthenticationServices
+import CoreFoundation
 
 /// Shared vault, backed by the App Group container so the app and the credential
 /// provider extension see the same data (the iOS equivalent of Android's
@@ -125,12 +126,96 @@ final class VaultStore {
     /// the same vault. Each argument is a JSON string (or nil to leave unchanged).
     func saveSnapshotFromWeb(passkeys: String?, totp: String?, syncConfig: String?,
                              syncDevices: String?, customRelays: String?) {
-        if let passkeys { defaults.set(passkeys, forKey: Key.passkeys) }
-        if let totp { defaults.set(totp, forKey: Key.totp) }
-        if let syncConfig { defaults.set(syncConfig, forKey: Key.syncConfig) }
+        var config = object(syncConfig ?? "{}")
+        let oldConfig = object(defaults.string(forKey: Key.syncConfig) ?? "{}")
+        var deletions: [String: [String: Any]] = [:]
+        for item in (oldConfig["deletions"] as? [[String: Any]] ?? []) +
+                    (config["deletions"] as? [[String: Any]] ?? []) {
+            guard let kind = item["kind"] as? String, let id = item["id"] as? String,
+                  let time = item["deletedAt"] as? Double,
+                  time.isFinite, ["passkey", "totp"].contains(kind) else { continue }
+            let key = kind + ":" + id
+            if time > (deletions[key]?["deletedAt"] as? Double ?? -Double.infinity) {
+                deletions[key] = item
+            }
+        }
+        config["deletions"] = Array(deletions.values)
+        config.removeValue(forKey: "syncSalt")
+        // Save deletion history first, including when the WebView omits records.
+        defaults.set(json(config), forKey: Key.syncConfig)
+        defaults.set(mergeEntries(defaults.string(forKey: Key.passkeys) ?? "[]",
+                                 passkeys ?? "[]", Array(deletions.values), "passkey"), forKey: Key.passkeys)
+        defaults.set(mergeEntries(defaults.string(forKey: Key.totp) ?? "[]",
+                                 totp ?? "[]", Array(deletions.values), "totp"), forKey: Key.totp)
         if let syncDevices { defaults.set(syncDevices, forKey: Key.syncDevices) }
         if let customRelays { defaults.set(customRelays, forKey: Key.customRelays) }
-        if passkeys != nil { updateCredentialIdentities() }
+        updateCredentialIdentities()
+    }
+
+    func resetVault() {
+        for key in [Key.passkeys, Key.totp, Key.syncConfig, Key.syncDevices, Key.customRelays] {
+            defaults.removeObject(forKey: key)
+        }
+        updateCredentialIdentities([])
+    }
+
+    private func object(_ raw: String) -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) as? [String: Any] ?? [:]
+    }
+
+    private func json(_ value: Any) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: value) else { return "null" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    // Same ASCII ordering as the JS and Java stores, without counter metadata.
+    private func canonical(_ value: Any) -> String {
+        if value is NSNull { return "n" }
+        if let number = value as? NSNumber {
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { return number.boolValue ? "b1" : "b0" }
+            let double = number.doubleValue == 0 ? 0.0 : number.doubleValue
+            return "d" + String(format: "%016llx", double.bitPattern)
+        }
+        if let text = value as? String {
+            return "s" + text.utf16.map { String(format: "%04x", $0) }.joined() + ";"
+        }
+        if let list = value as? [Any] { return "[" + list.map(canonical).joined() + "]" }
+        guard let object = value as? [String: Any] else { return "n" }
+        let keys = object.keys.sorted { $0.utf16.lexicographicallyPrecedes($1.utf16) }
+        return "{" + keys.map { canonical($0) + canonical(object[$0]!) }.joined() + "}"
+    }
+
+    private func recordOrder(_ record: [String: Any]) -> String {
+        var value = record
+        for key in ["counter", "syncSource", "syncTimestamp"] { value.removeValue(forKey: key) }
+        return canonical(value)
+    }
+
+    private func revision(_ record: [String: Any]) -> Double {
+        record["updatedAt"] as? Double ?? record["createdAt"] as? Double ?? 0
+    }
+
+    private func mergeEntries(_ local: String, _ incoming: String,
+                              _ deletions: [[String: Any]], _ kind: String) -> String {
+        var records: [String: [String: Any]] = [:]
+        for raw in [local, incoming] {
+            let list = (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) as? [[String: Any]] ?? []
+            for item in list {
+                guard let id = item["id"] as? String ?? item["credentialId"] as? String else { continue }
+                guard let current = records[id] else { records[id] = item; continue }
+                let newer = revision(item) > revision(current) ||
+                    (revision(item) == revision(current) && recordOrder(item) > recordOrder(current))
+                var winner = newer ? item : current
+                winner["counter"] = max(item["counter"] as? Int ?? 0, current["counter"] as? Int ?? 0)
+                records[id] = winner
+            }
+        }
+        for item in deletions {
+            guard item["kind"] as? String == kind, let id = item["id"] as? String,
+                  let record = records[id], let deletedAt = item["deletedAt"] as? Double else { continue }
+            if revision(record) <= deletedAt { records.removeValue(forKey: id) }
+        }
+        return json(records.keys.sorted().compactMap { records[$0] })
     }
 
     // MARK: Credential identity registration (QuickType / matching)

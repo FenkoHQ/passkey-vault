@@ -18,6 +18,7 @@ struct PasskeyRecord: Codable {
     var publicKey: String
     var createdAt: Double
     var counter: Int
+    private var original: Data? = nil
 
     init(id: String, credentialId: String, rpId: String, origin: String,
          userId: String?, userName: String, displayName: String,
@@ -44,7 +45,7 @@ struct PasskeyRecord: Codable {
         guard !credentialId.isEmpty, !privateKey.isEmpty, !rpId.isEmpty else { return nil }
 
         let user = obj["user"] as? [String: Any]
-        return PasskeyRecord(
+        var record = PasskeyRecord(
             id: (obj["id"] as? String) ?? credentialId,
             credentialId: credentialId,
             rpId: rpId,
@@ -57,12 +58,15 @@ struct PasskeyRecord: Codable {
             createdAt: (obj["createdAt"] as? Double) ?? Date().timeIntervalSince1970 * 1000,
             counter: (obj["counter"] as? Int) ?? 0
         )
+        record.original = try? JSONSerialization.data(withJSONObject: obj)
+        return record
     }
 
     func toJSON() -> [String: Any] {
         var user: [String: Any] = ["name": userName, "displayName": displayName]
         user["id"] = userId as Any? ?? NSNull()
-        return [
+        var result = original.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        let fields: [String: Any] = [
             "id": id,
             "credentialId": credentialId,
             "type": "public-key",
@@ -74,6 +78,8 @@ struct PasskeyRecord: Codable {
             "createdAt": createdAt,
             "counter": counter,
         ]
+        result.merge(fields) { _, next in next }
+        return result
     }
 }
 
