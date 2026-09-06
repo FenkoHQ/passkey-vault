@@ -198,10 +198,18 @@ jobs:
             "https://www.googleapis.com/chromewebstore/v1.1/items/${{ secrets.CHROME_EXTENSION_ID }}/publish")
           echo "$RESPONSE" | jq .
           STATUS=$(echo "$RESPONSE" | jq -r '.status[0] // empty')
-          if [ "$STATUS" != "OK" ]; then
-            echo "Publish failed with status: $STATUS"
-            exit 1
-          fi
+          case "$STATUS" in
+            OK)
+              echo "Published to Chrome Web Store."
+              ;;
+            ITEM_PENDING_REVIEW)
+              echo "Submitted to Chrome Web Store; pending review."
+              ;;
+            *)
+              echo "Publish failed with status: $STATUS"
+              exit 1
+              ;;
+          esac
 
   publish-firefox:
     name: Publish to Firefox Add-ons (AMO)
