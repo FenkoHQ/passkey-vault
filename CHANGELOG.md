@@ -6,6 +6,36 @@ All notable changes to Passkey Vault are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-07
+
+### Sync upgrade
+
+Update every device in a sync chain together. Protocol v4 keeps older clients
+on separate relay addresses so they cannot resurrect deleted credentials.
+Existing local credentials, passwords, and recovery phrases are preserved.
+Old relay history is not imported; updated devices republish their local vaults.
+Update devices holding your credentials before relying on a fresh installation.
+
+### Fixed
+
+- Use matching sync keys and deterministic conflict resolution across browser,
+  Android, and iOS, including deletion records and signature counter floors.
+- Merge native snapshots without overwriting newer credentials or losing restores.
+- Split large encrypted snapshots into bounded relay events and stop retrying
+  unacknowledged events after five attempts.
+- Keep passkey lookups responsive during sync connections and password derivation.
+- Replace the native reset sentinel with a dedicated bridge operation and migrate
+  obsolete sync configuration fields.
+- Build and test iOS with Xcode 26, including an unsigned device archive.
+
+### Platform status
+
+Chrome, Firefox, and Android are release targets. iOS remains in development:
+TestFlight signing is not configured, and vault locking, file export, wipe,
+and provider setup still need work. No standalone desktop app is included.
+Mobile sync delivery errors are not yet shown in the UI.
+
+
 ### Added
 
 - **Advanced settings for the WebAuthn ceremony.** Everything the vault used to
