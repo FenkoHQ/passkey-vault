@@ -37,6 +37,44 @@ Use conventional commits format:
 4. Ensure all checks pass
 5. Request review
 
+## Scripts
+
+```bash
+npm run build            # Build for Chrome
+npm run build:firefox    # Build for Firefox
+npm run build:all        # Build for both
+npm run zip              # Build Chrome + create ZIP
+npm run zip:firefox      # Build Firefox + create ZIP
+npm run zip:all          # Build both + create both ZIPs
+npm run clean            # Remove dist directories
+npm run test             # Run tests
+npm run lint             # Run ESLint
+npm run typecheck        # TypeScript check
+npm run version:bump     # Sync version across all manifests (run before tagging)
+npm run capture          # Re-generate screenshots and demo video
+```
+
+## Releasing
+
+```bash
+npm run version:bump 0.9.0     # sync version across manifests + lockfile
+# update CHANGELOG.md with the new version's notes
+npm run lint
+npm run typecheck
+npm test
+npm run build:all
+npm run zip:all
+npm run validate:packages
+git commit -am "Release Fenko Vault 0.9.0"
+git tag v0.9.0
+git push origin main
+git push origin v0.9.0
+```
+
+The CI pipeline builds both extensions, publishes to the Chrome Web Store, and creates a GitHub release. Release notes come from the matching `## [x.y.z]` section in `CHANGELOG.md`.
+
+Store listing copy and upload assets live in `docs/cws/`.
+
 ## Security Issues
 
 For security vulnerabilities, please open a private issue or contact the maintainer directly rather than posting publicly.
