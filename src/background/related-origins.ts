@@ -9,6 +9,10 @@
 // only the RP controls.
 
 import { logger } from '../utils/logger';
+import { registrableLabel } from '../utils/domain';
+
+// Re-exported: the label cap below is the only consumer inside this module.
+export { registrableLabel };
 
 // Max number of distinct registrable-domain labels a well-known file may
 // authorize. The spec requires clients to support at least 5; we cap there.
@@ -19,32 +23,6 @@ const MAX_LABELS = 5;
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 5000;
 
-// A small set of common two-level public suffixes so the derived label is the
-// registrable label rather than the country-code second level. This only
-// affects the anti-abuse label cap — the security gate is the exact origin
-// match below, which does not depend on this list.
-const TWO_LEVEL_SUFFIXES = new Set([
-  'co.uk',
-  'org.uk',
-  'gov.uk',
-  'ac.uk',
-  'com.au',
-  'net.au',
-  'org.au',
-  'co.jp',
-  'co.nz',
-  'co.za',
-  'co.in',
-  'co.kr',
-  'com.br',
-  'com.mx',
-  'com.tr',
-  'com.cn',
-  'com.hk',
-  'com.sg',
-  'com.tw',
-]);
-
 // rpId must be a bare hostname: dot-separated labels of letters/digits/hyphens,
 // at least one dot. Rejects scheme/path/port injection and bare hosts before
 // they reach the fetch URL.
@@ -52,21 +30,6 @@ const HOSTNAME_RE =
   /^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 const originsCache = new Map<string, { origins: unknown; expiry: number }>();
-
-/**
- * Derive the registrable-domain label of a hostname: the label directly
- * preceding the effective TLD. e.g. accountscenter.facebook.com -> "facebook",
- * shopping.co.uk -> "shopping". Returns null for hostnames with no label.
- */
-export function registrableLabel(hostname: string): string | null {
-  const parts = hostname.toLowerCase().split('.').filter(Boolean);
-  if (parts.length < 2) return null;
-  const lastTwo = parts.slice(-2).join('.');
-  if (parts.length >= 3 && TWO_LEVEL_SUFFIXES.has(lastTwo)) {
-    return parts[parts.length - 3];
-  }
-  return parts[parts.length - 2];
-}
 
 /**
  * Decide whether `callerOrigin` is authorized by the parsed `origins` list from

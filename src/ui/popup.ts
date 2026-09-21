@@ -8,6 +8,7 @@ import jsQR from 'jsqr';
 import { materialize, parseImport } from '../porting';
 import { formatCount, initAndLocalize, t } from '../i18n';
 import { initTheme } from '../theme';
+import { resolveSiteIcon } from '../site-icons';
 
 (function () {
   'use strict';
@@ -702,7 +703,7 @@ import { initTheme } from '../theme';
     const credentialIdShort = passkey.id ? passkey.id.substring(0, 20) + '...' : t('commonUnknown');
 
     div.innerHTML = `
-      <div class="vault-item-icon vault-item-icon--passkey" title="${popupEscapeHtml(t('popupTabPasskeys'))}">
+      <div class="vault-item-icon vault-item-icon--passkey" title="${popupEscapeHtml(passkey.rpId || t('commonUnknownSite'))}">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="7.5" cy="15.5" r="4.5"></circle>
           <path d="m10.7 12.3 8.3-8.3"></path>
@@ -717,12 +718,6 @@ import { initTheme } from '../theme';
           ${passkey.user?.name ? `<div class="passkey-username">${popupEscapeHtml(passkey.user.name)}</div>` : ''}
         </div>
         <div class="passkey-actions">
-          <button class="copy-btn" title="${popupEscapeHtml(t('popupCopyClipboard'))}">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <rect x="9" y="9" width="13" height="13" rx="2"></rect>
-              <rect x="3" y="3" width="13" height="13" rx="2"></rect>
-            </svg>
-          </button>
           <button class="expand-btn" title="${popupEscapeHtml(t('popupDetails'))}">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="6 9 12 15 18 9"></polyline>
@@ -740,11 +735,22 @@ import { initTheme } from '../theme';
           <span class="label">${t('popupKeyId')}</span>
           <span class="value">${popupEscapeHtml(credentialIdShort)}</span>
         </div>
+        <div class="passkey-details-actions">
+          <button class="btn btn-secondary btn-sm passkey-copy" title="${popupEscapeHtml(t('popupCopyClipboard'))}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2"></rect>
+              <rect x="3" y="3" width="13" height="13" rx="2"></rect>
+            </svg>
+            <span>${t('popupCopyDetails')}</span>
+          </button>
+        </div>
       </div>
       </div>
     `;
 
-    const copyBtn = div.querySelector('.copy-btn') as HTMLButtonElement;
+    applySiteIcon(div.querySelector('.vault-item-icon') as HTMLElement, passkey.rpId);
+
+    const copyBtn = div.querySelector('.passkey-copy') as HTMLButtonElement;
     copyBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       copyPasskeyToClipboard(passkey, copyBtn);
@@ -768,6 +774,34 @@ import { initTheme } from '../theme';
     return div;
   }
 
+  /**
+   * Swap the placeholder glyph for the site's own icon once one resolves.
+   *
+   * Fire-and-forget so the list renders immediately, and the image is only
+   * attached after it decodes — a broken or missing icon leaves the glyph in
+   * place with no flicker and no layout shift.
+   */
+  function applySiteIcon(iconEl: HTMLElement | null, rpId: string | undefined): void {
+    if (!iconEl || !rpId) {
+      return;
+    }
+
+    void resolveSiteIcon(rpId).then((dataUrl) => {
+      if (dataUrl === null) {
+        return;
+      }
+
+      const img = document.createElement('img');
+      img.className = 'site-icon';
+      img.alt = '';
+      img.addEventListener('load', () => {
+        iconEl.classList.add('vault-item-icon--site');
+        iconEl.replaceChildren(img);
+      });
+      img.src = dataUrl;
+    });
+  }
+
   async function copyPasskeyToClipboard(
     passkey: PopupPasskey,
     btn: HTMLButtonElement
@@ -784,6 +818,16 @@ import { initTheme } from '../theme';
       counter: passkey.counter,
       lastUsed: passkey.lastUsed,
     };
+
+    const confirmed = await showConfirmModal(
+      t('popupCopyWarnTitle'),
+      t('popupCopyWarnMessage'),
+      t('commonCopy'),
+      false
+    );
+    if (!confirmed) {
+      return;
+    }
 
     try {
       await navigator.clipboard.writeText(JSON.stringify(debugData, null, 2));

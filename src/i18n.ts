@@ -85,12 +85,17 @@ const en: TranslationMap = {
   popupImportPasskeys: 'Import Passkeys',
   popupBackup: 'Backup',
   popupNoResults: 'Nothing matches "{query}"',
-  popupFilterAllHidden: 'Both passkeys and 2FA codes are hidden. Turn a filter back on to see them.',
+  popupFilterAllHidden:
+    'Both passkeys and 2FA codes are hidden. Turn a filter back on to see them.',
   popupFailedLoad: 'Failed to load passkeys',
   popupAdded: 'Added:',
   popupKeyId: 'Key ID:',
   popupCopyClipboard: 'Copy to clipboard',
   popupDetails: 'Details',
+  popupCopyDetails: 'Copy details',
+  popupCopyWarnTitle: 'Copy passkey details?',
+  popupCopyWarnMessage:
+    'This copies the site, your username and the public key. It leaves out the private key, so it cannot be used to sign in as you — but it does show which account you hold here, and any app that reads your clipboard can see it.',
   popupDel: 'Del',
   popupDeletePasskeyTitle: 'Delete Passkey?',
   syncDeletionNotice: 'When sync is enabled, this deletion also applies to your other devices.',
@@ -171,15 +176,21 @@ const en: TranslationMap = {
   optionsFlagsSaved: 'Saved',
   optionsFlagsOnRegister: 'on registration',
   optionsFlagsOnSignIn: 'on sign-in',
-  optionsAdvancedDesc: 'What the vault claims about itself during a WebAuthn ceremony. The defaults suit nearly every site — change these only if you know why.',
-  optionsUvDesc: 'The vault has no verification step of its own — a click in the consent card is user presence, not verification. Reporting verification anyway is what lets Google and other passwordless sign-ins accept the passkey. Report presence only and those sites will ask for a password instead.',
-  optionsBackupDesc: 'Tell the site whether this credential can be synced to your other devices. Some sites use it to decide whether to keep a second factor on the account.',
+  optionsAdvancedDesc:
+    'What the vault claims about itself during a WebAuthn ceremony. The defaults suit nearly every site — change these only if you know why.',
+  optionsUvDesc:
+    'The vault has no verification step of its own — a click in the consent card is user presence, not verification. Reporting verification anyway is what lets Google and other passwordless sign-ins accept the passkey. Report presence only and those sites will ask for a password instead.',
+  optionsBackupDesc:
+    'Tell the site whether this credential can be synced to your other devices. Some sites use it to decide whether to keep a second factor on the account.',
   optionsBeDesc: 'The credential is allowed to leave this device.',
   optionsBsDesc: 'The credential is synced right now. Requires backup eligible.',
-  optionsCounterDesc: 'Every device keeps its own counter, so a synced credential can look cloned to a site that checks for it. Sending zero is what platform passkey providers do.',
-  optionsAaguidDesc: 'Identifies the authenticator model at registration. The Fenko Vault value makes sites show the vault by name and icon; all-zero keeps the authenticator anonymous.',
+  optionsCounterDesc:
+    'Every device keeps its own counter, so a synced credential can look cloned to a site that checks for it. Sending zero is what platform passkey providers do.',
+  optionsAaguidDesc:
+    'Identifies the authenticator model at registration. The Fenko Vault value makes sites show the vault by name and icon; all-zero keeps the authenticator anonymous.',
   optionsAttachmentDesc: 'How the credential describes where it lives. Cosmetic on most sites.',
-  optionsFlagsScope: 'Changes apply to the next ceremony. Credentials you already registered keep working, though a site that recorded different flags at registration may notice.',
+  optionsFlagsScope:
+    'Changes apply to the next ceremony. Credentials you already registered keep working, though a site that recorded different flags at registration may notice.',
   navAbout: 'About',
   feedbackTitle: 'Send feedback',
   feedbackLabel: 'Feedback',
@@ -674,6 +685,11 @@ const ru: TranslationMap = {
   pageChoosePasskey: 'Выберите passkey',
   pageContinue: 'Продолжить',
   pageNoPasskeysSite: 'Для этого сайта passkeys не найдены',
+
+  popupCopyDetails: 'Копировать данные',
+  popupCopyWarnTitle: 'Скопировать данные ключа доступа?',
+  popupCopyWarnMessage:
+    'Будут скопированы сайт, ваше имя пользователя и открытый ключ. Закрытый ключ не копируется, поэтому войти с этими данными нельзя — но они показывают, какая у вас учётная запись на этом сайте, и их увидит любое приложение, читающее буфер обмена.',
 };
 
 const zh_CN: TranslationMap = {
@@ -804,6 +820,11 @@ const zh_CN: TranslationMap = {
   pageChoosePasskey: '选择 Passkey',
   pageContinue: '继续',
   pageNoPasskeysSite: '此网站没有 passkey',
+
+  popupCopyDetails: '复制详情',
+  popupCopyWarnTitle: '复制通行密钥详情？',
+  popupCopyWarnMessage:
+    '将复制网站、您的用户名和公钥。其中不含私钥，因此无法用于登录，但会显示您在该网站拥有哪个账户，任何可读取剪贴板的应用都能看到。',
 };
 
 const ar: TranslationMap = {
@@ -929,6 +950,11 @@ const ar: TranslationMap = {
   pageChoosePasskey: 'اختر مفتاح مرور',
   pageContinue: 'متابعة',
   pageNoPasskeysSite: 'لا توجد مفاتيح مرور لهذا الموقع',
+
+  popupCopyDetails: 'نسخ التفاصيل',
+  popupCopyWarnTitle: 'نسخ تفاصيل مفتاح المرور؟',
+  popupCopyWarnMessage:
+    'يُنسخ الموقع واسم المستخدم والمفتاح العام. لا يتضمن المفتاح الخاص، لذا لا يمكن استخدامه لتسجيل الدخول باسمك — لكنه يكشف الحساب الذي تملكه على هذا الموقع، ويمكن لأي تطبيق يقرأ الحافظة الاطلاع عليه.',
 };
 
 const fa: TranslationMap = {
@@ -1142,6 +1168,11 @@ const fa: TranslationMap = {
   pageSignInTo: 'ورود به {rp}',
   pageNoPasskeysSite: 'برای این سایت کلید عبوری پیدا نشد',
   pageContinue: 'ادامه',
+
+  popupCopyDetails: 'کپی جزئیات',
+  popupCopyWarnTitle: 'جزئیات پس‌کلید کپی شود؟',
+  popupCopyWarnMessage:
+    'نشانی سایت، نام کاربری و کلید عمومی کپی می‌شود. کلید خصوصی در آن نیست، پس نمی‌توان با آن وارد شد — اما نشان می‌دهد چه حسابی در این سایت دارید و هر برنامه‌ای که کلیپ‌بورد را بخواند آن را می‌بیند.',
 };
 
 const es: TranslationMap = {
@@ -1267,6 +1298,11 @@ const es: TranslationMap = {
   pageChoosePasskey: 'Elige una passkey',
   pageContinue: 'Continuar',
   pageNoPasskeysSite: 'No hay passkeys para este sitio',
+
+  popupCopyDetails: 'Copiar detalles',
+  popupCopyWarnTitle: '¿Copiar los datos de la clave de acceso?',
+  popupCopyWarnMessage:
+    'Se copian el sitio, tu nombre de usuario y la clave pública. No incluye la clave privada, así que no sirve para iniciar sesión como tú, pero sí revela qué cuenta tienes en ese sitio, y cualquier app que lea el portapapeles puede verlo.',
 };
 
 const fr: TranslationMap = {
@@ -1334,7 +1370,8 @@ const fr: TranslationMap = {
   feedbackTitle: 'Envoyer un commentaire',
   feedbackLabel: 'Commentaire',
   optionsAboutTitle: 'À propos',
-  optionsAboutDesc: 'Informations sur le projet, politique de confidentialité et conditions d’utilisation.',
+  optionsAboutDesc:
+    'Informations sur le projet, politique de confidentialité et conditions d’utilisation.',
   optionsGeneralTitle: 'Paramètres généraux',
   optionsLanguageTitle: 'Langue',
   optionsLanguageDesc: "Choisissez la langue de l'extension.",
@@ -1392,6 +1429,11 @@ const fr: TranslationMap = {
   pageChoosePasskey: 'Choisir une passkey',
   pageContinue: 'Continuer',
   pageNoPasskeysSite: 'Aucune passkey pour ce site',
+
+  popupCopyDetails: 'Copier les détails',
+  popupCopyWarnTitle: 'Copier les détails de la clé d’accès ?',
+  popupCopyWarnMessage:
+    'Cela copie le site, votre nom d’utilisateur et la clé publique. La clé privée n’y figure pas : impossible de se connecter avec. En revanche, cela révèle quel compte vous avez sur ce site, et toute appli qui lit le presse-papiers peut le voir.',
 };
 
 const translations: Record<ResolvedLanguage, TranslationMap> = { en, ru, zh_CN, ar, fa, es, fr };
