@@ -7,6 +7,7 @@
 
 import { initI18n, t } from '../i18n';
 import { logger } from '../utils/logger';
+import { readPageIcon } from '../site-icons/page-capture';
 
 interface PasskeyOption {
   id: string;
@@ -249,6 +250,7 @@ class ContentScript {
           const pkUser = (pk?.user as Record<string, string>) || {};
           const userName = pkUser.displayName || pkUser.name || t('commonUnknownUser');
           _showPasskeyCreatedNotification(userName, rpId);
+          void this.captureSiteIcon(rpId);
 
           // Reconstruct a proper PublicKeyCredential object
           const credential = this.createCredentialFromResponse(
@@ -416,6 +418,7 @@ class ContentScript {
           const userName =
             selectedPasskey?.userDisplayName || selectedPasskey?.userName || t('commonUnknownUser');
           _showPasskeyUsedNotification(userName, rpId);
+          void this.captureSiteIcon(rpId);
 
           // Reconstruct a proper PublicKeyCredential object
           const credential = this.createCredentialFromResponse(
@@ -599,6 +602,39 @@ class ContentScript {
         modal.remove();
       }
     }, 5000);
+  }
+
+  /**
+   * Store the site's own icon so the vault list can show it later.
+   *
+   * Only runs for a ceremony whose page is same-site with the RP ID. A Related
+   * Origin Request runs on another brand's page (facebook.com authorizing
+   * accounts.meta.com), and labelling one brand with another's mark would be
+   * worse than no icon at all. Best-effort throughout: a failure here must never
+   * affect the ceremony, which has already completed by this point.
+   */
+  private async captureSiteIcon(rpId: string): Promise<void> {
+    const host = window.location.hostname.toLowerCase();
+    const id = rpId.toLowerCase();
+    if (host !== id && !host.endsWith('.' + id)) {
+      return;
+    }
+
+    try {
+      const status = await this.sendMessage({ type: 'NEEDS_SITE_ICON', payload: { rpId } });
+      if (status?.needed !== true) {
+        return;
+      }
+
+      const icon = await readPageIcon();
+      if (!icon) {
+        return;
+      }
+
+      await this.sendMessage({ type: 'SAVE_SITE_ICON', payload: { rpId, ...icon } });
+    } catch (error) {
+      logger.debug('Site icon capture skipped', error);
+    }
   }
 
   /**

@@ -6,6 +6,50 @@ All notable changes to Passkey Vault are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-21
+
+### Knowing a passkey by its site
+
+Passkey entries now carry the site's own icon instead of a row of identical
+keyholes. The icon comes from one of two places, both of them already on the
+machine: the icon the site serves during a passkey ceremony, read from the page
+that is already open, and on Chrome and Edge the browser's own favicon cache.
+
+No favicon is ever fetched from a third party, and opening the vault makes no
+request at all. Icons live in a local cache keyed by registrable domain, stay
+out of the sync bundle and out of exports, and are wiped with the vault.
+
+### Added
+
+- Site icons on passkey entries, captured during a create or sign-in ceremony
+  and re-encoded to a 32x32 PNG before being stored.
+- Icons for existing entries on Chrome and Edge, read from the browser's local
+  favicon cache via the new `favicon` permission. This is a lookup in the
+  profile's own database; it makes no network request.
+- `npm run test:e2e`, which loads the built extension into Chromium and drives
+  the popup: rendering, icons, the copy flow, and console errors.
+
+### Changed
+
+- Copying a passkey's details moved from the row into the expanded detail
+  panel, and now asks first. The confirmation says what reaches the clipboard:
+  the site, the username and the public key, but not the private key.
+- The icon tooltip names the site rather than repeating the entry type.
+- Spacing across the popup: one gutter for every band, so rows line up with the
+  search field and the footer, separators run the full width, and rows are
+  shorter. Three more entries fit without scrolling.
+- The footer keeps sync and backup; the feedback link moved out.
+- Extension pages declare `img-src 'self' data:`, so a page in the extension
+  cannot load a remote image even by mistake.
+
+### Security
+
+- Site icons are never shown in the consent dialogs that run inside a calling
+  page. A logo there would let one site wear another's mark while the user
+  approves a credential.
+- An icon captured from a page is decoded and redrawn before it is stored, so
+  only pixels are kept. SVG is refused outright.
+
 ## [0.11.0] - 2026-09-10
 
 ### Moving in from another provider
@@ -70,7 +114,6 @@ TestFlight signing is not configured, and vault locking, file export, wipe,
 and provider setup still need work. No standalone desktop app is included.
 Mobile sync delivery errors are not yet shown in the UI.
 
-
 ### Added
 
 - **Advanced settings for the WebAuthn ceremony.** Everything the vault used to
@@ -81,7 +124,6 @@ Mobile sync delivery errors are not yet shown in the UI.
 
   Defaults reproduce 0.9.6 byte for byte, so a vault that never opens the page
   signs exactly as before. What the settings are for:
-
   - **User verification** — the vault has no verification step, so reporting UV
     is a claim it cannot back up. Leaving it on is what makes Google and other
     passwordless sign-ins work; turning it off is honest and makes those sites

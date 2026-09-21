@@ -38,6 +38,7 @@ import {
   type WebAuthnFlagSettings,
 } from './webauthn-settings';
 import { verifyRelatedOrigin } from './related-origins';
+import { needsSiteIcon, saveSiteIcon, clearSiteIcons } from '../site-icons';
 import {
   selectPrfEval,
   getOrCreatePrfKey,
@@ -541,6 +542,10 @@ class BackgroundService {
         return this.handleListPasskeysForRp(payload || {});
       case 'VERIFY_RELATED_ORIGIN':
         return this.handleVerifyRelatedOrigin(payload || {});
+      case 'NEEDS_SITE_ICON':
+        return this.handleNeedsSiteIcon(payload || {});
+      case 'SAVE_SITE_ICON':
+        return this.handleSaveSiteIcon(payload || {});
       case 'DELETE_PASSKEY':
         return this.handleDeletePasskey(payload || {});
       case 'ENCRYPT_BACKUP':
@@ -1043,6 +1048,20 @@ class BackgroundService {
     return { authorized };
   }
 
+  private async handleNeedsSiteIcon(payload: MessagePayload): Promise<unknown> {
+    const rpId = typeof payload.rpId === 'string' ? payload.rpId : '';
+    return { needed: await needsSiteIcon(rpId) };
+  }
+
+  // Decoding happens here rather than in the content script: the worker has no
+  // page DOM to be tricked by, and OffscreenCanvas re-encoding is what makes
+  // site-supplied bytes safe to keep.
+  private async handleSaveSiteIcon(payload: MessagePayload): Promise<unknown> {
+    const rpId = typeof payload.rpId === 'string' ? payload.rpId : '';
+    const saved = await saveSiteIcon(rpId, payload.data, payload.mimeType);
+    return { success: saved };
+  }
+
   private async handleDeletePasskey(payload: MessagePayload): Promise<unknown> {
     try {
       const credentialId = payload.credentialId as string;
@@ -1137,6 +1156,7 @@ class BackgroundService {
     ]);
     await this.savePasskeys([]);
     await saveTotpEntries([]);
+    await clearSiteIcons();
     await this.incrementPendingChanges();
     void this.triggerSync();
     return { success: true };

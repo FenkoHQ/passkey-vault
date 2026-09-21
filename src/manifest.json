@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
   "name": "__MSG_appName__",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "default_locale": "en",
   "description": "__MSG_appDesc__",
   "permissions": [
-    "storage"
+    "storage",
+    "favicon"
   ],
   "host_permissions": [
     "https://*/*"
@@ -53,7 +54,7 @@
     "128": "icons/icon128.png"
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'"
+    "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' data:"
   },
   "browser_specific_settings": {
     "gecko_data_collection": {

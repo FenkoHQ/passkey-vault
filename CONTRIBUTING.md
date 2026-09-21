@@ -48,6 +48,7 @@ npm run zip:firefox      # Build Firefox + create ZIP
 npm run zip:all          # Build both + create both ZIPs
 npm run clean            # Remove dist directories
 npm run test             # Run tests
+npm run test:e2e         # Load the built extension in Chromium and drive the popup
 npm run lint             # Run ESLint
 npm run typecheck        # TypeScript check
 npm run version:bump     # Sync version across all manifests (run before tagging)
@@ -62,6 +63,7 @@ npm run version:bump 0.9.0     # sync version across manifests + lockfile
 npm run lint
 npm run typecheck
 npm test
+npm run test:e2e
 npm run build:all
 npm run zip:all
 npm run validate:packages

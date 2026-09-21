@@ -54,6 +54,8 @@
   --shadow-md: 0 8px 24px rgba(13, 17, 23, 0.08), 0 2px 4px rgba(13, 17, 23, 0.04);
   --shadow-lg: 0 24px 60px rgba(13, 17, 23, 0.18);
 
+  --gutter: 16px;
+
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
@@ -164,7 +166,7 @@ a:hover {
 header {
   display: flex;
   align-items: center;
-  padding: 14px 16px;
+  padding: 12px var(--gutter);
   border-bottom: 1px solid var(--border-soft);
   background: var(--bg);
 }
@@ -225,7 +227,7 @@ h3 {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px 0;
+  padding: 8px var(--gutter) 0;
 }
 
 .status-row[hidden] {
@@ -295,7 +297,7 @@ h3 {
   display: flex;
   gap: 10px;
   align-items: flex-start;
-  margin: 10px 16px 14px;
+  margin: 10px var(--gutter) 14px;
   padding: 10px 12px;
   background: var(--warning-soft);
   border: 1px solid var(--warning);
@@ -355,7 +357,7 @@ h3 {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 8px 16px;
+  padding: 2px var(--gutter) 10px;
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -432,9 +434,9 @@ h3 {
 .vault-item {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border-soft);
+  gap: 10px;
+  padding: 10px var(--gutter);
+  border-bottom: 1px solid var(--border);
   transition: background 0.1s;
 }
 
@@ -448,8 +450,8 @@ h3 {
 
 .vault-item-icon {
   flex-shrink: 0;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -459,6 +461,19 @@ h3 {
 .vault-item-icon--passkey {
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+/* A real site icon replaces the glyph, so drop the tinted circle behind it. */
+.vault-item-icon--site {
+  background: var(--bg-elev-2);
+  color: inherit;
+}
+
+.vault-item-icon .site-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
 }
 
 .vault-item-icon--totp {
@@ -471,13 +486,13 @@ h3 {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .totp-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .totp-info {
@@ -485,11 +500,12 @@ h3 {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .totp-issuer {
   font-size: 13px;
+  line-height: 1.35;
   font-weight: 600;
   color: var(--text);
   white-space: nowrap;
@@ -499,6 +515,7 @@ h3 {
 
 .totp-account {
   font-size: 11px;
+  line-height: 1.35;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -514,15 +531,15 @@ h3 {
 
 .totp-code {
   font-family: var(--font-mono);
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   letter-spacing: 1px;
   color: var(--text);
   background: var(--bg-elev);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md);
-  padding: 6px 10px;
-  min-width: 84px;
+  padding: 5px 10px;
+  min-width: 80px;
   text-align: center;
   user-select: all;
   cursor: pointer;
@@ -552,7 +569,7 @@ h3 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 26px;
+  height: 24px;
   padding: 0 8px;
   margin-left: 4px;
   border: 1px solid var(--border-soft);
@@ -597,14 +614,14 @@ h3 {
 /* ---------- Search ---------- */
 .search-container {
   position: relative;
-  padding: 8px 16px 8px;
+  padding: 10px var(--gutter) 8px;
   display: flex;
   align-items: center;
 }
 
 .search-icon {
   position: absolute;
-  left: 30px;
+  left: calc(var(--gutter) + 11px);
   top: 50%;
   transform: translateY(-50%);
   color: var(--text-subtle);
@@ -615,7 +632,7 @@ h3 {
 
 input[type='text'].search-input {
   width: 100%;
-  padding: 9px 36px 9px 48px;
+  padding: 8px 34px 8px 38px;
   border: 1px solid var(--border);
   background: var(--bg-elev);
   color: var(--text);
@@ -640,7 +657,7 @@ input[type='text'].search-input:focus {
 
 .search-clear {
   position: absolute;
-  right: 24px;
+  right: calc(var(--gutter) + 8px);
   top: 50%;
   transform: translateY(-50%);
   width: 20px;
@@ -666,7 +683,7 @@ input[type='text'].search-input:focus {
 main {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 16px 16px;
+  padding: 0 0 8px;
 }
 
 main::-webkit-scrollbar {
@@ -724,6 +741,7 @@ main::-webkit-scrollbar-thumb:hover {
   align-items: center;
   text-align: center;
   gap: 8px;
+  margin: 12px var(--gutter) 16px;
   padding: 32px 20px;
   background: var(--bg-elev);
   border: 1px solid var(--border-soft);
@@ -779,7 +797,7 @@ main::-webkit-scrollbar-thumb:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
 }
 
 .passkey-info {
@@ -787,12 +805,13 @@ main::-webkit-scrollbar-thumb:hover {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 
 .passkey-rp {
   font-weight: 600;
   font-size: 13px;
+  line-height: 1.35;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -800,7 +819,8 @@ main::-webkit-scrollbar-thumb:hover {
 }
 
 .passkey-username {
-  font-size: 11.5px;
+  font-size: 11px;
+  line-height: 1.35;
   color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -814,13 +834,12 @@ main::-webkit-scrollbar-thumb:hover {
   flex-shrink: 0;
 }
 
-.copy-btn,
 .expand-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -833,15 +852,20 @@ main::-webkit-scrollbar-thumb:hover {
     transform 0.2s;
 }
 
-.copy-btn:hover,
 .expand-btn:hover {
   background: var(--bg-elev-2);
   color: var(--text);
 }
 
-.copy-btn.copied {
+.passkey-details-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.passkey-copy.copied {
   color: var(--success);
-  background: var(--success-soft);
+  border-color: var(--success);
 }
 
 .expand-btn.expanded {
@@ -852,7 +876,7 @@ main::-webkit-scrollbar-thumb:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 26px;
+  height: 24px;
   padding: 0 8px;
   margin-left: 4px;
   border: 1px solid var(--border-soft);
@@ -873,8 +897,8 @@ main::-webkit-scrollbar-thumb:hover {
 
 .passkey-details {
   display: none;
-  margin-top: 10px;
-  padding-top: 10px;
+  margin-top: 8px;
+  padding-top: 8px;
   border-top: 1px solid var(--border-soft);
   font-size: 11px;
   color: var(--text-muted);
@@ -907,7 +931,7 @@ main::-webkit-scrollbar-thumb:hover {
 
 /* ---------- Footer ---------- */
 footer {
-  padding: 10px 16px;
+  padding: 10px var(--gutter);
   border-top: 1px solid var(--border-soft);
   background: var(--bg);
 }
