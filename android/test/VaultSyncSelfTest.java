@@ -73,6 +73,20 @@ public final class VaultSyncSelfTest {
         }
         ProviderVaultStore.resetVault(context);
         require(ProviderVaultStore.loadPasskeys(context).isEmpty(), "explicit reset failed");
+        java.nio.file.Path idFixturesPath = java.nio.file.Paths.get(args[0]).resolveSibling("credential-id-fixtures.json");
+        org.json.JSONArray idFixtures = new org.json.JSONArray(new String(java.nio.file.Files.readAllBytes(idFixturesPath), java.nio.charset.StandardCharsets.UTF_8));
+        for (int i = 0; i < idFixtures.length(); i++) {
+            JSONObject fixture = idFixtures.getJSONObject(i);
+            String stored = fixture.getString("stored");
+            String expected = fixture.getString("credentialId");
+            require(ProviderVaultStore.credentialIdFromStored(stored).equals(expected), fixture.getString("name"));
+            JSONObject json = new JSONObject(record).put("id", stored).put("credentialId", stored);
+            ProviderVaultStore.PasskeyRecord passkey = ProviderVaultStore.PasskeyRecord.fromJson(json);
+            require(passkey.credentialId.equals(expected) && passkey.id.equals(stored), "load must decode " + fixture.getString("name"));
+            String request = new JSONObject().put("allowCredentials",
+                    new org.json.JSONArray().put(new JSONObject().put("type", "public-key").put("id", expected))).toString();
+            require(ProviderVaultStore.requestAllowsCredential(request, passkey.credentialId), "allowCredentials must match " + fixture.getString("name"));
+        }
         System.out.println("Native snapshot merge: PASS");
     }
 

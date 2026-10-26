@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import {
   decodeBitwardenCredentialId,
   repairCredentialIds,
@@ -49,6 +51,18 @@ describe('decodeBitwardenCredentialId', () => {
   });
 });
 
+// Shared with the Android and iOS provider tests so every platform reads a
+// stored ID the same way.
+const fixtures: Array<{ name: string; stored: string; credentialId: string }> = JSON.parse(
+  readFileSync(join(__dirname, 'credential-id-fixtures.json'), 'utf8')
+);
+
+describe('credential-id-fixtures.json', () => {
+  it.each(fixtures)('$name', ({ stored, credentialId }) => {
+    expect(decodeBitwardenCredentialId(stored) ?? stored).toBe(credentialId);
+  });
+});
+
 describe('toBase64Url', () => {
   it('normalises padded base64 to unpadded base64url', () => {
     expect(toBase64Url('a+b/cw==')).toBe('a-b_cw');
@@ -63,6 +77,17 @@ describe('repairCredentialIds', () => {
       expect.objectContaining({ id: DECODED, credentialId: DECODED, updatedAt: 5000 }),
     ]);
     expect(deletions).toEqual([{ kind: 'passkey', id: GUID, deletedAt: 5000 }]);
+  });
+
+  it('re-keys a record the native provider already decoded on read', () => {
+    // The Android and iOS providers decode credentialId when they load a record
+    // and write it back that way after signing, leaving the GUID in id.
+    const { passkeys, deletions } = repairCredentialIds(
+      [{ ...passkey(GUID), credentialId: DECODED }],
+      5000
+    );
+    expect(passkeys.map((entry) => [entry.id, entry.credentialId])).toEqual([[DECODED, DECODED]]);
+    expect(deletions.map((entry) => entry.id)).toEqual([GUID]);
   });
 
   it('returns the input untouched when nothing needs repair', () => {
