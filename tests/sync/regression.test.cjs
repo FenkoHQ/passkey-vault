@@ -686,3 +686,133 @@ test('acknowledging presence cannot hide an exhausted snapshot', async () => {
   await s.handleWebSocketMessage(JSON.stringify(['OK', frames.at(-1)[1].id, true, '']), conn);
   assert.ok(s.getStatus().lastError, 'presence ACK is not a snapshot ACK');
 });
+
+// A fresh SecureStorage over the same chrome.storage is what a restarted
+// service worker sees: local and session storage survive, memory does not.
+function vaultWorker(shared) {
+  const e = env(storageCode);
+  const session = shared?.session ?? new Map();
+  const alarms = shared?.alarms ?? new Map();
+  const area = (map) => ({
+    get: async (k) => ({ [k]: map.get(k) }),
+    set: async (o) => Object.entries(o).forEach(([k, v]) => map.set(k, v)),
+    remove: async (k) => [].concat(k).forEach((key) => map.delete(key)),
+  });
+  if (shared) {
+    for (const [k, v] of shared.storage) e.storage.set(k, v);
+  }
+  e.context.chrome.storage.local = area(e.storage);
+  e.context.chrome.storage.session = area(session);
+  e.context.chrome.alarms = {
+    create: async (name, info) => alarms.set(name, info),
+    clear: async (name) => alarms.delete(name),
+  };
+  const vault = new e.api.SecureStorage();
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  const later = (ms) => {
+    const now = Date.now() + ms;
+    e.context.Date = class extends Date {
+      static now() {
+        return now;
+      }
+    };
+  };
+  return { ...e, session, alarms, vault, settle, later };
+}
+
+test('an unlock survives a service worker restart until the auto-lock timeout', async () => {
+  const first = vaultWorker();
+  first.storage.set('auto_lock_timeout', 30);
+  assert.equal(await first.vault.initialize('123456'), true);
+  await first.vault.storePasskeys([passkey]);
+  await first.settle();
+  const deadline = first.alarms.get('passext-auto-lock').when;
+  assert.ok(Math.abs(deadline - (Date.now() + 30 * 60000)) < 5000, 'alarm at the timeout');
+
+  const restarted = vaultWorker(first);
+  restarted.later(29 * 60000);
+  assert.equal(await restarted.vault.restoreSession(), true);
+  assert.equal((await restarted.vault.getPasskeys())[0].privateKey, passkey.privateKey);
+
+  await restarted.settle();
+  const extended = vaultWorker(first);
+  extended.later(31 * 60000);
+  assert.equal(await extended.vault.restoreSession(), true, 'activity after restart counts');
+
+  const expired = vaultWorker(first);
+  expired.later(60 * 60000);
+  assert.equal(await expired.vault.restoreSession(), false);
+  await expired.settle();
+  assert.equal(expired.session.size, 0, 'expired key is dropped from session storage');
+});
+
+test('the auto-lock alarm locks a live worker and reports it', async () => {
+  const w = vaultWorker();
+  assert.equal(await w.vault.initialize('123456'), true);
+  let autoLocked = 0;
+  w.vault.onAutoLock = () => autoLocked++;
+  await w.vault.lockIfIdle();
+  assert.equal(w.vault.isStorageUnlocked(), true, 'not idle yet');
+  w.later(31 * 60000);
+  await w.vault.lockIfIdle();
+  await w.settle();
+  assert.equal(w.vault.isStorageUnlocked(), false);
+  assert.equal(autoLocked, 1);
+  assert.equal(w.session.size + w.alarms.size, 0);
+});
+
+test('"Never" keeps the vault unlocked instead of locking at once', async () => {
+  const w = vaultWorker();
+  w.storage.set('auto_lock_timeout', 0);
+  await w.vault.restoreSession();
+  assert.equal(await w.vault.initialize('123456'), true);
+  await w.settle();
+  assert.equal(w.timers.size, 0, 'no lock timer');
+  assert.equal(w.alarms.size, 0, 'no lock alarm');
+  const restarted = vaultWorker(w);
+  restarted.later(7 * 24 * 3600000);
+  assert.equal(await restarted.vault.restoreSession(), true);
+});
+
+test('a session from before a PIN change no longer unlocks', async () => {
+  const w = vaultWorker();
+  assert.equal(await w.vault.initialize('111111'), true);
+  await w.settle();
+  const stale = w.session.get('passext_unlocked_session');
+  assert.equal(await w.vault.changeMasterPassword('111111', '222222'), true);
+  await w.settle();
+  assert.notEqual(w.session.get('passext_unlocked_session').key, stale.key);
+  w.session.set('passext_unlocked_session', stale);
+  assert.equal(await vaultWorker(w).vault.restoreSession(), false);
+});
+
+test('locking clears the saved session and alarm', async () => {
+  const w = vaultWorker();
+  assert.equal(await w.vault.initialize('123456'), true);
+  await w.settle();
+  assert.equal(w.session.size, 1);
+  w.vault.lock();
+  await w.settle();
+  assert.equal(w.session.size + w.alarms.size, 0);
+  assert.equal(await vaultWorker(w).vault.restoreSession(), false);
+});
+
+test('messages wait for the restored session before checking the lock', async () => {
+  const e = env(backgroundCode);
+  const owner = Object.create(e.api.BackgroundService.prototype);
+  owner.vaultJobs = Promise.resolve();
+  let restore;
+  owner.sessionRestored = new Promise((resolve) => {
+    restore = resolve;
+  });
+  owner.handleListPasskeys = async () => ({ success: true });
+  let replied = false;
+  const lookup = owner.handleMessage({ type: 'LIST_PASSKEYS' }, () => {
+    replied = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(replied, false);
+  restore();
+  await lookup;
+  assert.equal(replied, true);
+});
