@@ -24,6 +24,16 @@ All notable changes to Passkey Vault are documented here. The format follows
 - Challenges, user IDs and credential IDs passed as a view onto a larger
   buffer (for example from `subarray()`) were serialised with the whole
   backing buffer instead of just the view's bytes.
+- The vault no longer asks for the PIN again about 30 seconds after unlocking.
+  Chrome stops an idle extension service worker, and the unlock key lived only
+  in its memory, so the auto-lock timeout never took effect. The key is now
+  kept in session storage, which stays in memory, is cleared when the browser
+  quits and cannot be read by content scripts. The vault locks once the
+  timeout passes with no activity, using a browser alarm (new `alarms`
+  permission) when the worker is asleep. Firefox before 115 keeps the old
+  behaviour.
+- The "Never" auto-lock option locked the vault immediately instead of
+  keeping it unlocked.
 
 ## [0.12.0] - 2026-09-21
 

@@ -19,7 +19,7 @@ import {
   type SyncTotpEntry,
   type SyncVaultAdapter,
 } from '../sync/sync-service';
-import { secureStorage } from '../crypto/secure-storage';
+import { AUTO_LOCK_ALARM, AUTO_LOCK_SETTING_KEY, secureStorage } from '../crypto/secure-storage';
 import { encryptWithPassword, decryptWithPassword } from '../crypto/encryption';
 import { logger } from '../utils/logger';
 import { arrayBufferToBase64, arrayBufferToBase64URL, base64urlToBase64 } from '../utils/base64';
@@ -150,6 +150,7 @@ interface ExtensionMessage {
 
 class BackgroundService {
   private isInitialized: boolean;
+  private sessionRestored: Promise<unknown>;
   private vaultJobs: Promise<unknown> = Promise.resolve();
 
   private withVault<T>(operation: () => Promise<T>): Promise<T> {
@@ -173,6 +174,12 @@ class BackgroundService {
     // MV3: listeners must be attached synchronously at SW wake, before any
     // await — otherwise the first message after a cold start is dropped with
     // "Could not establish connection. Receiving end does not exist."
+    secureStorage.onAutoLock = () => void syncService.disconnect();
+    // Messages wait for this, so a worker restarted by a request answers it
+    // with the unlock the previous worker held.
+    this.sessionRestored = secureStorage.restoreSession().catch((error) => {
+      console.error('Failed to restore the unlocked session:', error);
+    });
     this.setupMessageHandlers();
     this.setupLifecycleHandlers();
     this.initialize();
@@ -323,14 +330,9 @@ class BackgroundService {
       }
       await logger.init();
       logger.info('Background service initializing...');
+      await this.sessionRestored;
       await this.withVault(() => this.repairStoredCredentialIds());
       await this.initializeSyncService();
-      // Restore auto-lock timeout from storage
-      const stored = await chrome.storage.local.get('auto_lock_timeout');
-      if (stored.auto_lock_timeout != null) {
-        const ms = stored.auto_lock_timeout === 0 ? 0 : stored.auto_lock_timeout * 60 * 1000;
-        secureStorage.setAutoLockTimeout(ms);
-      }
       this.isInitialized = true;
       logger.info('Background service initialized successfully');
     } catch (error) {
@@ -476,6 +478,7 @@ class BackgroundService {
 
   private async routeMessage(message: ExtensionMessage): Promise<unknown> {
     const { type } = message;
+    await this.sessionRestored;
 
     const lockedTypes = new Set([
       'CREATE_PASSKEY',
@@ -665,6 +668,10 @@ class BackgroundService {
     });
     chrome.runtime.onSuspend.addListener(() => {
       logger.info('Extension suspending');
+    });
+    chrome.alarms?.onAlarm.addListener((alarm) => {
+      if (alarm.name !== AUTO_LOCK_ALARM) return;
+      void this.sessionRestored.then(() => secureStorage.lockIfIdle());
     });
   }
 
@@ -1952,9 +1959,8 @@ class BackgroundService {
   }
   private async handleSetAutoLockTimeout(payload: { minutes: number }): Promise<unknown> {
     try {
-      const ms = payload.minutes === 0 ? 0 : payload.minutes * 60 * 1000;
-      secureStorage.setAutoLockTimeout(ms);
-      await chrome.storage.local.set({ auto_lock_timeout: payload.minutes });
+      secureStorage.setAutoLockTimeout(payload.minutes * 60 * 1000);
+      await chrome.storage.local.set({ [AUTO_LOCK_SETTING_KEY]: payload.minutes });
       logger.info(`Auto-lock timeout set to ${payload.minutes} minutes`);
       return { success: true, minutes: payload.minutes };
     } catch (error: unknown) {
