@@ -6,6 +6,7 @@ import {
   SYNC_DELETIONS_KEY,
   type SyncDeletion,
 } from '../sync/merge';
+import { repairCredentialIds, toBase64Url } from '../sync/credential-ids';
 import {
   generateMnemonic,
   validateMnemonic,
@@ -322,6 +323,7 @@ class BackgroundService {
       }
       await logger.init();
       logger.info('Background service initializing...');
+      await this.withVault(() => this.repairStoredCredentialIds());
       await this.initializeSyncService();
       // Restore auto-lock timeout from storage
       const stored = await chrome.storage.local.get('auto_lock_timeout');
@@ -378,6 +380,22 @@ class BackgroundService {
     }
   }
 
+  /**
+   * Re-key passkeys imported with a Bitwarden-encoded credential ID (issue
+   * #17). Runs at startup, on unlock and after every sync merge, because a
+   * peer on an older build can still send them. Callers hold the vault lock.
+   */
+  private async repairStoredCredentialIds(): Promise<void> {
+    if (!secureStorage.isStorageUnlocked() && (await secureStorage.isSetup())) return;
+    const repair = repairCredentialIds(await this.loadPasskeys());
+    if (repair.deletions.length === 0) return;
+    await this.recordDeletions(repair.deletions);
+    await this.savePasskeys(repair.passkeys);
+    logger.info(`Re-keyed ${repair.deletions.length} passkeys with Bitwarden credential IDs`);
+    await this.incrementPendingChanges();
+    void this.triggerSync();
+  }
+
   private async loadDeletions(): Promise<SyncDeletion[]> {
     const data = await chrome.storage.local.get(SYNC_DELETIONS_KEY);
     return data[SYNC_DELETIONS_KEY] || [];
@@ -429,6 +447,7 @@ class BackgroundService {
           await saveTotpEntries(
             mergeRecords(await loadTotpEntries(), remoteTotpEntries, deletions, 'totp')
           );
+          await this.repairStoredCredentialIds();
         }),
     };
   }
@@ -684,14 +703,25 @@ class BackgroundService {
 
       logger.debug('Creating passkey for', rpId, 'user:', (user?.name as string) || 'unknown');
 
+      // Refuse only a credential the RP says this account already has. A site
+      // can hold several accounts, and an account several passkeys.
+      const excluded = new Set(
+        ((options?.excludeCredentials as Array<{ id?: unknown }> | undefined) || [])
+          .map((credential) =>
+            typeof credential?.id === 'string' ? toBase64Url(credential.id) : ''
+          )
+          .filter(Boolean)
+      );
       const existingPasskeys = await this.loadPasskeys();
-      const existingPasskey = existingPasskeys.find((p) => p.rpId === rpId);
+      const existingPasskey = existingPasskeys.find(
+        (p) => p.rpId === rpId && excluded.has(toBase64Url(p.credentialId || p.id))
+      );
 
       if (existingPasskey) {
-        logger.debug('Passkey already exists for', rpId);
+        logger.debug('Passkey already registered with', rpId);
         return {
           success: false,
-          error: 'A passkey already exists for this site',
+          error: 'This passkey is already registered with this site',
           name: 'InvalidStateError',
           existingCredentialId: existingPasskey.id,
         };
@@ -1103,15 +1133,19 @@ class BackgroundService {
   }
 
   private async handleImportVault(payload: MessagePayload): Promise<unknown> {
-    const incomingPasskeys = Array.isArray(payload.passkeys)
+    const rawPasskeys = Array.isArray(payload.passkeys)
       ? (payload.passkeys as StoredPasskey[])
       : [];
     const incomingTotp = Array.isArray(payload.totpEntries)
       ? (payload.totpEntries as StoredTotpEntry[])
       : [];
-    if (incomingPasskeys.some((entry) => !entry?.id || !entry.rpId || !entry.privateKey)) {
+    if (rawPasskeys.some((entry) => !entry?.id || !entry.rpId || !entry.privateKey)) {
       return { success: false, error: 'Backup contains an invalid passkey' };
     }
+    // A Fenko backup taken before issue #17 was fixed still holds Bitwarden IDs.
+    const repair = repairCredentialIds(rawPasskeys);
+    const incomingPasskeys = repair.passkeys;
+    if (repair.deletions.length > 0) await this.recordDeletions(repair.deletions);
     const deletions = await this.loadDeletions();
     for (const item of incomingPasskeys) {
       Object.assign(item, restoreRecord(item, deletions, 'passkey'));
@@ -1729,6 +1763,7 @@ class BackgroundService {
         const ready = await secureStorage.initialize(password);
         if (ready) {
           await this.migrateLegacyRawStorage();
+          await this.repairStoredCredentialIds();
         }
         return ready;
       });
