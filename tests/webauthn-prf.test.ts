@@ -144,3 +144,39 @@ describe('normalizePrfInput', () => {
     ).toEqual([1, 2, 3]);
   });
 });
+
+describe('selectPrfEval', () => {
+  const credentialId = b64url(new Uint8Array([0xfb, 0xff, 0x01, 0x02]));
+  const generic = { first: 'generic' };
+  const perCredential = { first: 'per-credential' };
+
+  it('prefers a matching evalByCredential entry over eval', () => {
+    const prf = { eval: generic, evalByCredential: { [credentialId]: perCredential } };
+
+    expect(selectPrfEval(prf, credentialId)).toBe(perCredential);
+  });
+
+  it('matches an entry keyed by standard base64', () => {
+    const key = Buffer.from([0xfb, 0xff, 0x01, 0x02]).toString('base64');
+    const prf = { eval: generic, evalByCredential: { [key]: perCredential } };
+
+    expect(selectPrfEval(prf, credentialId)).toBe(perCredential);
+  });
+
+  it('falls back to eval when no entry matches', () => {
+    const other = b64url(new Uint8Array([9, 9, 9]));
+    const prf = { eval: generic, evalByCredential: { [other]: perCredential } };
+
+    expect(selectPrfEval(prf, credentialId)).toBe(generic);
+    expect(selectPrfEval({ eval: generic }, credentialId)).toBe(generic);
+  });
+
+  it('returns null with neither a match nor eval', () => {
+    const other = b64url(new Uint8Array([9, 9, 9]));
+
+    expect(selectPrfEval({ evalByCredential: { [other]: perCredential } }, credentialId)).toBe(
+      null
+    );
+    expect(selectPrfEval(undefined, credentialId)).toBe(null);
+  });
+});
