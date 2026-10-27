@@ -234,15 +234,26 @@ export class SyncService {
     const prefix = `[SyncService:${category}]`;
     // Always surface errors; gate warn/info behind the debug toggle. Print the
     // sanitized copy (entry.data), never the raw data, so secrets/metadata are
-    // not leaked to the console.
+    // not leaked to the console. The data goes out as text: the extension's
+    // Errors page renders object arguments as "[object Object]".
+    const detail = SyncService.formatLogData(entry.data);
     if (level === 'error') {
-      console.error(prefix, message, entry.data || '');
+      console.error(prefix, message, detail);
     } else if (logger.isDebugEnabled()) {
       if (level === 'warn') {
-        console.warn(prefix, message, entry.data || '');
+        console.warn(prefix, message, detail);
       } else {
-        console.log(prefix, message, entry.data || '');
+        console.log(prefix, message, detail);
       }
+    }
+  }
+
+  private static formatLogData(data: Record<string, unknown> | undefined): string {
+    if (!data) return '';
+    try {
+      return JSON.stringify(data);
+    } catch {
+      return String(data);
     }
   }
 
@@ -535,8 +546,11 @@ export class SyncService {
     };
 
     ws.onerror = () => {
-      // onclose follows with the reconnect; just record it
-      this.log('error', 'ws', 'WebSocket error', { relay: conn.url });
+      // An unreachable or flaky relay is routine: the others carry sync and
+      // onclose follows with a backoff reconnect. Browsers expose no detail on
+      // this event, so it is not worth a console error (which Chrome lists on
+      // the extension's Errors page).
+      this.log('warn', 'ws', 'Relay connection failed', { relay: conn.url });
     };
   }
 
