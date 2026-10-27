@@ -5,6 +5,8 @@
  * service is stubbed.
  */
 
+import { generateMnemonic } from '../src/crypto/bip39';
+
 jest.mock('../src/sync/sync-service', () => ({
   syncService: {
     initialize: jest.fn(async () => {}),
@@ -25,6 +27,22 @@ type SyncServiceModule = { syncService: Record<string, jest.Mock> };
 
 const PIN = '1234';
 const WRONG_PIN = '0000';
+
+type SyncConfigData = {
+  enabled: boolean;
+  chainId: string | null;
+  deviceId: string | null;
+  deviceName: string | null;
+  seedHash?: string | null;
+};
+
+const chainA: SyncConfigData = {
+  enabled: true,
+  chainId: 'a'.repeat(32),
+  deviceId: 'device-a',
+  deviceName: 'Laptop',
+  seedHash: 'a'.repeat(64),
+};
 
 const passkey = {
   id: 'pk-1',
@@ -330,5 +348,54 @@ describe('a wrong PIN on an unlocked vault', () => {
     expect(await unlocksWith(send, WRONG_PIN)).toBe(false);
     expect((await send({ type: 'IS_SECURE_STORAGE_UNLOCKED' })).isUnlocked).toBe(false);
     expect((await send({ type: 'LIST_PASSKEYS' })).success).toBe(false);
+  });
+});
+
+describe('the sync config when the PIN is removed', () => {
+  async function pinnedOnChainA(): Promise<Respond> {
+    storage.passkeys = [passkey];
+    storage.sync_config = { ...chainA };
+    const { send } = await loadBackground();
+    await send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+    expect((storage.sync_config as SyncConfigData).seedHash).toBeUndefined();
+    return send;
+  }
+
+  it('gives the current chain its seed back', async () => {
+    const send = await pinnedOnChainA();
+
+    await send({ type: 'REMOVE_MASTER_PASSWORD', payload: { currentPassword: PIN } });
+
+    expect(storage.sync_config).toEqual(chainA);
+  });
+
+  it('does not rejoin a chain the device left', async () => {
+    const send = await pinnedOnChainA();
+    expect((await send({ type: 'LEAVE_SYNC_CHAIN' })).success).toBe(true);
+    expect(storage.passext_encrypted_sync_config).toBeUndefined();
+
+    await send({ type: 'REMOVE_MASTER_PASSWORD', payload: { currentPassword: PIN } });
+
+    const config = storage.sync_config as SyncConfigData;
+    expect(config.enabled).toBe(false);
+    expect(config.chainId).toBeNull();
+    expect(config.seedHash ?? null).toBeNull();
+  });
+
+  it('does not switch back from a chain joined afterwards', async () => {
+    const send = await pinnedOnChainA();
+    const mnemonic = await generateMnemonic(12);
+    expect((await send({ type: 'JOIN_SYNC_CHAIN', deviceName: 'Laptop', mnemonic })).success).toBe(
+      true
+    );
+    const chainB = (storage.sync_config as SyncConfigData).chainId;
+    expect(chainB).not.toBe(chainA.chainId);
+
+    await send({ type: 'REMOVE_MASTER_PASSWORD', payload: { currentPassword: PIN } });
+
+    const config = storage.sync_config as SyncConfigData;
+    expect(config.enabled).toBe(true);
+    expect(config.chainId).toBe(chainB);
+    expect(config.seedHash?.startsWith(chainB as string)).toBe(true);
   });
 });

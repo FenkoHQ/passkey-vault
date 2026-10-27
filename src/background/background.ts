@@ -1432,15 +1432,21 @@ class BackgroundService {
     try {
       await syncService.disconnect();
 
-      await chrome.storage.local.set({
-        [SYNC_CONFIG_KEY]: {
-          enabled: false,
-          chainId: null,
-          deviceId: null,
-          deviceName: null,
-          seedHash: null,
-        },
-        [SYNC_DEVICES_KEY]: null,
+      // Serialized with PIN setup and removal, which read both sync configs.
+      await this.withVault(async () => {
+        await chrome.storage.local.set({
+          [SYNC_CONFIG_KEY]: {
+            enabled: false,
+            chainId: null,
+            deviceId: null,
+            deviceName: null,
+            seedHash: null,
+          },
+          [SYNC_DEVICES_KEY]: null,
+        });
+        // Removing the PIN would otherwise bring the left chain back from the
+        // encrypted copy.
+        await secureStorage.deleteSyncConfig();
       });
 
       this.logSync('SYNC_CHAIN_LEFT', {});
@@ -1799,13 +1805,25 @@ class BackgroundService {
       }
       // The cleartext copy is written before the encrypted vault is removed,
       // so an interrupted removal always leaves at least one of them.
-      const removed = await secureStorage.removeMasterPassword(currentPassword, (vault) =>
-        chrome.storage.local.set({
+      const removed = await secureStorage.removeMasterPassword(currentPassword, async (vault) => {
+        // Raw sync_config holds the live chain membership. The encrypted copy
+        // only gives back the seed it kept out of cleartext, and only for
+        // that same chain: it can be older than a leave or a join.
+        const live = (await chrome.storage.local.get(SYNC_CONFIG_KEY))[SYNC_CONFIG_KEY] as
+          | SyncConfig
+          | undefined;
+        const seedHash = vault.syncConfig?.seedHash;
+        const restoreSeed =
+          !live?.seedHash &&
+          !!live?.chainId &&
+          !!seedHash &&
+          vault.syncConfig.chainId === live.chainId;
+        await chrome.storage.local.set({
           [PASSKEY_STORAGE_KEY]: vault.passkeys,
           totp_entries: vault.totpEntries,
-          ...(vault.syncConfig ? { [SYNC_CONFIG_KEY]: vault.syncConfig } : {}),
-        })
-      );
+          ...(restoreSeed ? { [SYNC_CONFIG_KEY]: { ...live, seedHash } } : {}),
+        });
+      });
       if (!removed) {
         return { success: false, error: 'Failed to remove PIN — check your current PIN' };
       }
