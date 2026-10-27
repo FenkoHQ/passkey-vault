@@ -170,3 +170,27 @@ describe('repeated restarts', () => {
     expect(stored.counter).toBe(19);
   });
 });
+
+describe('the vault locks mid-ceremony', () => {
+  it('refuses the signature, without the browser prompt, when the vault locked while the picker was open', async () => {
+    await register();
+    expect(
+      (await vault.send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } })).success
+    ).toBe(true);
+    vault.user.choosePasskey.mockImplementation(async (options: PasskeyOption[]) => {
+      // The auto-lock alarm fires while the user is choosing.
+      await vault.send({ type: 'LOCK_SECURE_STORAGE' });
+      return { action: 'use', id: options[0].id };
+    });
+
+    const { error } = await outcome(
+      navigator.credentials.get({
+        publicKey: requestOptionsFromJSON(authenticationJSON({ rpId: 'example.com' })),
+      })
+    );
+
+    expect(error?.name).toBe('NotAllowedError');
+    expect(vault.native.get).not.toHaveBeenCalled();
+    expect(vault.user.errorToast).toHaveBeenCalled();
+  });
+});

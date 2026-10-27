@@ -93,3 +93,53 @@ describe('a damaged key', () => {
     await authenticate(good);
   });
 });
+
+describe('a damaged TOTP list', () => {
+  it('still lists and generates codes for its good entries', async () => {
+    const added: any = await vault.send({
+      type: 'ADD_TOTP_ENTRY',
+      payload: {
+        otpauthUri: 'otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP&issuer=Example',
+      },
+    });
+    (vault.storage.totp_entries as any[]).push(null, 'garbage');
+
+    const list: any = await vault.send({ type: 'LIST_TOTP_ENTRIES' });
+    const code: any = await vault.send({
+      type: 'GENERATE_TOTP_CODE',
+      payload: { id: added.entry.id },
+    });
+
+    expect(list.entries.map((e: any) => e.id)).toEqual([added.entry.id]);
+    expect(code.code).toMatch(/^\d{6}$/);
+  });
+});
+
+describe('a damaged snapshot from a sync peer', () => {
+  it('merges the peer’s good records and ignores the damaged ones', async () => {
+    const mine = await register();
+    expect(
+      (await vault.send({ type: 'CREATE_SYNC_CHAIN', deviceName: 'Laptop', wordCount: 12 })).success
+    ).toBe(true);
+    const adapter = vault.syncService.initialize.mock.calls.at(-1)![4];
+    const [stored] = await vault.passkeys();
+    const theirs = {
+      ...stored,
+      id: 'peer-passkey',
+      credentialId: 'peer-passkey',
+      createdAt: 1,
+      updatedAt: 1,
+    };
+
+    await adapter.mergeRemote(
+      [null, 'garbage', { rpId: 'no-id.example' }, theirs],
+      [null, { secretB64: 'x' }],
+      'peer',
+      []
+    );
+
+    const ids = (await vault.passkeys()).map((p) => p.credentialId).sort();
+    expect(ids).toEqual([mine.record.id, 'peer-passkey'].sort());
+    await authenticate(mine, { allowCredentials: [{ type: 'public-key', id: mine.record.id }] });
+  });
+});

@@ -77,6 +77,8 @@ export interface Vault {
   settle(ticks?: number): Promise<void>;
   /** Passkeys as stored, read through the background. */
   passkeys(): Promise<any[]>;
+  /** The current worker's stubbed sync service (its calls, and the vault adapter it was given). */
+  syncService: Record<string, jest.Mock>;
 }
 
 const BACKGROUND = '../../src/background/background';
@@ -168,6 +170,8 @@ export function setupVault(initialUrl = 'https://example.com/login'): Vault {
         jest.doMock(SYNC_SERVICE, syncServiceStub);
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         require(BACKGROUND);
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        vault.syncService = require(SYNC_SERVICE).syncService;
       });
     });
   };
