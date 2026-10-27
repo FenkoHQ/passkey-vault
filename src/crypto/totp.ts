@@ -160,6 +160,33 @@ export function base32Encode(bytes: Uint8Array): string {
   return output;
 }
 
+/** 80 bits: the shortest key real services issue. RFC 4226 asks for 128+. */
+const MIN_SETUP_KEY_CHARS = 16;
+
+export type SetupKeyCheck =
+  | { kind: 'valid'; secret: string }
+  | { kind: 'empty' | 'too-short' }
+  | { kind: 'invalid-chars'; invalidChars: string[] };
+
+/**
+ * Check a setup key that a service shows for manual entry instead of (or next
+ * to) its QR code. Services print keys in groups ("kpvg zirr 6z5n ..."), in
+ * either case, sometimes with dashes or "=" padding; all of that is accepted.
+ * Returns the canonical base32 secret.
+ */
+export function checkSetupKey(input: string): SetupKeyCheck {
+  const secret = input
+    .replace(/[\s-]+/g, '')
+    .replace(/=+$/, '')
+    .toUpperCase();
+  if (!secret) return { kind: 'empty' };
+
+  const invalidChars = [...new Set(secret.replace(/[A-Z2-7]/g, ''))];
+  if (invalidChars.length > 0) return { kind: 'invalid-chars', invalidChars };
+  if (secret.length < MIN_SETUP_KEY_CHARS) return { kind: 'too-short' };
+  return { kind: 'valid', secret };
+}
+
 function percentDecode(input: string): string {
   try {
     return decodeURIComponent(input);
