@@ -55,6 +55,9 @@ interface WindowWithVault extends Window {
   showErrorNotification: (title: string, message: string) => void;
 }
 
+/** How long a posted registration can still be taken back; the background allows as long. */
+const POSTED_REGISTRATION_MEMORY_MS = 10 * 60 * 1000;
+
 const vaultWindow = window as unknown as WindowWithVault;
 const _showPasskeySelector = vaultWindow.showPasskeySelector;
 const _showPasskeyCreateConfirm = vaultWindow.showPasskeyCreateConfirm;
@@ -68,6 +71,12 @@ class ContentScript {
   private originalGet?: typeof navigator.credentials.get;
   /** Page requests still being handled, so the page can cancel them. */
   private inFlight = new Map<string, AbortController>();
+  /**
+   * Registrations whose credential was posted to the page, by request, for
+   * a while. A cancel that arrives for one of them crossed the credential in
+   * flight: the page had already given up and dropped it.
+   */
+  private postedRegistrations = new Map<string, number>();
 
   constructor() {
     this.initialize();
@@ -236,6 +245,11 @@ class ContentScript {
     const { type, requestId } = message;
     if (type === 'PASSKEY_CANCEL_REQUEST') {
       this.inFlight.get(requestId)?.abort();
+      // The page shim only cancels a request it never got an answer to, so
+      // a credential already posted for it went nowhere.
+      if (this.postedRegistrations.delete(requestId)) {
+        this.discardRegistration(requestId);
+      }
       return;
     }
 
@@ -334,7 +348,7 @@ class ContentScript {
         // user a passkey that cannot sign in.
         if (signal.aborted) {
           if (response.success) {
-            this.sendMessage({ type: 'DISCARD_REGISTRATION', requestId }).catch(() => undefined);
+            this.discardRegistration(requestId);
           }
           return;
         }
@@ -359,6 +373,7 @@ class ContentScript {
             },
             '*'
           );
+          this.rememberPostedRegistration(requestId);
         } else {
           // Show error if it's not a duplicate passkey error
           if (response.name !== 'InvalidStateError') {
@@ -597,6 +612,19 @@ class ContentScript {
         );
       }
     }
+  }
+
+  /** Ask the background to take back the passkey it made for this request. */
+  private discardRegistration(requestId: string): void {
+    this.sendMessage({ type: 'DISCARD_REGISTRATION', requestId }).catch(() => undefined);
+  }
+
+  private rememberPostedRegistration(requestId: string): void {
+    const now = Date.now();
+    for (const [id, postedAt] of this.postedRegistrations) {
+      if (now - postedAt > POSTED_REGISTRATION_MEMORY_MS) this.postedRegistrations.delete(id);
+    }
+    this.postedRegistrations.set(requestId, now);
   }
 
   /**
