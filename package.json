@@ -73,6 +73,11 @@
     "@noble/secp256k1": "^3.0.0",
     "jsqr": "^1.4.0"
   },
+  "overrides": {
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "9.0.9"
+    }
+  },
   "jest": {
     "preset": "ts-jest",
     "testEnvironment": "jsdom",
