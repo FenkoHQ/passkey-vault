@@ -303,16 +303,21 @@ describe('Encryption Module', () => {
     it('should expire session after TTL', async () => {
       const sessionId = 'test-session';
       const password = 'test-password';
+      // A pinned clock: on a loaded machine the process can stall for longer
+      // than a 100 ms TTL between creating the key and reading it back.
+      let now = 1_000_000;
+      const clock = jest.spyOn(Date, 'now').mockImplementation(() => now);
+      try {
+        await manager.createSessionKey(sessionId, password, 100);
 
-      await manager.createSessionKey(sessionId, password, 100);
+        now += 100;
+        expect(manager.getSessionKey(sessionId)).not.toBeNull();
 
-      const keyBefore = manager.getSessionKey(sessionId);
-      expect(keyBefore).not.toBeNull();
-
-      await new Promise((resolve) => setTimeout(resolve, 150));
-
-      const keyAfter = manager.getSessionKey(sessionId);
-      expect(keyAfter).toBeNull();
+        now += 1;
+        expect(manager.getSessionKey(sessionId)).toBeNull();
+      } finally {
+        clock.mockRestore();
+      }
     });
 
     it('should remove session key', async () => {
