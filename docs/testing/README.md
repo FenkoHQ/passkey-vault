@@ -9,7 +9,7 @@ breaks things on purpose to see what still holds.
 ```bash
 npm test                    # everything below except the browser suite, ~20 s
 npm run test:e2e:webauthn   # the built extension in a real Chromium (needs openssl)
-npm run test:e2e            # the popup in a real Chromium
+npm run test:e2e            # the popup, and the vault key (PIN, passphrase, KDF upgrade), in a real Chromium
 ```
 
 ## How a ceremony is tested
