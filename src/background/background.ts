@@ -55,6 +55,7 @@ import {
   saveTotpEntries,
   addTotpEntry as addTotpEntryStore,
   deleteTotpEntry as deleteTotpEntryStore,
+  issueHotpCode,
   entryToSecretBytes,
   generateTotpId,
   TOTP_STORAGE_KEY,
@@ -547,6 +548,7 @@ class BackgroundService {
       'ADD_TOTP_ENTRY',
       'DELETE_TOTP_ENTRY',
       'GENERATE_TOTP_CODE',
+      'NEXT_HOTP_CODE',
       'IMPORT_VAULT',
       'EXPORT_VAULT',
       'CLEAR_VAULT',
@@ -584,6 +586,7 @@ class BackgroundService {
       'ADD_TOTP_ENTRY',
       'DELETE_TOTP_ENTRY',
       'GENERATE_TOTP_CODE',
+      'NEXT_HOTP_CODE',
       'IMPORT_VAULT',
       'CLEAR_VAULT',
       'FACTORY_RESET',
@@ -631,6 +634,8 @@ class BackgroundService {
         return this.handleDeleteTotpEntry(payload || {});
       case 'GENERATE_TOTP_CODE':
         return this.handleGenerateTotpCode(payload || {});
+      case 'NEXT_HOTP_CODE':
+        return this.handleNextHotpCode(payload || {});
       case 'IMPORT_VAULT':
         return this.handleImportVault(payload || {});
       case 'EXPORT_VAULT':
@@ -1383,6 +1388,30 @@ class BackgroundService {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error('Error generating TOTP code:', error);
+      return { success: false, error: message };
+    }
+  }
+
+  // An HOTP code is single-use, so issuing one advances the stored counter.
+  // GENERATE_TOTP_CODE stays a pure read and never consumes a counter value.
+  private async handleNextHotpCode(payload: MessagePayload): Promise<unknown> {
+    try {
+      const id = payload.id as string;
+      if (!id) return { success: false, error: 'Missing id' };
+      const issued = await issueHotpCode(id);
+      if (!issued) return { success: false, error: 'Entry not found' };
+      this.logSync('HOTP_COUNTER_ADVANCED', { id, counter: issued.entry.counter });
+      await this.incrementPendingChanges();
+      this.triggerSync();
+      return {
+        success: true,
+        code: issued.code,
+        counter: issued.counter,
+        entry: issued.entry,
+      };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Error issuing HOTP code:', error);
       return { success: false, error: message };
     }
   }

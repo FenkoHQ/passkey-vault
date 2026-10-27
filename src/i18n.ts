@@ -137,6 +137,8 @@ const en: TranslationMap = {
   popupTotpDigits: 'Digits:',
   popupTotpPeriod: 'Period:',
   popupTotpCounter: 'Counter:',
+  popupHotpGetCode: 'Click to get the next code',
+  popupHotpNextCode: 'Next code',
   popupTotpCount_one: '{count} code',
   popupTotpCount_other: '{count} codes',
   popupTotpChooseImage: 'Upload image',

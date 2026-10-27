@@ -75,6 +75,7 @@ import { resolveSiteIcon } from '../site-icons';
   const filters = { passkeys: true, totp: true };
   let totpTickInterval: number | null = null;
   const codeCache = new Map<string, { code: string; expiresAt: number }>();
+  const hotpRequests = new Map<string, Promise<string | undefined>>();
   const VAULT_FILTERS_KEY = 'vault_filters';
 
   // Initialize popup when DOM is loaded
@@ -1080,15 +1081,30 @@ import { resolveSiteIcon } from '../site-icons';
         created.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       : t('commonUnknown');
 
-    const detailRow = (label: string, value: string): string => `
+    const detailRow = (label: string, value: string, valueClass = ''): string => `
       <div class="passkey-detail-row">
         <span class="label">${popupEscapeHtml(label)}</span>
-        <span class="value">${popupEscapeHtml(value)}</span>
+        <span class="value ${valueClass}">${popupEscapeHtml(value)}</span>
       </div>`;
-    const periodRow =
-      entry.type === 'hotp'
-        ? detailRow(t('popupTotpCounter'), String(entry.counter ?? 0))
-        : detailRow(t('popupTotpPeriod'), `${entry.period || 30}s`);
+    const isHotp = entry.type === 'hotp';
+    const periodRow = isHotp
+      ? detailRow(t('popupTotpCounter'), String(entry.counter ?? 0), 'hotp-counter')
+      : detailRow(t('popupTotpPeriod'), `${entry.period || 30}s`);
+    // HOTP codes are single-use and never expire, so they are issued on an
+    // explicit click instead of on the ticker, and have no countdown bar.
+    const nextButton = isHotp
+      ? `<button class="hotp-next" title="${popupEscapeHtml(t('popupHotpNextCode'))}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+            </button>`
+      : '';
+    const progressTrack = isHotp
+      ? ''
+      : `<div class="totp-progress-track">
+          <div class="totp-progress"></div>
+        </div>`;
 
     div.innerHTML = `
       <div class="vault-item-icon vault-item-icon--totp" title="${popupEscapeHtml(t('popupTabTotp'))}">
@@ -1104,7 +1120,8 @@ import { resolveSiteIcon } from '../site-icons';
             ${accountLabel ? `<div class="totp-account">${popupEscapeHtml(accountLabel)}</div>` : ''}
           </div>
           <div class="totp-code-wrap">
-            <div class="totp-code" data-id="${popupEscapeHtml(entry.id)}" title="${popupEscapeHtml(t('popupTotpClickToCopy'))}">••••••</div>
+            <div class="totp-code" data-id="${popupEscapeHtml(entry.id)}" title="${popupEscapeHtml(t(isHotp ? 'popupHotpGetCode' : 'popupTotpClickToCopy'))}">••••••</div>
+            ${nextButton}
             <button class="expand-btn" title="${popupEscapeHtml(t('popupDetails'))}">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="6 9 12 15 18 9"></polyline>
@@ -1113,9 +1130,7 @@ import { resolveSiteIcon } from '../site-icons';
             <button class="totp-delete" data-id="${popupEscapeHtml(entry.id)}" title="${popupEscapeHtml(t('commonDelete'))}">${popupEscapeHtml(t('popupDel'))}</button>
           </div>
         </div>
-        <div class="totp-progress-track">
-          <div class="totp-progress"></div>
-        </div>
+        ${progressTrack}
         <div class="passkey-details totp-details">
           ${entry.issuer ? detailRow(t('popupTotpIssuer'), entry.issuer) : ''}
           ${entry.account ? detailRow(t('popupTotpAccount'), entry.account) : ''}
@@ -1129,7 +1144,15 @@ import { resolveSiteIcon } from '../site-icons';
     `;
 
     const codeEl = div.querySelector('.totp-code') as HTMLElement;
-    codeEl.addEventListener('click', () => copyCodeToClipboard(entry.id, codeEl));
+    codeEl.addEventListener('click', () => copyCodeToClipboard(entry, codeEl));
+
+    const nextBtn = div.querySelector('.hotp-next') as HTMLButtonElement | null;
+    nextBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      void issueNextHotpCode(entry, div).then((code) => {
+        if (code) void writeCodeToClipboard(code, codeEl);
+      });
+    });
 
     const expandBtn = div.querySelector('.expand-btn') as HTMLButtonElement;
     const details = div.querySelector('.totp-details') as HTMLElement;
@@ -1153,6 +1176,12 @@ import { resolveSiteIcon } from '../site-icons';
     if (!filters.totp || allTotpEntries.length === 0) return;
     const now = Date.now();
     for (const entry of allTotpEntries) {
+      if (entry.type === 'hotp') {
+        // Never issue HOTP codes from the ticker: each one consumes a counter.
+        const issued = codeCache.get(entry.id);
+        if (issued) paintCode(entry, issued.code, now);
+        continue;
+      }
       const period = entry.period || 30;
       const expiresAt = Math.ceil(now / (period * 1000)) * (period * 1000);
       const cached = codeCache.get(entry.id);
@@ -1184,6 +1213,10 @@ import { resolveSiteIcon } from '../site-icons';
     ) as HTMLElement | null;
     if (!el) return;
     el.textContent = formatCodeDisplay(code, entry.digits);
+    if (entry.type === 'hotp') {
+      el.title = t('popupTotpClickToCopy');
+      return;
+    }
     const period = entry.period || 30;
     const remaining = period - (Math.floor(now / 1000) % period);
     el.classList.remove('expiring', 'expired');
@@ -1230,15 +1263,59 @@ import { resolveSiteIcon } from '../site-icons';
     }, 1000);
   }
 
+  // Issue the next HOTP code (advancing and persisting the counter in the
+  // background), show it and keep it until the popup closes. Re-copying the
+  // shown code does not consume another counter value, and a second click
+  // while a request is in flight shares it instead of burning another value.
+  function issueNextHotpCode(
+    entry: PopupTotpEntry,
+    itemEl: HTMLElement
+  ): Promise<string | undefined> {
+    const pending = hotpRequests.get(entry.id);
+    if (pending) return pending;
+    const request = requestNextHotpCode(entry, itemEl).finally(() => hotpRequests.delete(entry.id));
+    hotpRequests.set(entry.id, request);
+    return request;
+  }
+
+  async function requestNextHotpCode(
+    entry: PopupTotpEntry,
+    itemEl: HTMLElement
+  ): Promise<string | undefined> {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'NEXT_HOTP_CODE',
+        payload: { id: entry.id },
+      });
+      if (!response?.success) {
+        showNotification(response?.error || t('popupFailedCopy'), 'error');
+        return undefined;
+      }
+      entry.counter = response.entry.counter;
+      codeCache.set(entry.id, { code: response.code, expiresAt: Infinity });
+      paintCode(entry, response.code, Date.now());
+      const counterEl = itemEl.querySelector('.hotp-counter');
+      if (counterEl) counterEl.textContent = String(entry.counter);
+      return response.code as string;
+    } catch (error) {
+      console.error('Failed to issue HOTP code:', error);
+      paintCodeError(entry);
+      return undefined;
+    }
+  }
+
   async function copyCodeToClipboard(
-    id: string,
+    entry: PopupTotpEntry,
     codeEl: HTMLElement,
     btnEl?: HTMLButtonElement
   ): Promise<void> {
+    const id = entry.id;
     let code: string | undefined;
     const cached = codeCache.get(id);
     if (cached && cached.expiresAt > Date.now()) {
       code = cached.code;
+    } else if (entry.type === 'hotp') {
+      code = await issueNextHotpCode(entry, codeEl.closest('.totp-item') as HTMLElement);
     } else {
       const response = await chrome.runtime.sendMessage({
         type: 'GENERATE_TOTP_CODE',
@@ -1249,6 +1326,14 @@ import { resolveSiteIcon } from '../site-icons';
       }
     }
     if (!code) return;
+    await writeCodeToClipboard(code, codeEl, btnEl);
+  }
+
+  async function writeCodeToClipboard(
+    code: string,
+    codeEl: HTMLElement,
+    btnEl?: HTMLButtonElement
+  ): Promise<void> {
     try {
       await navigator.clipboard.writeText(code);
       const target = btnEl || codeEl;

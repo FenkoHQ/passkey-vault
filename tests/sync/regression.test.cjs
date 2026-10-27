@@ -35,7 +35,7 @@ before(async () => {
   );
   mobileCode = await bundle(
     'android/web/src/app.ts',
-    '\nrender = () => {}; export { AndroidSync, getPasskeys, setPasskeys, getTotpEntries, setTotpEntries, mergeNativeSnapshot, restoreFromBin, getSyncConfig };',
+    '\nrender = () => {}; export { AndroidSync, getPasskeys, setPasskeys, getTotpEntries, setTotpEntries, mergeNativeSnapshot, restoreFromBin, getSyncConfig, issueHotpCode };',
     'void boot().catch'
   );
 });
@@ -656,6 +656,50 @@ test('sync now reconnects a PIN-protected vault from its encrypted seed', async 
   const stored = e.storage.get('sync_status');
   assert.equal(stored.connectionStatus, 'connected');
   assert.equal(stored.lastError, null);
+});
+
+test('browser HOTP next-code advances, persists and publishes the counter', async () => {
+  const e = env(backgroundCode);
+  const owner = Object.create(e.api.BackgroundService.prototype);
+  owner.vaultJobs = Promise.resolve();
+  owner.syncStatus = { pendingChanges: 0 };
+  owner.updateSyncStatus = async (update) =>
+    Object.assign(
+      owner.syncStatus,
+      typeof update === 'function' ? update(owner.syncStatus) : update
+    );
+  let syncs = 0;
+  owner.triggerSync = async () => {
+    syncs++;
+  };
+  const secretB64 = Buffer.from('12345678901234567890').toString('base64');
+  e.storage.set('totp_entries', [
+    { id: 'h', type: 'hotp', secretB64, algorithm: 'SHA1', digits: 6, counter: 0, createdAt: 1 },
+  ]);
+  const send = (type) =>
+    new Promise((resolve) => owner.handleMessage({ type, payload: { id: 'h' } }, resolve));
+  // Rendering a code is a pure read and must not consume a counter value.
+  assert.equal((await send('GENERATE_TOTP_CODE')).code, '755224');
+  assert.equal((await send('GENERATE_TOTP_CODE')).code, '755224');
+  assert.equal(e.storage.get('totp_entries')[0].counter, 0);
+  // RFC 4226 Appendix D, counts 0 and 1.
+  assert.equal((await send('NEXT_HOTP_CODE')).code, '755224');
+  assert.equal((await send('NEXT_HOTP_CODE')).code, '287082');
+  assert.equal(e.storage.get('totp_entries')[0].counter, 2);
+  assert.equal(syncs, 2);
+  assert.equal(owner.syncStatus.pendingChanges, 2);
+});
+
+test('mobile HOTP next-code advances and persists the counter', () => {
+  const e = env(mobileCode);
+  const secretB64 = Buffer.from('12345678901234567890').toString('base64');
+  e.api.setTotpEntries([
+    { id: 'h', type: 'hotp', secretB64, algorithm: 'SHA1', digits: 6, counter: 0, createdAt: 1 },
+  ]);
+  assert.equal(e.api.issueHotpCode('h'), '755224');
+  assert.equal(e.api.issueHotpCode('h'), '287082');
+  assert.equal(e.api.getTotpEntries()[0].counter, 2);
+  assert.equal(e.api.issueHotpCode('missing'), null);
 });
 
 test('a stalled sync request does not block a passkey lookup', async () => {
