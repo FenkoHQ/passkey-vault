@@ -686,3 +686,52 @@ test('acknowledging presence cannot hide an exhausted snapshot', async () => {
   await s.handleWebSocketMessage(JSON.stringify(['OK', frames.at(-1)[1].id, true, '']), conn);
   assert.ok(s.getStatus().lastError, 'presence ACK is not a snapshot ACK');
 });
+
+test('an unreachable relay is retried without a console error', () => {
+  const e = env(browserCode);
+  const s = new e.api.SyncService();
+  s.chainId = config.chainId;
+  const sockets = [];
+  e.context.WebSocket = class {
+    static OPEN = 1;
+    static CONNECTING = 0;
+    constructor(url) {
+      this.url = url;
+      this.readyState = 0;
+      sockets.push(this);
+    }
+    close() {}
+  };
+  const errors = [];
+  e.context.console = { ...console, error: (...args) => errors.push(args) };
+
+  const conn = {
+    url: 'wss://down.example',
+    ws: null,
+    subId: null,
+    reconnectTimer: null,
+    reconnectDelay: 1000,
+  };
+  s.connectRelay(conn);
+  sockets[0].readyState = 3;
+  sockets[0].onerror({ type: 'error' });
+  sockets[0].onclose({ code: 1006, reason: '' });
+
+  assert.deepEqual(errors, []);
+  assert.ok(conn.reconnectTimer, 'the relay is retried');
+  const failure = s.getDebugLogs().find((entry) => entry.message === 'Relay connection failed');
+  assert.equal(failure.level, 'warn');
+  assert.equal(failure.data.relay, 'wss://down.example');
+});
+
+test('console output carries log data as text, not [object Object]', () => {
+  const e = env(browserCode);
+  const s = new e.api.SyncService();
+  const errors = [];
+  e.context.console = { ...console, error: (...args) => errors.push(args) };
+  s.log('error', 'sync', 'Failed to decrypt/merge bundle', { error: 'bad tag', seed: 'secret' });
+  assert.equal(errors.length, 1);
+  assert.equal(typeof errors[0][2], 'string');
+  assert.match(errors[0][2], /"error":"bad tag"/);
+  assert.doesNotMatch(errors[0][2], /secret/);
+});
