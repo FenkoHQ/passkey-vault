@@ -232,6 +232,32 @@ class ContentScript {
     return { foreign: true };
   }
 
+  /**
+   * Whether this document may use WebAuthn under its Permissions Policy
+   * (WebAuthn Level 3 §5.9). The features are on by default for a page and
+   * its same-origin frames, but a cross-origin iframe only gets them when
+   * its embedder delegates them (allow="publickey-credentials-get"), and
+   * any page can switch them off with a Permissions-Policy header. Chrome
+   * refuses such calls with NotAllowedError; the vault must not open its
+   * dialog for them instead. When the browser cannot say (no policy API, or
+   * a feature it does not know), a cross-origin frame is left to the
+   * browser, which enforces its own rules.
+   */
+  private frameMayUse(
+    feature: 'publickey-credentials-get' | 'publickey-credentials-create',
+    crossOrigin: boolean
+  ): boolean {
+    const policy = (
+      document as Document & {
+        featurePolicy?: { features(): string[]; allowsFeature(name: string): boolean };
+      }
+    ).featurePolicy;
+    if (!policy?.features?.().includes(feature)) {
+      return !crossOrigin;
+    }
+    return policy.allowsFeature(feature);
+  }
+
   private async isRelatedOriginAuthorized(rpId: string, origin: string): Promise<boolean> {
     try {
       const res = await this.sendMessage({
@@ -303,6 +329,10 @@ class ContentScript {
             requestId,
             'RP ID not valid here'
           );
+          return;
+        }
+        if (!this.frameMayUse('publickey-credentials-create', payload.crossOrigin === true)) {
+          this.postPassthroughResponse('PASSKEY_CREATE_RESPONSE', requestId, 'Not delegated');
           return;
         }
         const rpId = resolved.rpId;
@@ -438,6 +468,10 @@ class ContentScript {
         }
         if ('foreign' in resolved) {
           this.postPassthroughResponse('PASSKEY_GET_RESPONSE', requestId, 'RP ID not valid here');
+          return;
+        }
+        if (!this.frameMayUse('publickey-credentials-get', payload.crossOrigin === true)) {
+          this.postPassthroughResponse('PASSKEY_GET_RESPONSE', requestId, 'Not delegated');
           return;
         }
         const rpId = resolved.rpId;
