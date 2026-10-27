@@ -65,6 +65,49 @@ Backup flags now belong to each passkey and sync with it to every device:
 - The "Never" auto-lock option locked the vault immediately instead of
   keeping it unlocked.
 
+### Passkeys that behave like the browser's own
+
+A new test suite runs every ceremony through the extension the way a page
+does, checks the result the way a relying party's server does, and runs the
+same requests against Chrome's own WebAuthn client. It found the following,
+now fixed:
+
+- **clientDataJSON** now has the exact layout WebAuthn specifies, including
+  `crossOrigin`. Servers that check it byte for byte, as the spec allows,
+  rejected every vault passkey.
+- **Calls made as a page loads** reach the vault. The page shim used to arrive
+  late, so a site that started an autofill sign-in on load got the browser's
+  prompt instead; on Chrome it now runs before any page script (Chrome 111 or
+  later).
+- **PRF** (used by sites that encrypt data with a passkey, Bitwarden among
+  them) reports `enabled` at registration, so those sites no longer conclude a
+  vault passkey cannot do it, and PRF results survive `toJSON()`. `credProps`
+  is returned only when a site asks for it, never on sign-in.
+- **Sites that accept only other key types** (EdDSA, RS256) are handed to the
+  browser instead of getting an ES256 key they reject.
+- **Timeouts** follow the spec: 5 to 10 minutes rather than 60 seconds, and an
+  autofill sign-in no longer times out at all.
+- **A page that gives up** (aborts, times out) no longer leaves behind a
+  passkey it never received.
+- **Requests the browser refuses are refused too**, with the browser's error:
+  invalid option types and sizes, RP IDs in the wrong case, empty, on an IP
+  address or a public suffix, and PRF or credProps inputs Chrome rejects.
+- **One damaged entry** (from an import or a sync peer) no longer breaks
+  sign-in on every site, a page's promise no longer hangs when the vault's
+  answer is unreadable, a saved passkey is no longer reported as failed when
+  only sync bookkeeping fails, and a locked vault is no longer listed as an
+  extension error.
+
+### Security
+
+- The background only answers web pages' requests for the ceremony itself,
+  bound to the page's real origin as Chrome reports it. A browser exploit in a
+  web page could otherwise have asked it to export the vault, wipe it, or sign
+  for another site.
+- A cross-origin iframe gets the vault only when the page embedding it
+  delegates WebAuthn, as in Chrome, so a third-party frame cannot put the
+  vault's dialogs over the page.
+
 ## [0.12.0] - 2026-09-21
 
 ### Knowing a passkey by its site
