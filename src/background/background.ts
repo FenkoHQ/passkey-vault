@@ -549,10 +549,7 @@ class BackgroundService {
     ) {
       throw new Error('Secure storage is locked. Please unlock with master password.');
     }
-    if (
-      upgradeBlockedTypes.has(type) &&
-      (await chrome.storage.local.get(UPGRADE_BACKUP_REQUIRED_KEY))[UPGRADE_BACKUP_REQUIRED_KEY]
-    ) {
+    if (upgradeBlockedTypes.has(type) && (await this.isUpgradeBackupRequired())) {
       throw new Error('Export an encrypted backup before changing this upgraded vault.');
     }
 
@@ -1223,8 +1220,27 @@ class BackgroundService {
   }
 
   private async handleUpgradeBackupStatus(): Promise<unknown> {
+    return { success: true, required: await this.isUpgradeBackupRequired() };
+  }
+
+  /**
+   * The post-upgrade gate only protects entries that exist. Once the vault
+   * holds nothing to back up (emptied by a sync merge, say) the gate is moot,
+   * and keeping it would leave the vault read-only for good, because there is
+   * no backup to export that would clear it. While the vault is locked its
+   * contents are unknown, so the gate stays.
+   */
+  private async isUpgradeBackupRequired(): Promise<boolean> {
     const result = await chrome.storage.local.get(UPGRADE_BACKUP_REQUIRED_KEY);
-    return { success: true, required: result[UPGRADE_BACKUP_REQUIRED_KEY] === true };
+    if (result[UPGRADE_BACKUP_REQUIRED_KEY] !== true) return false;
+    try {
+      const [passkeys, totpEntries] = await Promise.all([this.loadPasskeys(), loadTotpEntries()]);
+      if (passkeys.length > 0 || totpEntries.length > 0) return true;
+    } catch {
+      return true;
+    }
+    await chrome.storage.local.remove(UPGRADE_BACKUP_REQUIRED_KEY);
+    return false;
   }
 
   private async handleCompleteUpgradeBackup(): Promise<unknown> {

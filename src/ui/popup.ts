@@ -886,13 +886,12 @@ import { resolveSiteIcon } from '../site-icons';
         throw new Error(passkeyResult.error || totpResult.error || 'Failed to load vault');
       }
       const passkeys = (passkeyResult.passkeys || []) as PopupPasskey[];
+      const totpEntries = (totpResult.entries || []) as unknown[];
 
-      if (passkeys.length === 0) {
+      if (passkeys.length === 0 && totpEntries.length === 0) {
         showNotification(t('popupNoPasskeysExport'), 'error');
         return;
       }
-
-      const totpEntries = (totpResult.entries || []) as unknown[];
 
       const exportData = {
         version: EXPORT_VERSION,
