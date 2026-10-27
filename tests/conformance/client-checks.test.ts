@@ -225,6 +225,8 @@ describe('RP ID validation (§5.1.3 step 8, §5.1.4.1 step 8)', () => {
     ['a public suffix', 'https://shop.example.co.uk/', 'co.uk'],
     ['a look-alike suffix', 'https://notexample.com/', 'example.com'],
     ['a parent of an IP address', 'https://192.168.1.10/', '168.1.10'],
+    ['an IP address, even its own', 'https://192.168.1.10/', '192.168.1.10'],
+    ['the loopback address', 'http://127.0.0.1:8080/', '127.0.0.1'],
     ['a URL instead of a host', 'https://example.com/', 'https://example.com'],
     ['a host with a port', 'https://example.com/', 'example.com:443'],
     ['a trailing dot', 'https://example.com/', 'example.com.'],
