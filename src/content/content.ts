@@ -391,6 +391,9 @@ class ContentScript {
         );
       }
     } else if (type === 'PASSKEY_GET_REQUEST') {
+      // Once the user has picked a vault passkey, a failure must not pop the
+      // browser's own passkey prompt up in its place.
+      let userChosePasskey = false;
       // Sign in with existing passkey - show selection UI
       try {
         // First, get list of available passkeys for this site
@@ -526,6 +529,7 @@ class ContentScript {
         }
 
         const selectedId = selectorResult.id;
+        userChosePasskey = true;
 
         // Get the selected passkey and sign
         const response = await this.sendMessage({
@@ -583,7 +587,11 @@ class ContentScript {
             source: 'PASSKEY_VAULT_CONTENT',
             type: 'PASSKEY_GET_RESPONSE',
             requestId,
-            result: { success: false, error: msg },
+            result: {
+              success: false,
+              error: msg,
+              ...(userChosePasskey && { blockNativeFallback: true }),
+            },
           },
           '*'
         );
