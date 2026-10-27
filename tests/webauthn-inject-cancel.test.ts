@@ -5,6 +5,10 @@
  * or signs with a passkey nobody receives.
  */
 
+// A module, not a global script: other test files declare the same top-level
+// names, and TypeScript would reject the clash when both compile in one worker.
+export {};
+
 const nativeGet = navigator.credentials.get as jest.Mock;
 
 // Side-effect import: hooks navigator.credentials and listens for messages.

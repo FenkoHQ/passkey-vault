@@ -5,6 +5,10 @@
  * the page.
  */
 
+// A module, not a global script: other test files declare the same top-level
+// names, and TypeScript would reject the clash when both compile in one worker.
+export {};
+
 const PAGE_SOURCE = 'PASSKEY_VAULT_PAGE';
 const CONTENT_SOURCE = 'PASSKEY_VAULT_CONTENT';
 

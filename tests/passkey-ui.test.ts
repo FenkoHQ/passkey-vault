@@ -4,6 +4,10 @@
  * page gives up on it.
  */
 
+// A module, not a global script: other test files declare the same top-level
+// names, and TypeScript would reject the clash when both compile in one worker.
+export {};
+
 const chromeMock = (window as unknown as { chrome: Record<string, any> }).chrome;
 chromeMock.storage.local.get.mockResolvedValue({});
 chromeMock.storage.onChanged = { addListener: jest.fn() };

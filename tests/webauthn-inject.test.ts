@@ -10,6 +10,10 @@
  * the tests here catch a half fix as well as the original bug.
  */
 
+// A module, not a global script: other test files declare the same top-level
+// names, and TypeScript would reject the clash when both compile in one worker.
+export {};
+
 function illegal(): TypeError {
   return new TypeError('Illegal invocation');
 }

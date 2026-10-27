@@ -4,6 +4,10 @@
  * an in-memory chrome.storage.local and a fake unlocked vault.
  */
 
+// A module, not a global script: other test files declare the same top-level
+// names, and TypeScript would reject the clash when both compile in one worker.
+export {};
+
 const UPGRADE_KEY = 'upgrade_backup_required_0_9_5';
 const BLOCKED = 'Export an encrypted backup before changing this upgraded vault.';
 
