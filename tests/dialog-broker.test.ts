@@ -510,3 +510,80 @@ describe('a dialog in a window of its own', () => {
     expect(opened).toHaveLength(1);
   });
 });
+
+describe('a framed dialog checking its scale', () => {
+  it('gets the top page’s pixel ratio from the top frame’s content script', async () => {
+    const { token } = await open();
+    await attach(token);
+
+    const response: any = await vault.send({ type: 'PASSKEY_DIALOG_METRICS', token }, DIALOG);
+
+    expect(response).toEqual({ success: true, dpr: window.devicePixelRatio });
+    expect(vault.chrome.sentToTabs).toContainEqual({
+      tabId: 7,
+      frameId: 0,
+      message: { type: 'PASSKEY_VAULT_TOP_METRICS' },
+    });
+  });
+
+  it('answers only the frame that claimed the dialog', async () => {
+    const { token } = await open();
+    await attach(token);
+
+    const response: any = await vault.send(
+      { type: 'PASSKEY_DIALOG_METRICS', token },
+      { ...DIALOG, frameId: 9 }
+    );
+
+    expect(response.success).toBe(false);
+  });
+});
+
+describe('a framed dialog moving to a window', () => {
+  let opened: Array<{ id: number; tabId: number; url: string }>;
+
+  beforeEach(() => {
+    opened = [];
+    vault.chrome.onWindowOpened = (window) => opened.push(window);
+  });
+
+  it('opens a window with a new token, and tells the content script to drop the frame', async () => {
+    const { token } = await open('req-1');
+    await attach(token);
+
+    const response: any = await vault.send({ type: 'PASSKEY_DIALOG_ESCALATE', token }, DIALOG);
+    await vault.settle();
+
+    expect(response.success).toBe(true);
+    expect(results().map((sent) => sent.message.outcome)).toEqual(['escalated']);
+    expect(opened).toHaveLength(1);
+    const windowToken = new URL(opened[0].url).hash.slice(1);
+    expect(windowToken).not.toBe(token);
+    // The frame's token and claim are spent.
+    expect((await decide(token, { action: 'use', id: 'cred-alice' })).success).toBe(false);
+    const inWindow: MessageSender = {
+      ...DIALOG,
+      url: opened[0].url,
+      tab: { id: opened[0].tabId },
+      frameId: 0,
+    };
+    expect((await attach(windowToken, inWindow)).view.mode).toBe('window');
+    expect((await decide(windowToken, { action: 'use', id: 'cred-bob' }, inWindow)).success).toBe(
+      true
+    );
+  });
+
+  it('moves only for the frame that claimed the dialog', async () => {
+    const { token } = await open('req-1');
+    await attach(token);
+
+    const response: any = await vault.send(
+      { type: 'PASSKEY_DIALOG_ESCALATE', token },
+      { ...DIALOG, frameId: 9 }
+    );
+    await vault.settle();
+
+    expect(response.success).toBe(false);
+    expect(opened).toEqual([]);
+  });
+});

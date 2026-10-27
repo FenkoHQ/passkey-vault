@@ -10,6 +10,7 @@ import {
   receiveTokenFromParent,
   takeTokenFromUrl,
   type ConsentGate,
+  type GateContext,
 } from '../src/ui/vault-dialog';
 import type { VaultDialogView } from '../src/utils/vault-dialog';
 import { trustedClick, trustedKey } from './helpers/trusted-input';
@@ -36,12 +37,17 @@ const CREATE_VIEW: VaultDialogView = {
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 function openGate(): ConsentGate {
-  return { isReady: () => true, onChange: () => undefined, dispose: () => undefined };
+  return {
+    isReady: () => true,
+    onChange: () => undefined,
+    refresh: () => undefined,
+    dispose: () => undefined,
+  };
 }
 
 async function show(
   view: VaultDialogView | null,
-  gate: () => ConsentGate = openGate,
+  gate: (card: HTMLElement, context: GateContext) => ConsentGate = openGate,
   inWindow = false
 ): Promise<jest.Mock> {
   document.documentElement.innerHTML = HTML.replace(/^<!doctype html>/i, '');
@@ -49,6 +55,7 @@ async function show(
     if (message.type === 'PASSKEY_DIALOG_ATTACH') {
       return view ? { success: true, view } : { success: false };
     }
+    if (message.type === 'PASSKEY_DIALOG_METRICS') return { success: true, dpr: 2 };
     return { success: true };
   });
   const dialog = new VaultDialog({
@@ -159,6 +166,125 @@ describe('the passkey picker', () => {
   });
 });
 
+describe('consent while the dialog cannot show it is visible', () => {
+  /** A gate the test opens and closes, as the browser's visibility reports would. */
+  function heldGate() {
+    let ready = false;
+    let listener = () => undefined as void;
+    let context: GateContext | undefined;
+    const factory = (_card: HTMLElement, given: GateContext): ConsentGate => {
+      context = given;
+      return {
+        isReady: () => ready,
+        onChange: (callback) => (listener = callback),
+        refresh: () => undefined,
+        dispose: () => undefined,
+      };
+    };
+    const set = (value: boolean) => {
+      ready = value;
+      listener();
+    };
+    return { factory, set, context: () => context! };
+  }
+
+  afterEach(() => jest.useRealTimers());
+
+  it('ignores Continue until the gate opens, and says so to assistive tech', async () => {
+    const gate = heldGate();
+    const send = await show(GET_VIEW, gate.factory);
+
+    expect(byId('pkv-continue').getAttribute('aria-disabled')).toBe('true');
+    trustedClick(byId('pkv-continue'));
+    await flush();
+    expect(decisions(send)).toEqual([]);
+
+    gate.set(true);
+    expect(byId('pkv-continue').getAttribute('aria-disabled')).toBe('false');
+    trustedClick(byId('pkv-continue'));
+    await flush();
+    expect(decisions(send).map((message) => message.decision)).toEqual([
+      { action: 'use', id: 'cred-alice' },
+    ]);
+  });
+
+  it('ignores Create until the gate opens', async () => {
+    const gate = heldGate();
+    const send = await show(CREATE_VIEW, gate.factory);
+
+    trustedClick(byId('pkv-create'));
+    await flush();
+    expect(decisions(send)).toEqual([]);
+
+    gate.set(true);
+    trustedClick(byId('pkv-create'));
+    await flush();
+    expect(decisions(send)).toHaveLength(1);
+  });
+
+  it('always lets the user cancel', async () => {
+    const gate = heldGate();
+    const send = await show(GET_VIEW, gate.factory);
+
+    trustedClick(byId('pkv-cancel'));
+    await flush();
+
+    expect(decisions(send).map((message) => message.decision)).toEqual([{ action: 'cancel' }]);
+  });
+
+  it('checks its layout again when the selection changes', async () => {
+    const refresh = jest.fn();
+    let context: GateContext | undefined;
+    await show(GET_VIEW, (_card, given) => {
+      context = given;
+      return { isReady: () => true, onChange: () => undefined, refresh, dispose: () => undefined };
+    });
+
+    trustedClick(document.querySelectorAll('.passkey-item')[1]);
+
+    expect(refresh).toHaveBeenCalled();
+    // jsdom lays nothing out, so everything is "in view" here.
+    expect(context!.fits()).toBe(true);
+  });
+
+  it('measures itself against the top page through the background', async () => {
+    const gate = heldGate();
+    const send = await show(GET_VIEW, gate.factory);
+
+    expect(await gate.context().reference()).toBe(2);
+    expect(send).toHaveBeenCalledWith({ type: 'PASSKEY_DIALOG_METRICS', token: 'token-1' });
+    expect(gate.context().mode).toBe('frame');
+  });
+
+  it('offers a window when it cannot show it is visible for a while', async () => {
+    jest.useFakeTimers();
+    const gate = heldGate();
+    const send = await show(GET_VIEW, gate.factory);
+
+    jest.advanceTimersByTime(1499);
+    expect(byId('status').hidden).toBe(true);
+    jest.advanceTimersByTime(1);
+    expect(byId('status').hidden).toBe(false);
+    expect(byId('status').textContent).toContain('Cannot confirm');
+
+    trustedClick(byId('pkv-open-window'));
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(send).toHaveBeenCalledWith({ type: 'PASSKEY_DIALOG_ESCALATE', token: 'token-1' });
+    expect(decisions(send)).toEqual([]);
+  });
+
+  it('does not offer a window once it is visible', async () => {
+    jest.useFakeTimers();
+    const gate = heldGate();
+    await show(GET_VIEW, gate.factory);
+    gate.set(true);
+
+    jest.advanceTimersByTime(5000);
+
+    expect(byId('status').hidden).toBe(true);
+  });
+});
+
 describe('the create confirmation', () => {
   it('names the account and the site, and creates on Create', async () => {
     const send = await show(CREATE_VIEW);
@@ -199,6 +325,23 @@ describe('in a window of its own', () => {
 
     expect(close).toHaveBeenCalled();
     close.mockRestore();
+  });
+
+  it('never offers to move to a window: it is one', async () => {
+    jest.useFakeTimers();
+    const closed = () =>
+      ({
+        isReady: () => false,
+        onChange: () => undefined,
+        refresh: () => undefined,
+        dispose: () => undefined,
+      }) as ConsentGate;
+    await show({ ...GET_VIEW, mode: 'window' }, closed, true);
+
+    jest.advanceTimersByTime(5000);
+    jest.useRealTimers();
+
+    expect(byId('status').hidden).toBe(true);
   });
 
   it('offers to close a window whose request is gone', async () => {

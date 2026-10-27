@@ -90,19 +90,37 @@ interface PageResult {
 }
 
 /**
- * Click in the vault's dialog: an extension page in a frame the page cannot
- * reach (a closed shadow root), so it is found among the page's frames by
- * its URL rather than by a selector.
+ * Click in the vault's dialog as a user would: it is an extension page in a
+ * frame the page cannot reach (a closed shadow root), found among the
+ * page's frames by its URL. Its consent buttons take a click only once the
+ * frame has been visible, whole, for half a second; where the frame cannot
+ * show that (a cross-site iframe too small for it), the user moves the
+ * dialog to a window and clicks there.
  */
 async function clickInDialog(page: Page, selector: string, timeout = 8000): Promise<void> {
   const deadline = Date.now() + timeout;
   for (;;) {
-    const dialog = page.frames().find((frame) => frame.url().includes('/vault-dialog.html'));
+    const popup = page
+      .context()
+      .pages()
+      .find((candidate) => candidate.url().includes('/vault-dialog.html'));
+    const frame = page.frames().find((candidate) => candidate.url().includes('/vault-dialog.html'));
+    const dialog = popup ?? frame;
     if (dialog) {
-      await dialog.locator(selector).click({ timeout: Math.max(deadline - Date.now(), 1) });
-      return;
+      const move = dialog.locator('#pkv-open-window');
+      if (!popup && (await move.isVisible().catch(() => false))) {
+        await move.click({ timeout: 2000 }).catch(() => undefined);
+      } else if (
+        (await dialog
+          .locator(selector)
+          .getAttribute('aria-disabled', { timeout: 500 })
+          .catch(() => null)) === 'false'
+      ) {
+        await dialog.locator(selector).click({ timeout: 2000 });
+        return;
+      }
     }
-    if (Date.now() > deadline) throw new Error('No vault dialog');
+    if (Date.now() > deadline) throw new Error(`No vault dialog took ${selector}`);
     await page.waitForTimeout(50);
   }
 }
@@ -627,7 +645,8 @@ describe('cross-origin iframes follow the embedder’s permissions, as in Chrome
     const dialog = clickInDialog(
       page,
       ceremony === 'create' ? '#pkv-create' : '#pkv-continue',
-      4000
+      // A frame too small for the dialog sends the user to a window.
+      10000
     )
       .then(() => 'vault dialog')
       .catch(() => 'no dialog');

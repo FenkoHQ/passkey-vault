@@ -2,17 +2,8 @@
  * Entry point of vault-dialog.html.
  */
 
-import {
-  receiveTokenFromParent,
-  startVaultDialog,
-  takeTokenFromUrl,
-  type ConsentGate,
-} from './vault-dialog';
-
-/** Until the clickjacking gate lands: every trusted click counts. */
-function openGate(): ConsentGate {
-  return { isReady: () => true, onChange: () => undefined, dispose: () => undefined };
-}
+import { createFrameGate, createWindowGate } from './consent-gate';
+import { receiveTokenFromParent, startVaultDialog, takeTokenFromUrl } from './vault-dialog';
 
 // A frame on the page gets its token from the content script; a popup
 // window the background opened has it in its URL.
@@ -23,5 +14,8 @@ void startVaultDialog({
   inWindow,
   token: async () => (inWindow ? takeTokenFromUrl(window) : receiveTokenFromParent(window)),
   send: (message) => chrome.runtime.sendMessage(message),
-  createGate: openGate,
+  createGate: (card, context) =>
+    context.mode === 'window'
+      ? createWindowGate(document, { fits: context.fits })
+      : createFrameGate(card, { win: window, reference: context.reference, fits: context.fits }),
 });

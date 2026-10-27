@@ -335,6 +335,10 @@ export class DialogBroker {
         return this.attach(token, sender);
       case DIALOG_MESSAGES.DECIDE:
         return this.decide(token, sender, message.decision as VaultDialogDecision | undefined);
+      case DIALOG_MESSAGES.METRICS:
+        return this.metrics(token, sender);
+      case DIALOG_MESSAGES.ESCALATE:
+        return this.escalate(token, sender);
       default:
         throw new Error(`${String(message.type)} is not available to the vault dialog`);
     }
@@ -407,6 +411,67 @@ export class DialogBroker {
       return { success: false, error: 'This request is no longer active' };
     }
     this.ended(decided.session, decided.outcome);
+    return { success: true };
+  }
+
+  /**
+   * The top-level page's devicePixelRatio, which a framed dialog compares
+   * with its own: CSS zoom on any ancestor of the frame changes the
+   * frame's ratio but not the top page's. Read from the top frame's content
+   * script, in its isolated world, so the page cannot answer for it.
+   */
+  private async metrics(token: string, sender: DialogSender): Promise<unknown> {
+    const session = await this.update((sessions) =>
+      Object.values(sessions).find(
+        (candidate) =>
+          !!token &&
+          candidate.token === token &&
+          candidate.state === 'pending' &&
+          this.isClaimant(candidate, sender)
+      )
+    );
+    if (!session) return { success: false, error: 'This request is no longer active' };
+    try {
+      const answer = (await chrome.tabs.sendMessage(
+        session.tabId,
+        { type: DIALOG_MESSAGES.TOP_METRICS },
+        { frameId: 0 }
+      )) as { dpr?: unknown } | undefined;
+      if (typeof answer?.dpr === 'number' && answer.dpr > 0) {
+        return { success: true, dpr: answer.dpr };
+      }
+    } catch {
+      // No content script in the top frame (a page the vault does not run
+      // on): the dialog cannot vouch for its size, and offers a window.
+    }
+    return { success: false, error: 'The top page did not answer' };
+  }
+
+  /**
+   * Move a framed dialog that cannot show it is visible to a window. The
+   * frame's claim and token end here; the window gets a new token.
+   */
+  private async escalate(token: string, sender: DialogSender): Promise<unknown> {
+    const moved = await this.update((sessions) => {
+      const session = Object.values(sessions).find((candidate) => candidate.token === token);
+      if (
+        !session ||
+        !token ||
+        session.state !== 'pending' ||
+        session.view.mode !== 'frame' ||
+        !this.isClaimant(session, sender)
+      ) {
+        return undefined;
+      }
+      session.token = randomToken();
+      session.dialog = undefined;
+      session.view = { ...session.view, mode: 'window' };
+      session.window = { deferred: false, opened: false };
+      return { ...session };
+    });
+    if (!moved) return { success: false, error: 'This request is no longer active' };
+    void this.notify(moved, 'escalated');
+    await this.openWindow(moved.id);
     return { success: true };
   }
 

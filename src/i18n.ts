@@ -546,6 +546,8 @@ const en: TranslationMap = {
   pageCreatePasskeyMsg: 'Create a passkey for {user} on {rp}?',
   pageCreate: 'Create',
   dialogInactive: 'This request is no longer active.',
+  dialogNotVisible: 'Cannot confirm this dialog is fully visible.',
+  dialogOpenWindow: 'Open it in a window',
 };
 
 const ru: TranslationMap = {

@@ -37,8 +37,10 @@ export type VaultDialogMode = 'frame' | 'window';
 /**
  * What the content script learns: whether to go on with the ceremony. It
  * never learns which passkey the user picked; the background keeps that.
+ * "escalated": the framed dialog moved to a window; take the frame down
+ * and keep waiting.
  */
-export type VaultDialogOutcome = 'approved' | 'cancel' | 'passthrough';
+export type VaultDialogOutcome = 'approved' | 'cancel' | 'passthrough' | 'escalated';
 
 export interface VaultDialogPasskey {
   id: string;
@@ -65,10 +67,16 @@ export const DIALOG_MESSAGES = {
   CANCEL: 'PASSKEY_DIALOG_CANCEL',
   /** Dialog page: claim a session with its token and fetch what to show. */
   ATTACH: 'PASSKEY_DIALOG_ATTACH',
+  /** Dialog page: the top-level page's device pixel ratio, to detect CSS zoom. */
+  METRICS: 'PASSKEY_DIALOG_METRICS',
   /** Dialog page: the user's decision. */
   DECIDE: 'PASSKEY_DIALOG_DECIDE',
+  /** Dialog page: move a frame that cannot show it is visible to a window. */
+  ESCALATE: 'PASSKEY_DIALOG_ESCALATE',
   /** Background to content script: the outcome of a dialog. */
   RESULT: 'PASSKEY_DIALOG_RESULT',
+  /** Background to the top frame's content script: its device pixel ratio. */
+  TOP_METRICS: 'PASSKEY_VAULT_TOP_METRICS',
 } as const;
 
 /** The postMessage that hands a framed dialog its token. */
@@ -83,6 +91,9 @@ export const DIALOG_FRAME_SIZE: Record<VaultDialogKind, { width: number; height:
   get: { width: 340, height: 372 },
   create: { width: 340, height: 232 },
 };
+
+/** How long the dialog must have been fully visible before a click counts. */
+export const CONSENT_DWELL_MS = 500;
 
 /** Outer size of the popup window: the frame, plus room for the title bar. */
 export const DIALOG_WINDOW_SIZE: Record<VaultDialogKind, { width: number; height: number }> = {

@@ -39,9 +39,15 @@ export class VaultDialogClient {
   private dismissActive: (() => void) | null = null;
 
   constructor(private readonly send: Send) {
-    chrome.runtime.onMessage.addListener((message, sender) => {
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (sender?.id !== chrome.runtime.id) return;
       const data = message as { type?: string; dialogId?: unknown; outcome?: unknown };
+      // A framed dialog checks its scale against the top page's; this
+      // world's devicePixelRatio is out of the page's reach.
+      if (data?.type === DIALOG_MESSAGES.TOP_METRICS) {
+        if (window.top === window) sendResponse({ dpr: window.devicePixelRatio });
+        return;
+      }
       if (data?.type !== DIALOG_MESSAGES.RESULT || typeof data.dialogId !== 'string') return;
       // A dialog this frame already closed (replaced, or the page gave up)
       // is not waited on any more; its late outcome is dropped.
@@ -101,7 +107,15 @@ export class VaultDialogClient {
         if (event.isTrusted && event.key === 'Escape') dismiss();
       };
 
-      this.waiters.set(dialogId, settle);
+      this.waiters.set(dialogId, (value) => {
+        if (value !== 'escalated') {
+          settle(value);
+          return;
+        }
+        // The dialog moved to a window: the frame goes, the wait goes on.
+        frame?.unmount();
+        frame = null;
+      });
       this.dismissActive = dismiss;
       signal.addEventListener('abort', onAbort);
       document.addEventListener('keydown', onKeydown, true);

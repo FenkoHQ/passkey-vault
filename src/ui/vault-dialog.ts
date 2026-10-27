@@ -13,16 +13,31 @@ import {
   DIALOG_MESSAGES,
   DIALOG_TOKEN_MESSAGE,
   type VaultDialogDecision,
+  type VaultDialogMode,
   type VaultDialogView,
 } from '../utils/vault-dialog';
+import type { ConsentGate } from './consent-gate';
 
-/** Whether a click on a consent button may count right now. */
-export interface ConsentGate {
-  isReady(): boolean;
-  /** Called whenever isReady() may have changed. */
-  onChange(listener: () => void): void;
-  dispose(): void;
+export type { ConsentGate } from './consent-gate';
+
+export interface GateContext {
+  mode: VaultDialogMode;
+  /** The top-level page's devicePixelRatio, from the background. */
+  reference(): Promise<number | undefined>;
+  /**
+   * Whether the parts the user decides on are all inside the viewport:
+   * the title and message, the passkey selected, and the buttons. A frame
+   * the page made too small to show them crops the dialog's content while
+   * the dialog itself still "fits".
+   */
+  fits(): boolean;
 }
+
+/**
+ * How long a framed dialog may fail to show it is visible before it offers
+ * to move to a window.
+ */
+export const UNVERIFIED_MS = 1500;
 
 export interface DialogEnvironment {
   window: Window;
@@ -32,7 +47,7 @@ export interface DialogEnvironment {
   token(): Promise<string>;
   send(message: Record<string, unknown>): Promise<unknown>;
   /** The gate for consent clicks, once the dialog is on screen. */
-  createGate(card: HTMLElement): ConsentGate;
+  createGate(card: HTMLElement, context: GateContext): ConsentGate;
 }
 
 const LOCK_ICON =
@@ -73,6 +88,8 @@ export class VaultDialog {
   private settled = false;
   private selectedId: string | null = null;
   private readonly consentButtons: HTMLButtonElement[] = [];
+  private mode: VaultDialogMode = 'frame';
+  private unverifiedTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly env: DialogEnvironment) {
     this.doc = env.window.document;
@@ -157,13 +174,19 @@ export class VaultDialog {
     });
 
     card.hidden = false;
-    this.gate = this.env.createGate(card);
+    this.mode = view.mode;
+    this.doc.documentElement.classList.toggle('in-window', view.mode === 'window');
+    this.gate = this.env.createGate(card, {
+      mode: view.mode,
+      reference: () => this.reference(),
+      fits: () => this.fits(),
+    });
     this.gate.onChange(() => this.updateConsentButtons());
     this.updateConsentButtons();
     // Focus the selection, or the dialog itself: never a consent button, so
     // a keystroke meant for the page cannot confirm.
     const checked = list.querySelector<HTMLElement>('[aria-checked="true"]');
-    (checked ?? card).focus();
+    (checked ?? card).focus({ preventScroll: true });
   }
 
   private passkeyItem(
@@ -227,6 +250,7 @@ export class VaultDialog {
         other.tabIndex = other === item ? 0 : -1;
       });
     this.selectedId = item.dataset.id ?? null;
+    this.gate?.refresh();
   }
 
   private button(
@@ -261,6 +285,100 @@ export class VaultDialog {
     for (const button of this.consentButtons) {
       button.setAttribute('aria-disabled', String(!ready));
     }
+    // A frame that cannot show it is visible for a while (the page covers
+    // or shrinks it, or the browser cannot tell) offers a window instead,
+    // which the page cannot draw over. The offer is no consent: the user
+    // still decides in the window.
+    if (ready || this.settled || this.mode !== 'frame') {
+      if (this.unverifiedTimer) clearTimeout(this.unverifiedTimer);
+      this.unverifiedTimer = null;
+      if (ready) this.el('status').hidden = true;
+    } else if (!this.unverifiedTimer && this.el('status').hidden) {
+      this.unverifiedTimer = setTimeout(() => {
+        this.unverifiedTimer = null;
+        if (!this.gate?.isReady() && !this.settled) this.showUnverified();
+      }, UNVERIFIED_MS);
+    }
+  }
+
+  private showUnverified(): void {
+    const status = this.el('status');
+    const text = this.doc.createElement('span');
+    text.className = 'status-text';
+    text.textContent = t('dialogNotVisible');
+    status.replaceChildren(text);
+    const move = this.doc.createElement('button');
+    move.type = 'button';
+    move.id = 'pkv-open-window';
+    move.className = 'link-btn';
+    move.textContent = t('dialogOpenWindow');
+    move.addEventListener('click', (event) => {
+      if (event.isTrusted) void this.escalate();
+    });
+    status.append(move);
+    status.hidden = false;
+  }
+
+  /** Move this dialog to a window; the content script takes the frame down. */
+  private async escalate(): Promise<void> {
+    if (this.settled) return;
+    this.settled = true;
+    this.updateConsentButtons();
+    this.gate?.dispose();
+    let response: { success?: boolean } | undefined;
+    try {
+      response = (await this.env.send({
+        type: DIALOG_MESSAGES.ESCALATE,
+        token: this.token,
+      })) as { success?: boolean } | undefined;
+    } catch {
+      response = undefined;
+    }
+    if (!response?.success) this.showInactive();
+  }
+
+  private fits(): boolean {
+    const win = this.env.window;
+    const inView = (element: Element | null) => {
+      if (!element) return true;
+      const rect = element.getBoundingClientRect();
+      return (
+        rect.top >= -0.5 &&
+        rect.left >= -0.5 &&
+        rect.bottom <= win.innerHeight + 0.5 &&
+        rect.right <= win.innerWidth + 0.5
+      );
+    };
+    const whole = (element: HTMLElement) =>
+      inView(element) &&
+      element.scrollHeight <= element.clientHeight + 1 &&
+      element.scrollWidth <= element.clientWidth + 1;
+    const body = this.el('body').getBoundingClientRect();
+    const selected = this.el('passkeys').querySelector('[aria-checked="true"]');
+    const selectedShown =
+      !selected ||
+      (() => {
+        const rect = selected.getBoundingClientRect();
+        return inView(selected) && rect.top >= body.top - 0.5 && rect.bottom <= body.bottom + 0.5;
+      })();
+    return (
+      whole(this.el('title')) &&
+      whole(this.el('subtitle')) &&
+      inView(this.el('footer')) &&
+      selectedShown
+    );
+  }
+
+  private async reference(): Promise<number | undefined> {
+    try {
+      const response = (await this.env.send({
+        type: DIALOG_MESSAGES.METRICS,
+        token: this.token,
+      })) as { success?: boolean; dpr?: unknown } | undefined;
+      return response?.success && typeof response.dpr === 'number' ? response.dpr : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private async decide(decision: VaultDialogDecision): Promise<void> {
@@ -294,6 +412,7 @@ export class VaultDialog {
     this.el('subtitle').textContent = t('dialogInactive');
     this.el('passkeys').textContent = '';
     this.el('footer').textContent = '';
+    this.el('status').hidden = true;
     if (this.env.inWindow) {
       this.el('footer').append(
         this.button('pkv-close', t('commonClose'), 'secondary wide', () => this.env.window.close())

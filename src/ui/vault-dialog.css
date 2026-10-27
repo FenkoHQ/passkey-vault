@@ -250,10 +250,41 @@ body {
   cursor: not-allowed;
 }
 
+/*
+ * Says when the dialog cannot show it is visible, and offers a window. Its
+ * space is kept while it is empty, so showing it never changes whether the
+ * dialog fits its frame. A window never needs it.
+ */
 .status {
-  margin: 8px 4px 0;
+  flex: none;
+  box-sizing: border-box;
+  height: 36px;
+  margin: 0;
+  padding: 4px 16px;
+  overflow: hidden;
   font-size: 11px;
+  line-height: 14px;
   color: var(--text-muted);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.status-text,
+.status .link-btn {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status[hidden] {
+  display: block !important;
+  visibility: hidden;
+}
+
+html.in-window .status {
+  display: none !important;
 }
 
 .link-btn {

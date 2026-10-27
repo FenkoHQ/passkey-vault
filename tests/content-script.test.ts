@@ -321,6 +321,32 @@ describe('content script: the vault dialog', () => {
     expect(await result).toMatchObject({ passthrough: true, error: 'User chose other passkey' });
   });
 
+  it('drops the frame when the dialog moves to a window, and goes on waiting', async () => {
+    const result = getRequest();
+    await flush();
+
+    dialogResult('dialog-2', 'escalated');
+    await flush();
+    expect(frame.unmount).toHaveBeenCalled();
+    expect(sent().map((message) => message.type)).not.toContain('PASSKEY_DIALOG_CANCEL');
+
+    dialogResult('dialog-2', 'approved');
+    expect((await result).success).toBe(true);
+  });
+
+  it('tells the dialog the top page’s pixel ratio, from the top frame only', () => {
+    const answers: unknown[] = [];
+    for (const listener of backgroundListeners) {
+      listener(
+        { type: 'PASSKEY_VAULT_TOP_METRICS' },
+        { id: chromeMock.runtime.id },
+        (answer: unknown) => answers.push(answer)
+      );
+    }
+
+    expect(answers).toEqual([{ dpr: window.devicePixelRatio }]);
+  });
+
   it('replaces its dialog when the page asks again', async () => {
     const first = getRequest();
     await flush();
