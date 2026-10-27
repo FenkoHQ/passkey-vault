@@ -15,10 +15,10 @@ function isDomain(host: string): boolean {
 
 /**
  * Whether a page on `host` may use `rpId`: the host itself, or one of its
- * parent domains down to the registrable domain. An address or a single
- * label such as localhost only matches itself, and a public suffix (com,
- * co.uk) is never an RP ID: a passkey scoped to it would be offered to
- * every site under that suffix.
+ * parent domains down to the registrable domain. A single label such as
+ * localhost only matches itself, an IP address matches nothing, and a
+ * public suffix (com, co.uk) is never an RP ID: a passkey scoped to it
+ * would be offered to every site under that suffix.
  *
  * An empty RP ID is not the host either: the page asked for an RP ID, and
  * none is valid.
@@ -35,10 +35,15 @@ export function isRpIdValidForHost(rpId: string, host: string): boolean {
   // relying party's server checks for.
   const id = rpId;
   const page = host.toLowerCase();
-  if (id === page) {
-    return id.length > 0;
+  // WebAuthn needs a domain: an address such as 127.0.0.1 is never an RP ID,
+  // even its own (§5.1.3 step 7). Chrome throws "This is an invalid domain".
+  if (!isDomain(page)) {
+    return false;
   }
-  if (!isDomain(page) || !isDomain(id) || !page.endsWith('.' + id)) {
+  if (id === page) {
+    return true;
+  }
+  if (!isDomain(id) || !page.endsWith('.' + id)) {
     return false;
   }
   const registrable = baseDomain(page);
