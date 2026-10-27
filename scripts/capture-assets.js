@@ -7,7 +7,7 @@
  *   npm run capture:screenshots
  *   npm run capture:video
  *
- * Requires: built extension in dist/  (run `npm run build:chrome` first)
+ * Requires: a release build in dist/  (run `PASSKEY_VAULT_RELEASE=1 npm run build:chrome` first)
  * Uses headless Chromium by default. Set PLAYWRIGHT_CHROMIUM_EXECUTABLE to override the browser.
  */
 
@@ -1059,7 +1059,15 @@ body::before {
 
 async function main() {
   if (!fs.existsSync(EXTENSION_PATH)) {
-    console.error('dist/ not found — run: npm run build:chrome');
+    console.error('dist/ not found — run: PASSKEY_VAULT_RELEASE=1 npm run build:chrome');
+    process.exit(1);
+  }
+  // The options page shows version_name, which names the commit in a development build.
+  const manifest = JSON.parse(fs.readFileSync(path.join(EXTENSION_PATH, 'manifest.json'), 'utf8'));
+  if (manifest.version_name !== manifest.version) {
+    console.error(
+      `dist/ is a development build (${manifest.version_name}) — run: PASSKEY_VAULT_RELEASE=1 npm run build:chrome`
+    );
     process.exit(1);
   }
 

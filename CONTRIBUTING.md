@@ -65,8 +65,8 @@ npm run typecheck
 npm test
 npm run test:e2e
 npm run build:all
-npm run zip:all
-npm run validate:packages
+PASSKEY_VAULT_RELEASE=1 npm run zip:all
+PASSKEY_VAULT_RELEASE=1 npm run validate:packages
 git commit -am "Release Fenko Vault 0.9.0"
 git tag v0.9.0
 git push origin main
@@ -74,6 +74,8 @@ git push origin v0.9.0
 ```
 
 The CI pipeline builds both extensions, publishes to the Chrome Web Store, and creates a GitHub release. Release notes come from the matching `## [x.y.z]` section in `CHANGELOG.md`.
+
+`PASSKEY_VAULT_RELEASE=1` makes a build a store package, as in the release workflow: its version is the plain `x.y.z`. Every other build is a development build, whose version names its commit, such as `0.12.0+2d873fb`, with `.dirty` when tracked files have uncommitted changes. Chrome shows it on `chrome://extensions` and in the options page. `npm run validate:packages` accepts either, and only the plain version when the variable is set. `npm run capture` needs a release build in `dist/`, so that the screenshots show the plain version.
 
 Store listing copy and upload assets live in `docs/cws/`.
 

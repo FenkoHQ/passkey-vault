@@ -102,6 +102,8 @@ npm run build:all      # Both
 2. Enable Developer mode
 3. Click "Load unpacked" → select `dist/`
 
+A development build shows its commit as its version, such as `0.12.0+2d873fb`, on `chrome://extensions` and in the options page.
+
 **Load in Firefox:**
 
 1. Open `about:debugging#/runtime/this-firefox`

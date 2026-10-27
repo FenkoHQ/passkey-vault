@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const esbuild = require('esbuild');
 
 const args = process.argv.slice(2);
@@ -16,13 +17,37 @@ if (!validTargets.includes(target)) {
 
 const targets = target === 'all' ? ['chrome', 'firefox'] : [target];
 
+// The release workflow sets this for the packages it uploads to the stores.
+// Every other build is a development build.
+const isRelease = process.env.PASSKEY_VAULT_RELEASE === '1';
+
 function getVersionFromPackage() {
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
   const version = pkg.version;
   if (!/^\d+(\.\d+){0,3}$/.test(version)) {
     throw new Error(`Invalid package version for browser manifest: ${version}`);
   }
-  return { version, versionName: version };
+  // Chrome shows version_name on chrome://extensions, so a development build
+  // names its commit there, as in 0.12.0+2d873fb.
+  const commit = isRelease ? null : getCommit();
+  return { version, versionName: commit ? `${version}+${commit}` : version };
+}
+
+// HEAD's short hash, plus .dirty when tracked files have uncommitted changes.
+// Null outside a git checkout, such as a source archive.
+function getCommit() {
+  const git = (...gitArgs) =>
+    execFileSync('git', gitArgs, {
+      cwd: __dirname,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  try {
+    const hash = git('rev-parse', '--short', 'HEAD');
+    return git('status', '--porcelain', '--untracked-files=no') ? `${hash}.dirty` : hash;
+  } catch {
+    return null;
+  }
 }
 
 async function main() {
