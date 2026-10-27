@@ -83,7 +83,12 @@ export async function getOrCreatePrfKey(passkey: {
 export function normalizePrfInput(input: unknown): ArrayBuffer | null {
   if (!input) return null;
   if (input instanceof ArrayBuffer) return input;
-  if (ArrayBuffer.isView(input)) return (input as ArrayBufferView).buffer as ArrayBuffer;
+  if (ArrayBuffer.isView(input)) {
+    // Only the bytes the view covers: `.buffer` is the whole backing store,
+    // which for a subarray or pooled buffer holds unrelated bytes too.
+    const view = input as ArrayBufferView;
+    return (view.buffer as ArrayBuffer).slice(view.byteOffset, view.byteOffset + view.byteLength);
+  }
   if (
     input != null &&
     typeof input === 'object' &&

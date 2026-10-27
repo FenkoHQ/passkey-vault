@@ -163,7 +163,7 @@
             })),
             authenticatorSelection: publicKey.authenticatorSelection,
             attestation: publicKey.attestation,
-            extensions: publicKey.extensions,
+            extensions: serializeExtensions(publicKey.extensions),
           },
           origin: window.location.origin,
         };
@@ -224,7 +224,7 @@
                 transports: cred.transports,
               })),
               userVerification: publicKey.userVerification,
-              extensions: publicKey.extensions,
+              extensions: serializeExtensions(publicKey.extensions),
             },
             mediation: options.mediation,
             origin: window.location.origin,
@@ -447,6 +447,50 @@
   }
 
   /**
+   * Copy the extension inputs with every PRF salt encoded as base64url, like
+   * the challenge and credential IDs. The payload reaches the background
+   * through chrome.runtime.sendMessage, which Chrome serialises as JSON: a raw
+   * ArrayBuffer salt would arrive as `{}` and the PRF result would be silently
+   * dropped. The vault implements no other extension, so the rest pass as-is.
+   */
+  function serializeExtensions(
+    extensions: AuthenticationExtensionsClientInputs | undefined
+  ): Record<string, unknown> | undefined {
+    if (!extensions) {
+      return undefined;
+    }
+    const serialized: Record<string, unknown> = { ...extensions };
+    const prf = extensions.prf;
+    if (prf) {
+      const prfInputs: Record<string, unknown> = {};
+      if (prf.eval) {
+        prfInputs.eval = serializePrfValues(prf.eval);
+      }
+      if (prf.evalByCredential) {
+        const byCredential: Record<string, unknown> = {};
+        for (const [credentialId, values] of Object.entries(prf.evalByCredential)) {
+          byCredential[credentialId] = serializePrfValues(values);
+        }
+        prfInputs.evalByCredential = byCredential;
+      }
+      serialized.prf = prfInputs;
+    }
+    return serialized;
+  }
+
+  function serializePrfValues(values: AuthenticationExtensionsPRFValues): {
+    first?: string;
+    second?: string;
+  } {
+    const out: { first?: string; second?: string } = {};
+    const first = serializeBufferSource(values?.first);
+    const second = serializeBufferSource(values?.second);
+    if (first != null) out.first = first;
+    if (second != null) out.second = second;
+    return out;
+  }
+
+  /**
    * Serialize a BufferSource (ArrayBuffer, TypedArray, DataView) to base64url string
    */
   function serializeBufferSource(value: BufferInput): string | null {
@@ -460,10 +504,19 @@
       return arrayBufferToBase64URL(value);
     }
     if (ArrayBuffer.isView(value)) {
-      return arrayBufferToBase64URL(value.buffer as ArrayBuffer);
+      return arrayBufferToBase64URL(viewToArrayBuffer(value));
     }
     // Unknown type, try to convert
     return String(value);
+  }
+
+  /**
+   * Copy out just the bytes a view covers. A view's `.buffer` is the whole
+   * backing store, so `subarray()` or a pooled buffer would otherwise leak
+   * neighbouring bytes into the challenge, user ID or credential IDs.
+   */
+  function viewToArrayBuffer(view: ArrayBufferView): ArrayBuffer {
+    return (view.buffer as ArrayBuffer).slice(view.byteOffset, view.byteOffset + view.byteLength);
   }
 
   /**
