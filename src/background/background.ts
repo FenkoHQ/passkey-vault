@@ -256,7 +256,7 @@ async function bindToWebPage(
     case 'GET_PASSKEY': {
       const publicKey = { ...((payload.publicKey as MessagePayload) || {}) };
       const rp = publicKey.rp as Record<string, unknown> | undefined;
-      const rpId = String(publicKey.rpId || rp?.id || host);
+      const rpId = String(publicKey.rpId ?? rp?.id ?? host);
       await requireRpIdFor(rpId, origin);
       publicKey.rpId = rpId;
       payload.publicKey = publicKey;

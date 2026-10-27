@@ -683,7 +683,9 @@
         name: domString(required(rp.name, 'rp.name')),
         ...(rpId !== undefined && { id: rpId }),
       },
-      rpId: rpId || window.location.hostname,
+      // Only an absent rp.id defaults to the page host; an empty one is an
+      // RP ID like any other, and an invalid one (§5.1.3 step 8).
+      rpId: rpId ?? window.location.hostname,
       user: {
         id: arrayBufferToBase64URL(userId),
         name: domString(required(user.name, 'user.name')),
@@ -721,7 +723,7 @@
   function convertRequestOptions(value: unknown) {
     const options = dictionary(value, 'publicKey');
     return {
-      rpId: optionalString(options.rpId) || window.location.hostname,
+      rpId: optionalString(options.rpId) ?? window.location.hostname,
       challenge: bufferSource(options.challenge, 'challenge'),
       timeout: unsignedLong(options.timeout),
       allowCredentials:

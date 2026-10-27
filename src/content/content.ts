@@ -197,7 +197,7 @@ class ContentScript {
 
     const pk = payload.publicKey as Record<string, unknown> | undefined;
     const pkRp = (pk?.rp as Record<string, string>) || {};
-    const requested = String(pk?.rpId || pkRp.id || trueHost);
+    const requested = String(pk?.rpId ?? pkRp.id ?? trueHost);
 
     if (isRpIdValidForHost(requested, trueHost)) {
       return { rpId: requested };

@@ -20,6 +20,9 @@ function isDomain(host: string): boolean {
  * co.uk) is never an RP ID: a passkey scoped to it would be offered to
  * every site under that suffix.
  *
+ * An empty RP ID is not the host either: the page asked for an RP ID, and
+ * none is valid.
+ *
  * The registrable domain comes from baseDomain(), which knows the common
  * two-level public suffixes but not the full Public Suffix List. A suffix
  * it does not know (github.io, say) is treated as registrable, which can
@@ -27,7 +30,10 @@ function isDomain(host: string): boolean {
  * page claim an RP ID outside its own host's parents.
  */
 export function isRpIdValidForHost(rpId: string, host: string): boolean {
-  const id = rpId.toLowerCase();
+  // Compared as given, like Chrome: an RP ID that differs from the host only
+  // in case is refused, since its SHA-256 (the rpIdHash) is not the one the
+  // relying party's server checks for.
+  const id = rpId;
   const page = host.toLowerCase();
   if (id === page) {
     return id.length > 0;
