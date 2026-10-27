@@ -485,8 +485,8 @@ test('legacy sync salts are removed from mobile stored configuration', () => {
 });
 
 // Relays that never open on their own; the test drives open/close by hand.
-function unreachableRelays() {
-  const e = env(browserCode);
+function unreachableRelays(code = browserCode) {
+  const e = env(code);
   const sockets = [];
   e.context.WebSocket = class {
     static CONNECTING = 0;
@@ -504,8 +504,8 @@ function unreachableRelays() {
     }
   };
   e.storage.set('custom_relays', ['wss://a.test', 'wss://b.test']);
-  const s = new e.api.SyncService();
-  s.log = () => {};
+  const s = e.api.SyncService ? new e.api.SyncService() : null;
+  if (s) s.log = () => {};
   const fire = (delay) => {
     for (const [id, t] of [...e.timers]) {
       if (delay === undefined || t.delay === delay) {
@@ -616,6 +616,46 @@ test('a restarted service worker keeps the persisted sync status', async () => {
   assert.equal(stored.lastSyncSuccess, 1234);
   assert.equal(stored.lastSyncAttempt, 5678);
   assert.equal(stored.connectionStatus, 'connected');
+});
+
+function syncOwner() {
+  const relays = unreachableRelays(backgroundCode);
+  const owner = Object.create(relays.e.api.BackgroundService.prototype);
+  owner.vaultJobs = Promise.resolve();
+  owner.syncStatus = { pendingChanges: 0, lastError: 'Relay rejected update' };
+  owner.loadPasskeys = async () => [passkey];
+  const { seedHash, ...publicConfig } = config;
+  relays.e.storage.set('sync_config', publicConfig);
+  return { ...relays, owner, seedHash };
+}
+
+test('sync now while offline does not report a healthy connection', async () => {
+  const { owner, e } = syncOwner();
+  // A PIN-protected vault keeps the seed out of raw storage; locked, it has none.
+  await owner.triggerSync();
+  const stored = e.storage.get('sync_status');
+  assert.notEqual(stored.connectionStatus, 'connected');
+  assert.equal(stored.lastError, 'Relay rejected update');
+  assert.equal(stored.pendingChanges, 1);
+});
+
+test('sync now reconnects a PIN-protected vault from its encrypted seed', async () => {
+  const { owner, e, live, settle, seedHash } = syncOwner();
+  owner.resolveSyncSeedHash = async (stored) => {
+    assert.equal(stored.seedHash, undefined);
+    return seedHash;
+  };
+  await settle(owner.triggerSync());
+  assert.equal(live().length, 2, 'triggerSync must start the relays with the unlocked seed');
+  assert.equal(e.storage.get('sync_status').connectionStatus, 'disconnected');
+
+  const [ws] = live();
+  ws.readyState = 1;
+  ws.onopen();
+  await owner.triggerSync();
+  const stored = e.storage.get('sync_status');
+  assert.equal(stored.connectionStatus, 'connected');
+  assert.equal(stored.lastError, null);
 });
 
 test('a stalled sync request does not block a passkey lookup', async () => {

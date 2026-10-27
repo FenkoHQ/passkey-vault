@@ -421,7 +421,9 @@ class BackgroundService {
           config.deviceName || undefined,
           this.syncVaultAdapter()
         );
-        await this.updateSyncStatus({ connectionStatus: 'connected' });
+        await this.updateSyncStatus({
+          connectionStatus: syncService.getStatus().connected ? 'connected' : 'disconnected',
+        });
         logger.info('Sync service started');
       }
     } catch (error: unknown) {
@@ -462,10 +464,14 @@ class BackgroundService {
           if (JSON.stringify(current) !== JSON.stringify(snapshot)) {
             return;
           }
+          // A relay accepted the snapshot, also when the socket reconnected
+          // on its own after triggerSync had reported it disconnected.
           await this.updateSyncStatus({
             lastSyncSuccess: Date.now(),
             pendingChanges: 0,
             syncedPasskeyCount: current.passkeys.length,
+            connectionStatus: 'connected',
+            lastError: null,
           });
         }),
       mergeRemote: (remotePasskeys, remoteTotpEntries, sourceDeviceId, remoteDeletions = []) =>
@@ -1751,11 +1757,13 @@ class BackgroundService {
 
       const syncStatus = syncService.getStatus();
       if (!syncStatus.connected) {
-        if (config.chainId && config.deviceId && config.seedHash) {
+        // A PIN-protected vault keeps the seed only in the encrypted store.
+        const seedHash = await this.resolveSyncSeedHash(config);
+        if (config.chainId && config.deviceId && seedHash) {
           await syncService.initialize(
             config.chainId,
             config.deviceId,
-            config.seedHash,
+            seedHash,
             config.deviceName || undefined,
             this.syncVaultAdapter()
           );
@@ -1767,6 +1775,17 @@ class BackgroundService {
         (await loadTotpEntries()) as SyncTotpEntry[]
       );
       await syncService.requestSync();
+
+      // Both calls return quietly when no relay is open, and initialize()
+      // gives up waiting after a grace period. Report what actually happened.
+      if (!syncService.getStatus().connected) {
+        await this.updateSyncStatus({
+          connectionStatus: 'disconnected',
+          localPasskeyCount: passkeys.length,
+        });
+        this.logSync('SYNC_NOT_CONNECTED', { passkeyCount: passkeys.length });
+        return;
+      }
 
       await this.updateSyncStatus({
         connectionStatus: 'connected',
