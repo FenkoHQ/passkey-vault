@@ -679,9 +679,10 @@ class ContentScript {
    */
   private setupBackgroundCommunication(): void {
     // Listen for messages from background script
+    // Nothing here answers, so the channel is not held open: a sender that
+    // waits for a reply would otherwise wait until the page unloads.
     chrome.runtime.onMessage.addListener((message) => {
       this.handleBackgroundMessage(message);
-      return true;
     });
   }
 

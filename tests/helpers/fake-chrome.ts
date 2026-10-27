@@ -135,6 +135,14 @@ export class FakeChrome {
   /** Every message the background received, as it arrived (after JSON). */
   readonly sentToBackground: Array<{ message: Record<string, unknown>; sender: MessageSender }> =
     [];
+  /** Every message the background sent to a tab, in order. */
+  readonly sentToTabs: Array<{
+    tabId: number;
+    frameId?: number;
+    message: Record<string, unknown>;
+  }> = [];
+  /** The tab whose frame 0 runs the content script. */
+  contentTab = 7;
   /** The sender a content-script message carries; follows the page URL. */
   contentSender: () => MessageSender = () => ({ id: EXTENSION_ID });
 
@@ -292,10 +300,35 @@ export class FakeChrome {
         },
       },
       tabs: {
-        sendMessage: async (_tabId: number, message: unknown) => {
-          for (const listener of self.contentListeners) {
-            listener(clone(message), { id: EXTENSION_ID }, () => undefined);
+        /**
+         * To the page's content script, which runs in frame 0 of tab
+         * `contentTab`; any other tab or frame has no receiver.
+         */
+        sendMessage: (tabId: number, message: unknown, options?: { frameId?: number }) => {
+          const frameId = options?.frameId;
+          self.sentToTabs.push({ tabId, frameId, message: clone(message) as any });
+          if (
+            tabId !== self.contentTab ||
+            (frameId !== undefined && frameId !== 0) ||
+            self.contentListeners.length === 0
+          ) {
+            return Promise.reject(new Error(NO_RECEIVER));
           }
+          return new Promise((resolve) => {
+            let settled = false;
+            const sendResponse = (response?: unknown) => {
+              if (settled) return;
+              settled = true;
+              resolve(clone(response));
+            };
+            let keepOpen = false;
+            for (const listener of [...self.contentListeners]) {
+              if (listener(clone(message), { id: EXTENSION_ID }, sendResponse) === true) {
+                keepOpen = true;
+              }
+            }
+            if (!keepOpen) sendResponse(undefined);
+          });
         },
       },
     };

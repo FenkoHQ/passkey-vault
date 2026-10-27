@@ -199,6 +199,7 @@ export function setupVault(initialUrl = 'https://example.com/login'): Vault {
       chrome.local.seed(seed);
       chrome.sessionArea.seed({});
       chrome.sentToBackground.length = 0;
+      chrome.sentToTabs.length = 0;
       posted.length = 0;
       vault.user = defaultUser();
       native.reset();

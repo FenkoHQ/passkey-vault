@@ -543,6 +543,7 @@ const en: TranslationMap = {
   pageCreatePasskeyTitle: 'Create a Passkey?',
   pageCreatePasskeyMsg: 'Create a passkey for {user} on {rp}?',
   pageCreate: 'Create',
+  dialogInactive: 'This request is no longer active.',
 };
 
 const ru: TranslationMap = {

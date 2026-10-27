@@ -107,6 +107,13 @@ async function buildForTarget(browserTarget) {
 
     await esbuild.build({
       ...commonOptions,
+      entryPoints: ['src/ui/vault-dialog-page.ts'],
+      outfile: `${distDir}/vault-dialog.js`,
+    });
+    console.log('  ✅ vault-dialog.js');
+
+    await esbuild.build({
+      ...commonOptions,
       entryPoints: ['src/ui/import.ts'],
       outfile: `${distDir}/import.js`,
     });
@@ -158,7 +165,7 @@ async function buildForTarget(browserTarget) {
   if (isFirefox) {
     manifest.background.scripts = ['background.js'];
     manifest.content_scripts[0].js = ['content.js'];
-    manifest.web_accessible_resources[0].resources = ['webauthn-inject.js'];
+    manifest.web_accessible_resources[0].resources = ['webauthn-inject.js', 'vault-dialog.html'];
   } else {
     manifest.background.service_worker = 'background.js';
     manifest.content_scripts[0].js = ['content.js'];
@@ -214,6 +221,12 @@ async function buildForTarget(browserTarget) {
   if (fs.existsSync('src/ui/popup.css')) {
     fs.copyFileSync('src/ui/popup.css', `${distDir}/popup.css`);
     console.log('  ✅ popup.css');
+  }
+
+  // The ceremony dialog: an extension page the content script frames.
+  for (const file of ['vault-dialog.html', 'vault-dialog.css']) {
+    fs.copyFileSync(path.join('src/ui', file), path.join(distDir, file));
+    console.log(`  ✅ ${file}`);
   }
 
   if (fs.existsSync('src/ui/import.html')) {

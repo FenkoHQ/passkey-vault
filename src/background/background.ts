@@ -56,6 +56,8 @@ import { serializeClientData } from './client-data';
 import { acceptsEs256 } from '../utils/algorithms';
 import { isRpIdValidForHost } from '../utils/rp-id';
 import { hasStringId, wellFormedRecords } from '../utils/records';
+import { DIALOG_MESSAGES, isVaultDialogSender } from '../utils/vault-dialog';
+import { DialogBroker } from './dialog-broker';
 import { needsSiteIcon, saveSiteIcon, clearSiteIcons } from '../site-icons';
 import {
   selectPrfEval,
@@ -199,6 +201,8 @@ interface ExtensionMessage {
  * reads, exports, changes or deletes the vault or its settings.
  */
 const WEB_PAGE_MESSAGES = new Set([
+  DIALOG_MESSAGES.OPEN,
+  DIALOG_MESSAGES.CANCEL,
   'CREATE_PASSKEY',
   'DISCARD_REGISTRATION',
   'GET_PASSKEY',
@@ -252,6 +256,7 @@ async function bindToWebPage(
   const payload: MessagePayload = { ...(message.payload || {}) };
 
   switch (message.type) {
+    case DIALOG_MESSAGES.OPEN:
     case 'CREATE_PASSKEY':
     case 'GET_PASSKEY': {
       const publicKey = { ...((payload.publicKey as MessagePayload) || {}) };
@@ -317,6 +322,16 @@ class BackgroundService {
     string,
     { requester: string; credentialId: string; at: number }
   >();
+
+  /** The vault's ceremony dialogs, and the approvals they give. */
+  private dialogs = new DialogBroker({
+    assertUnlocked: async () => {
+      if ((await secureStorage.isSetup()) && !secureStorage.isStorageUnlocked()) {
+        throw new VaultLockedError();
+      }
+    },
+    passkeysFor: async (rpId) => (await this.loadPasskeys()).filter((p) => p.rpId === rpId),
+  });
 
   private withVault<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.vaultJobs.then(operation);
@@ -747,8 +762,19 @@ class BackgroundService {
     sender: chrome.runtime.MessageSender
   ): Promise<unknown> {
     await this.sessionRestored;
+    // The dialog page is an extension page that web pages embed, so it gets
+    // the dialog messages and nothing else an extension page could ask for.
+    if (isVaultDialogSender(sender, chrome.runtime.id)) {
+      return this.dialogs.handleDialogMessage(received as unknown as MessagePayload, sender);
+    }
     const message = isExtensionPage(sender) ? received : await bindToWebPage(received, sender);
     const { type } = message;
+    if (type === DIALOG_MESSAGES.OPEN) {
+      return this.dialogs.open(message, sender);
+    }
+    if (type === DIALOG_MESSAGES.CANCEL) {
+      return this.dialogs.cancel(message);
+    }
 
     const lockedTypes = new Set([
       'CREATE_PASSKEY',
