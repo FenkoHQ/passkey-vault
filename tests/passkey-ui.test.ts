@@ -1,0 +1,85 @@
+/**
+ * Only one in-page dialog shows at a time. A dialog that is replaced or
+ * cancelled must still answer its caller, or that request hangs until the
+ * page gives up on it.
+ */
+
+const chromeMock = (window as unknown as { chrome: Record<string, any> }).chrome;
+chromeMock.storage.local.get.mockResolvedValue({});
+chromeMock.storage.onChanged = { addListener: jest.fn() };
+
+type VaultWindow = {
+  showPasskeySelector: (
+    passkeys: unknown[],
+    rpId: string,
+    signal?: AbortSignal
+  ) => Promise<{ action: string }>;
+  showPasskeyCreateConfirm: (rpId: string, user: string, signal?: AbortSignal) => Promise<boolean>;
+};
+const vault = window as unknown as VaultWindow;
+
+const PASSKEY = {
+  id: 'cred-1',
+  credentialId: 'cred-1',
+  userName: 'alice',
+  userDisplayName: 'Alice',
+  rpId: 'example.com',
+  createdAt: 0,
+};
+
+const cards = () => document.querySelectorAll('.pkv-notification-container').length;
+
+beforeAll(() => {
+  require('../src/ui/passkey-ui');
+});
+
+afterEach(() => {
+  document.body.innerHTML = '';
+});
+
+describe('in-page dialogs', () => {
+  it('settles a replaced create dialog as declined', async () => {
+    const first = vault.showPasskeyCreateConfirm('example.com', 'alice');
+    const controller = new AbortController();
+    const second = vault.showPasskeyCreateConfirm('example.com', 'bob', controller.signal);
+
+    await expect(first).resolves.toBe(false);
+    expect(cards()).toBe(1);
+
+    controller.abort();
+    await expect(second).resolves.toBe(false);
+  });
+
+  it('settles a replaced selector as cancelled', async () => {
+    const first = vault.showPasskeySelector([PASSKEY], 'example.com');
+    const controller = new AbortController();
+    const second = vault.showPasskeyCreateConfirm('example.com', 'bob', controller.signal);
+
+    await expect(first).resolves.toEqual({ action: 'cancel' });
+    expect(cards()).toBe(1);
+
+    controller.abort();
+    await expect(second).resolves.toBe(false);
+  });
+
+  it('closes the dialog when its request is cancelled', async () => {
+    const controller = new AbortController();
+    const shown = vault.showPasskeySelector([PASSKEY], 'example.com', controller.signal);
+    expect(cards()).toBe(1);
+
+    controller.abort();
+
+    await expect(shown).resolves.toEqual({ action: 'cancel' });
+    expect(cards()).toBe(0);
+  });
+
+  it('does not open for a request that was already cancelled', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      vault.showPasskeyCreateConfirm('example.com', 'alice', controller.signal)
+    ).resolves.toBe(false);
+    expect(cards()).toBe(0);
+  });
+});
