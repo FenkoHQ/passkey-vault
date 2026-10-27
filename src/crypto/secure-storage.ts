@@ -32,6 +32,13 @@ export interface SecureStorageConfig {
   enabled: boolean;
 }
 
+/** The decrypted vault handed over when the master password is removed. */
+export interface DecryptedVault {
+  passkeys: Record<string, unknown>[];
+  totpEntries: Record<string, unknown>[];
+  syncConfig: SecureStorageConfig | null;
+}
+
 export interface EncryptedData {
   data: string;
   iv: string;
@@ -461,15 +468,31 @@ export class SecureStorage {
   }
 
   /**
-   * Remove the master password: verify the current one, then drop the
-   * encrypted layer (check value, salt, encrypted blobs) so the vault is no
-   * longer locked. Raw display copies in chrome.storage.local are untouched.
+   * Remove the master password: verify the current one, hand the decrypted
+   * vault to `persistPlaintext` to write the cleartext copy, and only once that
+   * write has succeeded drop the encrypted layer (check value, salt, blobs).
+   * A failure or a stopped worker before then leaves the PIN'd vault intact.
+   * If only the final removal fails, the vault stays PIN'd and locked, and the
+   * next unlock folds the cleartext copy back in and deletes it.
    */
-  async removeMasterPassword(currentPassword: string): Promise<boolean> {
+  async removeMasterPassword(
+    currentPassword: string,
+    persistPlaintext: (vault: DecryptedVault) => Promise<void>
+  ): Promise<boolean> {
     const verified = await this.initialize(currentPassword);
     if (!verified) {
       return false;
     }
+    // Strict reads: a blob that fails to decrypt aborts the removal rather
+    // than being replaced by an empty cleartext list and then deleted.
+    const syncConfig = await this.readEncrypted<SecureStorageConfig>(
+      STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG
+    );
+    await persistPlaintext({
+      passkeys: (await this.readEncrypted(STORAGE_KEYS.ENCRYPTED_PASSKEYS)) || [],
+      totpEntries: (await this.readEncrypted(STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES)) || [],
+      syncConfig: syncConfig ? cleanSyncConfig(syncConfig) : null,
+    });
     this.lock();
     await chrome.storage.local.remove([
       STORAGE_KEYS.MASTER_KEY_CHECK,
@@ -479,6 +502,16 @@ export class SecureStorage {
       STORAGE_KEYS.ENCRYPTION_SALT,
     ]);
     return true;
+  }
+
+  /** Decrypt a stored blob; null when absent, throws when it does not decrypt. */
+  private async readEncrypted<T = Record<string, unknown>[]>(
+    storageKey: string
+  ): Promise<T | null> {
+    this.ensureUnlocked();
+    const stored = (await chrome.storage.local.get(storageKey))[storageKey];
+    if (!stored) return null;
+    return JSON.parse(decryptData(stored, this.encryptionKey!)) as T;
   }
 
   /**

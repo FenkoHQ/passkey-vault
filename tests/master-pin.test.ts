@@ -199,3 +199,96 @@ describe('setting up a master PIN', () => {
     expect((await send({ type: 'LIST_PASSKEYS' })).passkeys).toEqual([passkey]);
   });
 });
+
+const ENCRYPTED_VAULT_KEYS = [
+  'passext_master_key_check',
+  'passext_encryption_salt',
+  'passext_encrypted_passkeys',
+];
+
+describe('removing the master PIN', () => {
+  it('moves the vault back to cleartext storage', async () => {
+    storage.passkeys = [passkey];
+    const { send } = await loadBackground();
+    await send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+
+    const removed = await send({
+      type: 'REMOVE_MASTER_PASSWORD',
+      payload: { currentPassword: PIN },
+    });
+
+    expect(removed.success).toBe(true);
+    for (const key of ENCRYPTED_VAULT_KEYS) expect(storage[key]).toBeUndefined();
+    expect(storage.passkeys).toEqual([passkey]);
+    expect((await send({ type: 'IS_SECURE_STORAGE_UNLOCKED' })).isSetup).toBe(false);
+    expect((await send({ type: 'LIST_PASSKEYS' })).passkeys).toEqual([passkey]);
+  });
+
+  it('keeps the encrypted vault when the cleartext write fails', async () => {
+    storage.passkeys = [passkey];
+    const { send } = await loadBackground();
+    await send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+    const local = chrome.storage.local as unknown as Record<string, jest.Mock>;
+    const write = local.set.getMockImplementation()!;
+    local.set.mockImplementation(async (items: StorageData) => {
+      if ('passkeys' in items) throw new Error('QUOTA_BYTES quota exceeded');
+      return write(items);
+    });
+
+    const removed = await send({
+      type: 'REMOVE_MASTER_PASSWORD',
+      payload: { currentPassword: PIN },
+    });
+
+    expect(removed.success).toBe(false);
+    for (const key of ENCRYPTED_VAULT_KEYS) expect(storage[key]).toBeDefined();
+    local.set.mockImplementation(write);
+    expect(await unlocksWith(send, PIN)).toBe(true);
+    expect((await send({ type: 'LIST_PASSKEYS' })).passkeys).toEqual([passkey]);
+  });
+
+  it('recovers on the next unlock when only the final removal fails', async () => {
+    storage.passkeys = [passkey];
+    const { send } = await loadBackground();
+    await send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+    const local = chrome.storage.local as unknown as Record<string, jest.Mock>;
+    const drop = local.remove.getMockImplementation()!;
+    local.remove.mockImplementation(async (keys: string | string[]) => {
+      if ([keys].flat().includes('passext_master_key_check')) throw new Error('IO error');
+      return drop(keys);
+    });
+
+    const removed = await send({
+      type: 'REMOVE_MASTER_PASSWORD',
+      payload: { currentPassword: PIN },
+    });
+
+    expect(removed.success).toBe(false);
+    local.remove.mockImplementation(drop);
+    expect((await send({ type: 'IS_SECURE_STORAGE_UNLOCKED' })).isUnlocked).toBe(false);
+    expect(
+      (await send({ type: 'UNLOCK_SECURE_STORAGE', payload: { password: PIN } })).success
+    ).toBe(true);
+    expect(storage.passkeys).toBeUndefined();
+    expect((await send({ type: 'LIST_PASSKEYS' })).passkeys).toEqual([passkey]);
+  });
+
+  it('keeps the encrypted vault when a blob does not decrypt', async () => {
+    storage.passkeys = [passkey];
+    const { send } = await loadBackground();
+    await send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+    const blob = storage.passext_encrypted_passkeys as { data: string };
+    const damaged = { ...blob, data: blob.data.slice(4) + 'AAAA' };
+    storage.passext_encrypted_passkeys = damaged;
+
+    const removed = await send({
+      type: 'REMOVE_MASTER_PASSWORD',
+      payload: { currentPassword: PIN },
+    });
+
+    expect(removed.success).toBe(false);
+    expect(storage.passext_encrypted_passkeys).toEqual(damaged);
+    expect(storage.passext_master_key_check).toBeDefined();
+    expect(storage.passkeys).toBeUndefined();
+  });
+});

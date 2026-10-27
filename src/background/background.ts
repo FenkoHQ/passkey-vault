@@ -1797,18 +1797,18 @@ class BackgroundService {
       if (!currentPassword) {
         return { success: false, error: 'Current PIN is required' };
       }
-      const passkeys = await secureStorage.getPasskeys();
-      const totpEntries = await secureStorage.getTotpEntries();
-      const config = await secureStorage.getSyncConfig();
-      const removed = await secureStorage.removeMasterPassword(currentPassword);
+      // The cleartext copy is written before the encrypted vault is removed,
+      // so an interrupted removal always leaves at least one of them.
+      const removed = await secureStorage.removeMasterPassword(currentPassword, (vault) =>
+        chrome.storage.local.set({
+          [PASSKEY_STORAGE_KEY]: vault.passkeys,
+          totp_entries: vault.totpEntries,
+          ...(vault.syncConfig ? { [SYNC_CONFIG_KEY]: vault.syncConfig } : {}),
+        })
+      );
       if (!removed) {
         return { success: false, error: 'Failed to remove PIN — check your current PIN' };
       }
-      await chrome.storage.local.set({
-        [PASSKEY_STORAGE_KEY]: passkeys,
-        totp_entries: totpEntries,
-        ...(config ? { [SYNC_CONFIG_KEY]: config } : {}),
-      });
       return { success: true, message: 'Master PIN removed' };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
