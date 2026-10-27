@@ -17,6 +17,13 @@ export interface PortableOtp {
   digits: number;
   period: number;
   counter: number;
+  /**
+   * Set only by Fenko's own backup parser, so a restore keeps the record's
+   * identity (sync and deletion tombstones key on it) and timestamps.
+   */
+  id?: string;
+  createdAt?: number;
+  lastUsed?: number;
 }
 
 /**
@@ -36,6 +43,14 @@ export interface PortablePasskey {
   privateKey: unknown;
   counter: number;
   createdAt: number;
+  /**
+   * Set only by Fenko's own backup parser. `id` keeps the record's sync
+   * identity; `prfKey` is the random WebAuthn PRF secret minted at
+   * registration, which cannot be re-derived, so losing it changes every PRF
+   * output the site sees.
+   */
+  id?: string;
+  prfKey?: string;
 }
 
 /** What a parser hands back: everything it understood plus what it skipped. */
