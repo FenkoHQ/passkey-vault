@@ -54,6 +54,7 @@ import {
 import { verifyRelatedOrigin } from './related-origins';
 import { serializeClientData } from './client-data';
 import { acceptsEs256 } from '../utils/algorithms';
+import { isRpIdValidForHost } from '../utils/rp-id';
 import { needsSiteIcon, saveSiteIcon, clearSiteIcons } from '../site-icons';
 import {
   selectPrfEval,
@@ -183,6 +184,109 @@ interface ExtensionMessage {
   wordCount?: number;
   mnemonic?: string;
   deviceId?: string;
+}
+
+/**
+ * What a content script may ask for. A content script runs in the web
+ * page's renderer process, which a browser exploit can take over and use to
+ * send any message the content script could, so these are the only
+ * messages accepted from a web page: the ceremony itself, and nothing that
+ * reads, exports, changes or deletes the vault or its settings.
+ */
+const WEB_PAGE_MESSAGES = new Set([
+  'CREATE_PASSKEY',
+  'GET_PASSKEY',
+  'LIST_PASSKEYS_FOR_RP',
+  'VERIFY_RELATED_ORIGIN',
+  'NEEDS_SITE_ICON',
+  'SAVE_SITE_ICON',
+  'ACTIVATE_UI',
+]);
+
+/** The popup, options and other pages bundled with the extension. */
+function isExtensionPage(sender: chrome.runtime.MessageSender): boolean {
+  return typeof sender?.url === 'string' && sender.url.startsWith(chrome.runtime.getURL(''));
+}
+
+/** The web origin Chrome says a message came from, or null if it has none. */
+function webOrigin(sender: chrome.runtime.MessageSender): string | null {
+  try {
+    const origin = sender.origin || new URL(sender.url || '').origin;
+    return /^https?:\/\//.test(origin) ? origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Refuse an RP ID the sending origin may not use, as the content script does. */
+async function requireRpIdFor(rpId: string, origin: string): Promise<void> {
+  if (isRpIdValidForHost(rpId, new URL(origin).hostname)) return;
+  if (await verifyRelatedOrigin(rpId, origin)) return;
+  throw new Error(`RP ID ${rpId} is not valid for ${origin}`);
+}
+
+/**
+ * Check a content script's message against Chrome's account of the sender,
+ * and rewrite what the page could otherwise lie about: the origin written
+ * into clientDataJSON, the RP ID it signs for, and whether it runs in a
+ * cross-origin frame. Throws for anything a web page may not ask.
+ */
+async function bindToWebPage(
+  message: ExtensionMessage,
+  sender: chrome.runtime.MessageSender
+): Promise<ExtensionMessage> {
+  if (!WEB_PAGE_MESSAGES.has(message.type)) {
+    throw new Error(`${message.type} is not available to web pages`);
+  }
+  const origin = webOrigin(sender);
+  if (!origin) {
+    throw new Error('Message from an unknown sender');
+  }
+  const host = new URL(origin).hostname;
+  const payload: MessagePayload = { ...(message.payload || {}) };
+
+  switch (message.type) {
+    case 'CREATE_PASSKEY':
+    case 'GET_PASSKEY': {
+      const publicKey = { ...((payload.publicKey as MessagePayload) || {}) };
+      const rp = publicKey.rp as Record<string, unknown> | undefined;
+      const rpId = String(publicKey.rpId || rp?.id || host);
+      await requireRpIdFor(rpId, origin);
+      publicKey.rpId = rpId;
+      payload.publicKey = publicKey;
+      payload.origin = origin;
+      // A frame whose origin differs from the tab's top-level page is
+      // cross-origin whatever the page claims.
+      let tabOrigin: string | null = null;
+      try {
+        tabOrigin = sender.tab?.url ? new URL(sender.tab.url).origin : null;
+      } catch {
+        tabOrigin = null;
+      }
+      if (sender.frameId !== 0 && tabOrigin && tabOrigin !== origin) {
+        payload.crossOrigin = true;
+        payload.topOrigin = tabOrigin;
+      } else if (sender.frameId === 0) {
+        payload.crossOrigin = false;
+        delete payload.topOrigin;
+      }
+      break;
+    }
+    case 'LIST_PASSKEYS_FOR_RP':
+      await requireRpIdFor(String(payload.rpId || ''), origin);
+      break;
+    case 'NEEDS_SITE_ICON':
+    case 'SAVE_SITE_ICON':
+      // Only a page of the site itself may supply its icon.
+      if (!isRpIdValidForHost(String(payload.rpId || ''), host)) {
+        throw new Error('A page may only supply its own site icon');
+      }
+      break;
+    case 'VERIFY_RELATED_ORIGIN':
+      payload.origin = origin;
+      break;
+  }
+  return { ...message, payload };
 }
 
 /**
@@ -600,18 +704,18 @@ class BackgroundService {
 
   private setupMessageHandlers(): void {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      void sender;
-      this.handleMessage(message, sendResponse);
+      this.handleMessage(message, sendResponse, sender);
       return true;
     });
   }
 
   private async handleMessage(
     message: ExtensionMessage,
-    sendResponse: (response?: unknown) => void
+    sendResponse: (response?: unknown) => void,
+    sender: chrome.runtime.MessageSender
   ): Promise<void> {
     try {
-      const response = await this.routeMessage(message);
+      const response = await this.routeMessage(message, sender);
       sendResponse(response);
     } catch (error: unknown) {
       const message_str = error instanceof Error ? error.message : String(error);
@@ -621,9 +725,13 @@ class BackgroundService {
     }
   }
 
-  private async routeMessage(message: ExtensionMessage): Promise<unknown> {
-    const { type } = message;
+  private async routeMessage(
+    received: ExtensionMessage,
+    sender: chrome.runtime.MessageSender
+  ): Promise<unknown> {
     await this.sessionRestored;
+    const message = isExtensionPage(sender) ? received : await bindToWebPage(received, sender);
+    const { type } = message;
 
     const lockedTypes = new Set([
       'CREATE_PASSKEY',
