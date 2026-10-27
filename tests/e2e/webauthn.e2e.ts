@@ -371,18 +371,21 @@ describe('ceremonies through the installed extension', () => {
     });
   });
 
+  // The vault only fetches the file from a name under a real public suffix,
+  // so this uses the IANA documentation domains (served locally) instead of
+  // .test names.
   it('honours a Related Origin Request from the RP’s /.well-known/webauthn', async () => {
     site.routes.set('/.well-known/webauthn', (host) =>
-      host === 'accounts.brand.test'
-        ? [200, 'application/json', JSON.stringify({ origins: ['https://www.brand-shop.test'] })]
+      host === 'accounts.example.com'
+        ? [200, 'application/json', JSON.stringify({ origins: ['https://www.example.net'] })]
         : [404, 'text/plain', 'not found']
     );
-    await page.goto('https://www.brand-shop.test/');
-    const json = creationJSON('accounts.brand.test');
+    await page.goto('https://www.example.net/');
+    const json = creationJSON('accounts.example.com');
 
     const result = await create(page, json);
 
-    await verifyCreated(result, json, 'https://www.brand-shop.test', 'accounts.brand.test');
+    await verifyCreated(result, json, 'https://www.example.net', 'accounts.example.com');
     expect(aaguidOf(result.json)).toBe(VAULT_AAGUID);
   });
 

@@ -2,9 +2,9 @@
 // Suffix List (public-suffix-list.ts, both its ICANN and PRIVATE sections).
 //
 // This is the one place the extension decides what a site is: which RP IDs
-// a page may claim (rp-id.ts), how a Related Origin Requests file's origins
-// are counted (related-origins.ts), and which passkeys share a site icon
-// (site-icons). It matches what Chrome's
+// a page may claim (rp-id.ts), which hosts a Related Origin Requests file
+// may be fetched from and how its origins are counted (related-origins.ts),
+// and which passkeys share a site icon (site-icons). It matches what Chrome's
 // WebAuthn uses, net::registry_controlled_domains with
 // INCLUDE_UNKNOWN_REGISTRIES and INCLUDE_PRIVATE_REGISTRIES: a top-level
 // domain the list does not know is its own public suffix, as the list's
@@ -147,4 +147,34 @@ export function registrableDomain(host: string): string | null {
 export function registrableLabel(host: string): string | null {
   const domain = registrableDomain(host);
   return domain === null ? null : domain.split('.')[0];
+}
+
+// Special-use names (RFC 6761, 6762, 7686, 8375, 9476, and ICANN's
+// .internal): never a public website, even when the list has a rule for
+// them (it lists arpa and home.arpa).
+const SPECIAL_USE_TLDS = new Set([
+  'alt',
+  'arpa',
+  'example',
+  'internal',
+  'invalid',
+  'local',
+  'localhost',
+  'onion',
+  'test',
+]);
+
+/**
+ * Whether a host is a name on the public Internet: a domain name under a
+ * suffix the Public Suffix List actually lists (not the default rule for an
+ * unknown top-level domain such as .lan or .corp), with a registrable
+ * domain of its own, outside the special-use names. Used before the
+ * extension fetches from a host a web page named.
+ */
+export function isPublicHost(host: string): boolean {
+  if (host !== host.toLowerCase()) return false;
+  const found = publicSuffix(host);
+  if (!found || !found.listed) return false;
+  if (SPECIAL_USE_TLDS.has(host.slice(host.lastIndexOf('.') + 1))) return false;
+  return registrableDomain(host) !== null;
 }

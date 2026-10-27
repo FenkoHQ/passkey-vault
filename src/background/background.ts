@@ -237,7 +237,11 @@ function webOrigin(sender: chrome.runtime.MessageSender): string | null {
  * whole suffix list into every page.
  */
 async function mayUseRpId(rpId: string, origin: string): Promise<boolean> {
-  return isRpIdValidForHost(rpId, new URL(origin).hostname) || verifyRelatedOrigin(rpId, origin);
+  if (isRpIdValidForHost(rpId, new URL(origin).hostname)) return true;
+  // A locked vault can neither list nor create passkeys, so it has no use
+  // for a Related Origin Request: no fetch for a page while it is locked.
+  if ((await secureStorage.isSetup()) && !secureStorage.isStorageUnlocked()) return false;
+  return verifyRelatedOrigin(rpId, origin);
 }
 
 /** Refuse an RP ID the sending origin may not use. */

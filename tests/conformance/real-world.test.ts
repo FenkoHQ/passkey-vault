@@ -66,16 +66,16 @@ beforeAll(async () => {
       return {
         ok: false,
         status: 404,
-        headers: { get: () => 'text/html' },
-        json: async () => null,
+        headers: { get: (name: string) => (name === 'content-type' ? 'text/html' : null) },
+        text: async () => 'not found',
       };
     }
-    const body = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const body = fs.readFileSync(file, 'utf8');
     return {
       ok: true,
       status: 200,
-      headers: { get: () => 'application/json' },
-      json: async () => body,
+      headers: { get: (name: string) => (name === 'content-type' ? 'application/json' : null) },
+      text: async () => body,
     };
   });
   await vaultReady(vault);

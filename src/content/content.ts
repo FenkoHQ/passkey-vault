@@ -27,11 +27,11 @@ interface DomainRules {
 }
 
 /**
- * What a request's RP ID resolved to: an RP ID the page may use, a request
- * the vault must refuse outright (insecure or opaque origin), or one whose
- * RP ID does not fit this page and is left to the browser.
+ * The RP ID a request asks for, not yet checked against the page (see
+ * mayUseRpId), or a request the vault must refuse outright (insecure or
+ * opaque origin).
  */
-type RpIdResolution = { rpId: string } | { refused: true } | { foreign: true };
+type RpIdResolution = { rpId: string } | { refused: true };
 
 type PasskeySelectorResult =
   | { action: 'use'; id: string }
@@ -157,25 +157,16 @@ class ContentScript {
   }
 
   /**
-   * Resolve the RP ID for a request against the *real* page origin.
+   * Bind a request to the *real* page origin and read the RP ID it asks for.
    *
    * SECURITY: the page-supplied `payload.origin` and `publicKey.rpId` cannot be
    * trusted — any script in the page can post a forged message with an
    * arbitrary origin/rpId. The content script runs in the isolated world, so
    * `window.location.origin` is the authoritative caller origin. We overwrite
-   * the payload origin with it and require the requested RP ID to be the
-   * effective domain or a registrable suffix of it (the same rule the native
-   * WebAuthn client enforces).
-   *
-   * This does not change behaviour for legitimate pages: a real registration
-   * already used the true origin, so the stored rpId still resolves.
-   *
-   * When the RP ID is not same-site with the page, we fall back to WebAuthn
-   * Related Origin Requests: some RPs deliberately use a cross-site RP ID (e.g.
-   * Meta's accounts.meta.com on accountscenter.facebook.com) and authorize it
-   * via their /.well-known/webauthn file. An RP ID that still does not fit is
-   * left to the browser, which throws the SecurityError the site expects, or
-   * honours a related origin it could verify and we could not.
+   * the payload origin with it. Whether the RP ID fits that origin is asked of
+   * the background (mayUseRpId) once the domain rules say the vault handles
+   * the site, so a site the user excluded never causes a Related Origin
+   * Request fetch.
    */
   private async resolveTrustedRpId(payload: Record<string, unknown>): Promise<RpIdResolution> {
     // WebAuthn is restricted to secure contexts.  The content script also
@@ -210,18 +201,7 @@ class ContentScript {
 
     const pk = payload.publicKey as Record<string, unknown> | undefined;
     const pkRp = (pk?.rp as Record<string, string>) || {};
-    const requested = String(pk?.rpId ?? pkRp.id ?? trueHost);
-
-    // Same-site by the Public Suffix List, or authorized by the RP's Related
-    // Origin Requests file (WebAuthn L3 §5.11). The background decides both:
-    // it holds the suffix list, which is too big to load into every page,
-    // and fetches /.well-known/webauthn outside the page's CSP.
-    if (await this.mayUseRpId(requested)) {
-      return { rpId: requested };
-    }
-    // Not an error: the browser decides, and throws SecurityError if it must.
-    logger.debug('RP ID', requested, 'not valid for', trueOrigin, '- leaving it to the browser');
-    return { foreign: true };
+    return { rpId: String(pk?.rpId ?? pkRp.id ?? trueHost) };
   }
 
   /**
@@ -250,14 +230,31 @@ class ContentScript {
     return policy.allowsFeature(feature);
   }
 
-  /** Asked of the background, which answers for this frame's real origin. */
+  /**
+   * Whether this page may use the RP ID: same-site by the Public Suffix
+   * List, or authorized by the RP's Related Origin Requests file (WebAuthn
+   * L3 §5.11, e.g. Meta's accounts.meta.com on accountscenter.facebook.com).
+   * The background decides both, for this frame's real origin: it holds the
+   * suffix list, which is too big to load into every page, and fetches
+   * /.well-known/webauthn outside the page's CSP. An RP ID that does not fit
+   * is left to the browser, which throws the SecurityError the site expects,
+   * or honours a related origin it could verify and we could not.
+   */
   private async mayUseRpId(rpId: string): Promise<boolean> {
     try {
       const res = await this.sendMessage({ type: 'CHECK_RP_ID', payload: { rpId } });
-      return res?.allowed === true;
+      if (res?.allowed === true) return true;
     } catch {
-      return false;
+      // Treated as a no: the browser still handles the request.
     }
+    logger.debug(
+      'RP ID',
+      rpId,
+      'not valid for',
+      window.location.origin,
+      '- leaving it to the browser'
+    );
+    return false;
   }
 
   /**
@@ -313,14 +310,6 @@ class ContentScript {
           this.postBlockedResponse('PASSKEY_CREATE_RESPONSE', requestId, t('pagePasskeyError'));
           return;
         }
-        if ('foreign' in resolved) {
-          this.postPassthroughResponse(
-            'PASSKEY_CREATE_RESPONSE',
-            requestId,
-            'RP ID not valid here'
-          );
-          return;
-        }
         if (!this.frameMayUse('publickey-credentials-create', payload.crossOrigin === true)) {
           this.postPassthroughResponse('PASSKEY_CREATE_RESPONSE', requestId, 'Not delegated');
           return;
@@ -333,6 +322,14 @@ class ContentScript {
             'PASSKEY_CREATE_RESPONSE',
             requestId,
             'Domain not intercepted'
+          );
+          return;
+        }
+        if (!(await this.mayUseRpId(rpId))) {
+          this.postPassthroughResponse(
+            'PASSKEY_CREATE_RESPONSE',
+            requestId,
+            'RP ID not valid here'
           );
           return;
         }
@@ -456,10 +453,6 @@ class ContentScript {
           this.postBlockedResponse('PASSKEY_GET_RESPONSE', requestId, t('pagePasskeyError'));
           return;
         }
-        if ('foreign' in resolved) {
-          this.postPassthroughResponse('PASSKEY_GET_RESPONSE', requestId, 'RP ID not valid here');
-          return;
-        }
         if (!this.frameMayUse('publickey-credentials-get', payload.crossOrigin === true)) {
           this.postPassthroughResponse('PASSKEY_GET_RESPONSE', requestId, 'Not delegated');
           return;
@@ -469,6 +462,10 @@ class ContentScript {
 
         if (!this.shouldInterceptDomain(rpId, rules)) {
           this.postPassthroughResponse('PASSKEY_GET_RESPONSE', requestId, 'Domain not intercepted');
+          return;
+        }
+        if (!(await this.mayUseRpId(rpId))) {
+          this.postPassthroughResponse('PASSKEY_GET_RESPONSE', requestId, 'RP ID not valid here');
           return;
         }
 
