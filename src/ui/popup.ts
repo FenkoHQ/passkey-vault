@@ -28,6 +28,9 @@ import { resolveSiteIcon } from '../site-icons';
     createdAt?: number | string;
     counter?: number;
     lastUsed?: number | string;
+    backupEligible?: boolean;
+    backupState?: boolean;
+    backupSource?: string;
     [key: string]: unknown;
   }
 
@@ -735,6 +738,16 @@ import { resolveSiteIcon } from '../site-icons';
           <span class="label">${t('popupKeyId')}</span>
           <span class="value">${popupEscapeHtml(credentialIdShort)}</span>
         </div>
+        <div class="passkey-backup">
+          <label class="passkey-backup-row">
+            <span class="passkey-backup-title">${t('popupSyncedPasskey')}</span>
+            <span class="mini-toggle">
+              <input type="checkbox" class="passkey-backup-toggle" />
+              <span class="mini-toggle-slider"></span>
+            </span>
+          </label>
+          <div class="passkey-backup-hint"></div>
+        </div>
         <div class="passkey-details-actions">
           <button class="btn btn-secondary btn-sm passkey-copy" title="${popupEscapeHtml(t('popupCopyClipboard'))}">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -756,6 +769,8 @@ import { resolveSiteIcon } from '../site-icons';
       copyPasskeyToClipboard(passkey, copyBtn);
     });
 
+    setupBackupToggle(div, passkey);
+
     const expandBtn = div.querySelector('.expand-btn') as HTMLButtonElement;
     const details = div.querySelector('.passkey-details') as HTMLElement;
     expandBtn.addEventListener('click', (e) => {
@@ -772,6 +787,58 @@ import { resolveSiteIcon } from '../site-icons';
     });
 
     return div;
+  }
+
+  /** Where this passkey's backup flags came from, in words. */
+  function backupSourceText(passkey: PopupPasskey): string {
+    switch (passkey.backupSource) {
+      case 'imported':
+        return t('popupBackupImported');
+      case 'created':
+        return t('popupBackupCreated');
+      case 'manual':
+        return t('popupBackupManual');
+      default:
+        return t('popupBackupLegacy');
+    }
+  }
+
+  /**
+   * The "Synced passkey" switch. Sites built on go-webauthn (Teleport, and
+   * others) store whether a passkey is synced and reject a sign-in that
+   * disagrees, so this has to match the app that created the passkey.
+   */
+  function setupBackupToggle(div: HTMLElement, passkey: PopupPasskey): void {
+    const toggle = div.querySelector('.passkey-backup-toggle') as HTMLInputElement;
+    const hint = div.querySelector('.passkey-backup-hint') as HTMLElement;
+    const paint = () => {
+      toggle.checked = passkey.backupEligible === true;
+      hint.textContent = `${backupSourceText(passkey)} ${t('popupBackupHelp')}`;
+    };
+    paint();
+    // Legacy records have no flags of their own until the background stamps
+    // them; leave the switch off-limits rather than guess what they sign with.
+    toggle.disabled = typeof passkey.backupEligible !== 'boolean';
+
+    toggle.addEventListener('click', (e) => e.stopPropagation());
+    toggle.addEventListener('change', async () => {
+      const synced = toggle.checked;
+      toggle.disabled = true;
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: 'SET_PASSKEY_BACKUP',
+          payload: { credentialId: passkey.id, synced },
+        });
+        if (!response?.success) throw new Error(response?.error || 'Update failed');
+        Object.assign(passkey, response.passkey);
+        showNotification(t('popupBackupSaved'));
+      } catch (error) {
+        showNotification(t('popupBackupFailed', { error: (error as Error).message }), 'error');
+      } finally {
+        paint();
+        toggle.disabled = typeof passkey.backupEligible !== 'boolean';
+      }
+    });
   }
 
   /**

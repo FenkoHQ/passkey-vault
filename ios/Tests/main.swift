@@ -62,6 +62,9 @@ for fixture in fixtures {
         let winner = vault.loadPasskeys()[0].toJSON()
         require(winner["label"] as? String == fixture["winner"] as? String, fixture["name"] as! String)
         require(winner["counter"] as? Int == fixture["counter"] as? Int, "fixture counter floor")
+        if let expected = fixture["backupEligible"] as? Bool {
+            require(winner["backupEligible"] as? Bool == expected, "fixture backup flags")
+        }
     }
 }
 print("iOS native snapshot merge: PASS")

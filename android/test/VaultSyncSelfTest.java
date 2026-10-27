@@ -69,6 +69,10 @@ public final class VaultSyncSelfTest {
                 JSONObject winner = ProviderVaultStore.loadSnapshot(context).getJSONArray("passkeys").getJSONObject(0);
                 require(winner.getString("label").equals(fixture.getString("winner")), fixture.getString("name"));
                 require(winner.getLong("counter") == fixture.getLong("counter"), "fixture counter floor");
+                if (fixture.has("backupEligible")) {
+                    require(winner.opt("backupEligible") instanceof Boolean
+                            && winner.getBoolean("backupEligible") == fixture.getBoolean("backupEligible"), "fixture backup flags");
+                }
             }
         }
         ProviderVaultStore.resetVault(context);
