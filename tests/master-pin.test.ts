@@ -6,6 +6,13 @@
  */
 
 import { generateMnemonic } from '../src/crypto/bip39';
+import {
+  loadBackground,
+  unlocksWith,
+  useFakeStorage,
+  type Respond,
+  type StorageData,
+} from './helpers/pin-background';
 
 jest.mock('../src/sync/sync-service', () => ({
   syncService: {
@@ -18,12 +25,6 @@ jest.mock('../src/sync/sync-service', () => ({
     clearDebugLogs: jest.fn(),
   },
 }));
-
-type StorageData = Record<string, unknown>;
-type Reply = { success: boolean; [field: string]: unknown };
-type Respond = (message: Record<string, unknown>) => Promise<Reply>;
-type SecureStorageModule = typeof import('../src/crypto/secure-storage');
-type SyncServiceModule = { syncService: Record<string, jest.Mock> };
 
 const PIN = '1234';
 const WRONG_PIN = '0000';
@@ -61,65 +62,6 @@ const passkey = {
   backupSource: 'created',
 };
 
-// jsdom has no structuredClone; stored values are all JSON.
-const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
-
-/** Back chrome.storage.local with a plain object, honouring every key form. */
-function useFakeStorage(): StorageData {
-  const data: StorageData = {};
-  const keysOf = (keys: unknown): string[] =>
-    keys == null ? Object.keys(data) : Array.isArray(keys) ? keys : [keys as string];
-  const local = chrome.storage.local as unknown as Record<string, jest.Mock>;
-  local.get.mockReset().mockImplementation(async (keys: unknown) => {
-    const result: StorageData = {};
-    for (const key of keysOf(keys)) {
-      if (data[key] !== undefined) result[key] = clone(data[key]);
-    }
-    return result;
-  });
-  local.set.mockReset().mockImplementation(async (items: StorageData) => {
-    for (const [key, value] of Object.entries(items)) data[key] = clone(value);
-  });
-  local.remove.mockReset().mockImplementation(async (keys: unknown) => {
-    for (const key of keysOf(keys)) delete data[key];
-  });
-  local.clear.mockReset().mockImplementation(async () => {
-    for (const key of Object.keys(data)) delete data[key];
-  });
-  return data;
-}
-
-/**
- * Load a fresh background service (and its secure storage singleton) and
- * return a function that sends it a runtime message.
- */
-async function loadBackground(): Promise<{
-  send: Respond;
-  secure: SecureStorageModule['secureStorage'];
-  sync: SyncServiceModule['syncService'];
-}> {
-  const runtime = chrome.runtime as unknown as Record<string, unknown>;
-  const listeners: Array<(m: unknown, s: unknown, r: (v: unknown) => void) => void> = [];
-  runtime.onMessage = { addListener: (fn: (typeof listeners)[number]) => listeners.push(fn) };
-  for (const event of ['onInstalled', 'onStartup', 'onSuspend']) {
-    runtime[event] = { addListener: jest.fn() };
-  }
-
-  let secure!: SecureStorageModule['secureStorage'];
-  let sync!: SyncServiceModule['syncService'];
-  await jest.isolateModulesAsync(async () => {
-    await import('../src/background/background');
-    secure = (await import('../src/crypto/secure-storage')).secureStorage;
-    sync = ((await import('../src/sync/sync-service')) as unknown as SyncServiceModule).syncService;
-  });
-
-  // Chrome's account of a message from the popup, an extension page.
-  const popup = { id: chrome.runtime.id, url: chrome.runtime.getURL('popup.html') };
-  const send: Respond = (message) =>
-    new Promise((resolve) => listeners[0](message, popup, (v) => resolve(v as Reply)));
-  return { send, secure, sync };
-}
-
 let storage: StorageData;
 
 beforeEach(() => {
@@ -129,12 +71,6 @@ beforeEach(() => {
 afterEach(() => {
   jest.useRealTimers();
 });
-
-/** Lock, then report whether the given PIN unlocks the vault. */
-async function unlocksWith(send: Respond, pin: string): Promise<boolean> {
-  await send({ type: 'LOCK_SECURE_STORAGE' });
-  return (await send({ type: 'UNLOCK_SECURE_STORAGE', payload: { password: pin } })).success;
-}
 
 describe('changing the master PIN', () => {
   it('rejects a wrong current PIN and keeps the old one', async () => {
@@ -226,7 +162,7 @@ describe('setting up a master PIN', () => {
 
 const ENCRYPTED_VAULT_KEYS = [
   'passext_master_key_check',
-  'passext_encryption_salt',
+  'passext_vault_kdf',
   'passext_encrypted_passkeys',
 ];
 

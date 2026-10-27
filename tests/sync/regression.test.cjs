@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const { webcrypto } = require('node:crypto');
 const esbuild = require('esbuild');
 
-let browserCode, mobileCode, backgroundCode, storageCode;
+let browserCode, mobileCode, backgroundCode, storageCode, kdfCode;
 before(async () => {
   async function bundle(file, suffix, strip) {
     let contents = fs.readFileSync(file, 'utf8');
@@ -27,7 +27,8 @@ before(async () => {
     return result.outputFiles[0].text;
   }
   browserCode = await bundle('src/sync/sync-service.ts', '');
-  storageCode = await bundle('src/crypto/secure-storage.ts', '\nexport { deriveKeyFromPassword };');
+  storageCode = await bundle('src/crypto/secure-storage.ts', '');
+  kdfCode = await bundle('src/crypto/kdf.ts', '');
   backgroundCode = await bundle(
     'src/background/background.ts',
     '\nexport { BackgroundService };',
@@ -68,7 +69,7 @@ function env(code) {
       runtime: { getURL: (path) => `${EXTENSION_ORIGIN}/${path}` },
       storage: {
         local: {
-          get: async (k) => ({ [k]: storage.get(k) }),
+          get: async (keys) => Object.fromEntries([keys].flat().map((k) => [k, storage.get(k)])),
           set: async (o) => Object.entries(o).forEach(([k, v]) => storage.set(k, v)),
         },
       },
@@ -784,7 +785,7 @@ test('large deletion history travels in bounded signed frames and reassembles', 
 });
 
 test('password derivation yields and remains compatible with existing encryption', async () => {
-  const e = env(storageCode);
+  const e = env(kdfCode);
   let derivations = 0;
   e.context.crypto = {
     ...webcrypto,
@@ -797,10 +798,27 @@ test('password derivation yields and remains compatible with existing encryption
     },
   };
   const salt = new Uint8Array(32).fill(7);
-  const key = await e.api.deriveKeyFromPassword('123456', salt);
+  const spec = e.api.legacyKdfSpec(Buffer.from(salt).toString('base64'));
+  const key = await e.api.deriveKey('123456', spec);
   const expected = require('node:crypto').pbkdf2Sync('123456', salt, 100000, 32, 'sha256');
   assert.equal(Buffer.from(key).toString('hex'), expected.toString('hex'));
-  assert.equal(derivations, 1, 'password work must run in asynchronous WebCrypto');
+  assert.equal(derivations, 1, 'legacy password work must run in asynchronous WebCrypto');
+});
+
+test('the default vault and backup KDF matches native scrypt', async () => {
+  const e = env(kdfCode);
+  const spec = e.api.newKdfSpec();
+  assert.deepEqual(JSON.parse(JSON.stringify(spec.params)), { N: 131072, r: 8, p: 1 });
+  assert.equal(spec.kdf, 'scrypt');
+  // A decomposed "é" derives the same key as the composed one (NFC).
+  const key = await e.api.deriveKey('cafe\u0301 passphrase', spec);
+  const expected = require('node:crypto').scryptSync(
+    'caf\u00e9 passphrase',
+    Buffer.from(spec.salt, 'base64'),
+    32,
+    { N: 131072, r: 8, p: 1, maxmem: 256 * 1024 * 1024 }
+  );
+  assert.equal(Buffer.from(key).toString('hex'), expected.toString('hex'));
 });
 
 test('heartbeat cannot restart exhausted delivery; explicit retry can', async () => {
@@ -989,7 +1007,7 @@ function vaultWorker(shared) {
   const session = shared?.session ?? new Map();
   const alarms = shared?.alarms ?? new Map();
   const area = (map) => ({
-    get: async (k) => ({ [k]: map.get(k) }),
+    get: async (keys) => Object.fromEntries([keys].flat().map((k) => [k, map.get(k)])),
     set: async (o) => Object.entries(o).forEach(([k, v]) => map.set(k, v)),
     remove: async (k) => [].concat(k).forEach((key) => map.delete(key)),
   });

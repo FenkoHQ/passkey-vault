@@ -19,7 +19,12 @@ import {
   type SyncTotpEntry,
   type SyncVaultAdapter,
 } from '../sync/sync-service';
-import { AUTO_LOCK_ALARM, AUTO_LOCK_SETTING_KEY, secureStorage } from '../crypto/secure-storage';
+import {
+  AUTO_LOCK_ALARM,
+  AUTO_LOCK_SETTING_KEY,
+  secureStorage,
+  UnsupportedKdfError,
+} from '../crypto/secure-storage';
 import { encryptWithPassword, decryptWithPassword } from '../crypto/encryption';
 import { logger } from '../utils/logger';
 import { arrayBufferToBase64, arrayBufferToBase64URL, base64urlToBase64 } from '../utils/base64';
@@ -2307,7 +2312,9 @@ class BackgroundService {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       console.error('Failed to unlock secure storage:', error);
-      return { success: false, error: message };
+      // A vault set up by a newer build: say so rather than "wrong PIN".
+      const code = error instanceof UnsupportedKdfError ? error.code : undefined;
+      return { success: false, error: message, ...(code ? { code } : {}) };
     }
   }
 

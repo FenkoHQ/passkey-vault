@@ -184,7 +184,11 @@ import { resolveSiteIcon } from '../site-icons';
       if (response.success) {
         showMainScreen();
       } else {
-        errorEl.textContent = t('popupWrongPassword');
+        // A vault set up by a newer build is not a wrong PIN.
+        errorEl.textContent =
+          response.code === 'UNSUPPORTED_KDF'
+            ? t('popupVaultNeedsUpdate')
+            : t('popupWrongPassword');
         errorEl.style.display = 'block';
         passwordInput.value = '';
         passwordInput.focus();

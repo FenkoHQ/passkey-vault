@@ -52,6 +52,8 @@ const en: TranslationMap = {
   popupUnlock: 'Unlock',
   popupUnlocking: 'Unlocking...',
   popupWrongPassword: 'Wrong PIN',
+  popupVaultNeedsUpdate:
+    'This vault was locked by a newer version of Fenko Vault. Update the extension to unlock it.',
   popupSetupVault: 'Set Up Vault',
   popupSetupHelp: 'Set a PIN (4–12 digits) to lock your vault.',
   popupSetupPasswordPlaceholder: 'PIN (4–12 digits)',
@@ -570,6 +572,8 @@ const ru: TranslationMap = {
   popupUnlock: 'Разблокировать',
   popupUnlocking: 'Разблокировка...',
   popupWrongPassword: 'Неверный пароль',
+  popupVaultNeedsUpdate:
+    'Это хранилище заблокировано более новой версией Fenko Vault. Обновите расширение, чтобы разблокировать его.',
   popupSetupVault: 'Настройка хранилища',
   popupSetupHelp: 'Создайте мастер-пароль для шифрования passkey.',
   popupCreatePassword: 'Создать пароль',
@@ -740,6 +744,7 @@ const zh_CN: TranslationMap = {
   popupUnlock: '解锁',
   popupUnlocking: '正在解锁...',
   popupWrongPassword: '密码错误',
+  popupVaultNeedsUpdate: '此保险库由更新版本的 Fenko Vault 锁定。请更新扩展后再解锁。',
   popupSetupVault: '设置保险库',
   popupCreatePassword: '创建密码',
   popupSkipForNow: '暂时跳过',
@@ -876,6 +881,7 @@ const ar: TranslationMap = {
   popupUnlock: 'فتح',
   popupUnlocking: 'جارٍ الفتح...',
   popupWrongPassword: 'كلمة المرور غير صحيحة',
+  popupVaultNeedsUpdate: 'قُفلت هذه الخزنة بإصدار أحدث من Fenko Vault. حدّث الإضافة لفتحها.',
   popupSetupVault: 'إعداد الخزنة',
   popupCreatePassword: 'إنشاء كلمة مرور',
   popupSkipForNow: 'تخطي الآن',
@@ -1010,6 +1016,8 @@ const fa: TranslationMap = {
   popupUnlock: 'باز کردن',
   popupUnlocking: 'در حال باز کردن...',
   popupWrongPassword: 'رمز اشتباه است',
+  popupVaultNeedsUpdate:
+    'این گاوصندوق با نسخه‌ای جدیدتر از Fenko Vault قفل شده است. برای باز کردن آن، افزونه را به‌روزرسانی کنید.',
   popupSetupVault: 'راه‌اندازی گاوصندوق',
   popupSetupHelp: 'برای رمزنگاری کلیدهای عبور، یک رمز اصلی بسازید.',
   popupSetupPasswordPlaceholder: 'رمز اصلی (حداقل ۸ نویسه)',
@@ -1226,6 +1234,8 @@ const es: TranslationMap = {
   popupUnlock: 'Desbloquear',
   popupUnlocking: 'Desbloqueando...',
   popupWrongPassword: 'Contraseña incorrecta',
+  popupVaultNeedsUpdate:
+    'Esta bóveda se bloqueó con una versión más reciente de Fenko Vault. Actualiza la extensión para desbloquearla.',
   popupSetupVault: 'Configurar bóveda',
   popupCreatePassword: 'Crear contraseña',
   popupSkipForNow: 'Omitir por ahora',
@@ -1358,6 +1368,8 @@ const fr: TranslationMap = {
   popupUnlock: 'Déverrouiller',
   popupUnlocking: 'Déverrouillage...',
   popupWrongPassword: 'Mot de passe incorrect',
+  popupVaultNeedsUpdate:
+    'Ce coffre a été verrouillé par une version plus récente de Fenko Vault. Mettez à jour l’extension pour le déverrouiller.',
   popupSetupVault: 'Configurer le coffre',
   popupCreatePassword: 'Créer le mot de passe',
   popupSkipForNow: 'Ignorer pour le moment',
