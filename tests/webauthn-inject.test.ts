@@ -155,7 +155,8 @@ function createPayload() {
       transports: ['internal'],
     },
     authenticatorAttachment: 'platform',
-    clientExtensionResults: {},
+    // What the background returns when the RP asked for credProps.
+    clientExtensionResults: { credProps: { rk: true } },
   };
 }
 
@@ -362,7 +363,7 @@ describe('webauthn-inject credential shape', () => {
         rawId: b64url(RAW_ID),
         type: 'public-key',
         authenticatorAttachment: 'cross-platform',
-        clientExtensionResults: { credProps: { rk: true } },
+        clientExtensionResults: cred.getClientExtensionResults(),
         response: {
           clientDataJSON: b64url(CLIENT_DATA),
           authenticatorData: b64url(AUTH_DATA),
