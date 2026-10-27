@@ -21,6 +21,7 @@ import {
   totpCsvTemplate,
   type ExportFormat,
 } from '../porting';
+import { checkVaultSecret, type VaultSecretProblem } from '../crypto/vault-secret';
 
 const DEFAULT_RELAYS = [
   'wss://vaultsync.fenko.nz',
@@ -454,6 +455,10 @@ async function loadSecuritySettings(): Promise<void> {
   await refreshSecurityStatus();
 }
 
+function secretProblemMessage(problem: VaultSecretProblem): string {
+  return problem === 'too-long' ? t('vaultSecretTooLong') : t('optionsPasswordMin');
+}
+
 async function refreshSecurityStatus(): Promise<void> {
   const response = await sendMessage('IS_SECURE_STORAGE_UNLOCKED');
   const statusEl = document.getElementById('master-pw-status')!;
@@ -502,8 +507,9 @@ function wireSecurityHandlers(): void {
   document.getElementById('set-pw-btn')!.addEventListener('click', async () => {
     hideErr('set-pw-error');
     const pw = val('set-pw');
-    if (!/^\d{4,12}$/.test(pw)) {
-      showErr('set-pw-error', t('optionsPasswordMin'));
+    const problem = checkVaultSecret(pw);
+    if (problem) {
+      showErr('set-pw-error', secretProblemMessage(problem));
       return;
     }
     if (pw !== val('set-pw-confirm')) {
@@ -524,8 +530,9 @@ function wireSecurityHandlers(): void {
   document.getElementById('change-pw-btn')!.addEventListener('click', async () => {
     hideErr('change-pw-error');
     const next = val('change-pw-new');
-    if (!/^\d{4,12}$/.test(next)) {
-      showErr('change-pw-error', t('optionsPasswordMin'));
+    const problem = checkVaultSecret(next);
+    if (problem) {
+      showErr('change-pw-error', secretProblemMessage(problem));
       return;
     }
     if (next !== val('change-pw-confirm')) {

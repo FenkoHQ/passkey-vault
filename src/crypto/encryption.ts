@@ -2,6 +2,7 @@ import { pbkdf2 } from '@noble/hashes/pbkdf2';
 import { sha256 } from '@noble/hashes/sha256';
 import { gcm } from '@noble/ciphers/aes';
 import { randomBytes } from '@noble/hashes/utils';
+import { uint8ArrayToBase64 } from '../utils/base64';
 
 /**
  * Encryption utilities for Fenko Vault
@@ -60,8 +61,8 @@ export async function encrypt(
   const encrypted = cipher.encrypt(new TextEncoder().encode(data));
 
   return {
-    data: btoa(String.fromCharCode(...encrypted)),
-    iv: btoa(String.fromCharCode(...initVector)),
+    data: uint8ArrayToBase64(encrypted),
+    iv: uint8ArrayToBase64(initVector),
     salt: '', // Salt is handled at key derivation level
     algorithm: ENCRYPTION_CONFIG.algorithm,
   };
@@ -88,61 +89,6 @@ export async function decrypt(
     return new TextDecoder().decode(decrypted);
   } catch (error) {
     throw new Error('Decryption failed: Invalid data or key');
-  }
-}
-
-/**
- * High-level encryption function that handles key derivation
- */
-export async function encryptWithPassword(
-  data: string,
-  password: string
-): Promise<EncryptionResult> {
-  const { key, salt } = await deriveKey(password);
-  const iv = randomBytes(ENCRYPTION_CONFIG.ivLength);
-
-  const result = await encrypt(data, key, iv);
-  result.salt = btoa(String.fromCharCode(...salt));
-
-  // Securely clear the key from memory
-  key.fill(0);
-
-  return result;
-}
-
-/**
- * High-level decryption function that handles key derivation
- */
-export async function decryptWithPassword(
-  encryptedData: string,
-  iv: string,
-  salt: string,
-  password: string
-): Promise<string> {
-  try {
-    const { key } = await deriveKey(
-      password,
-      new Uint8Array(
-        atob(salt)
-          .split('')
-          .map((char) => char.charCodeAt(0))
-      )
-    );
-
-    const initVector = new Uint8Array(
-      atob(iv)
-        .split('')
-        .map((char) => char.charCodeAt(0))
-    );
-
-    const result = await decrypt(encryptedData, key, initVector);
-
-    // Securely clear the key from memory
-    key.fill(0);
-
-    return result;
-  } catch (error) {
-    throw new Error(`Failed to decrypt data: ${error.message}`);
   }
 }
 

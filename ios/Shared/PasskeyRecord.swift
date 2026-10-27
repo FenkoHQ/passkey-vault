@@ -18,6 +18,11 @@ struct PasskeyRecord: Codable {
     var publicKey: String
     var createdAt: Double
     var counter: Int
+    /// Per-credential WebAuthn backup flags (see src/sync/backup-flags.ts).
+    /// Nil on a record from before they existed: sign as this app always has.
+    var backupEligible: Bool? = nil
+    var backupState: Bool? = nil
+    var backupSource: String? = nil
     private var original: Data? = nil
 
     init(id: String, credentialId: String, rpId: String, origin: String,
@@ -36,6 +41,13 @@ struct PasskeyRecord: Codable {
         self.counter = counter
     }
 
+    /// BE (0x08) and BS (0x10) for this credential. Relying parties such as
+    /// Teleport store BE and reject a sign-in that changes it.
+    var backupFlagBits: UInt8 {
+        guard backupEligible == true else { return 0 }
+        return backupState == true ? 0x18 : 0x08
+    }
+
     // MARK: JSON (hand-rolled to tolerate the nested `user` object and loose types)
 
     static func fromJSON(_ obj: [String: Any]) -> PasskeyRecord? {
@@ -47,7 +59,7 @@ struct PasskeyRecord: Codable {
         let user = obj["user"] as? [String: Any]
         var record = PasskeyRecord(
             id: (obj["id"] as? String) ?? credentialId,
-            credentialId: credentialId,
+            credentialId: StoredCredentialID.credentialId(credentialId),
             rpId: rpId,
             origin: (obj["origin"] as? String) ?? "https://\(rpId)",
             userId: user?["id"] as? String,
@@ -58,6 +70,13 @@ struct PasskeyRecord: Codable {
             createdAt: (obj["createdAt"] as? Double) ?? Date().timeIntervalSince1970 * 1000,
             counter: (obj["counter"] as? Int) ?? 0
         )
+        // JSONSerialization hands booleans back as NSNumber; only a real
+        // boolean counts, so a stray 0/1 cannot pose as a flag.
+        if let be = obj["backupEligible"] as? NSNumber, CFGetTypeID(be) == CFBooleanGetTypeID() {
+            record.backupEligible = be.boolValue
+            record.backupState = be.boolValue && ((obj["backupState"] as? Bool) ?? false)
+            record.backupSource = obj["backupSource"] as? String
+        }
         record.original = try? JSONSerialization.data(withJSONObject: obj)
         return record
     }
@@ -79,6 +98,11 @@ struct PasskeyRecord: Codable {
             "counter": counter,
         ]
         result.merge(fields) { _, next in next }
+        if let backupEligible {
+            result["backupEligible"] = backupEligible
+            result["backupState"] = backupEligible && (backupState ?? false)
+            if let backupSource { result["backupSource"] = backupSource }
+        }
         return result
     }
 }

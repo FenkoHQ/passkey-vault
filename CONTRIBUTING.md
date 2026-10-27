@@ -49,11 +49,15 @@ npm run zip:all          # Build both + create both ZIPs
 npm run clean            # Remove dist directories
 npm run test             # Run tests
 npm run test:e2e         # Load the built extension in Chromium and drive the popup
+npm run test:e2e:webauthn # Run WebAuthn ceremonies through the built extension in Chromium
 npm run lint             # Run ESLint
 npm run typecheck        # TypeScript check
 npm run version:bump     # Sync version across all manifests (run before tagging)
 npm run capture          # Re-generate screenshots and demo video
 ```
+
+How the passkey tests work, and how to add a real site's options to them:
+[docs/testing](docs/testing/README.md).
 
 ## Releasing
 
@@ -64,6 +68,7 @@ npm run lint
 npm run typecheck
 npm test
 npm run test:e2e
+npm run test:e2e:webauthn
 npm run build:all
 npm run zip:all
 npm run validate:packages

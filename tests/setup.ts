@@ -8,6 +8,14 @@ if (typeof TextDecoder === 'undefined') {
   global.TextDecoder = require('util').TextDecoder;
 }
 
+// New vault keys and backups use a memory-hard KDF that takes a few hundred
+// milliseconds and 128 MiB per derivation. The suite derives keys hundreds of
+// times, so it runs on the same scrypt at a 1 MiB cost; tests/kdf.test.ts
+// checks the production profile itself.
+jest.mock('../src/crypto/kdf-profile', () => ({
+  DEFAULT_KDF: { kdf: 'scrypt', params: { N: 2 ** 10, r: 8, p: 1 } },
+}));
+
 // Mock Chrome APIs
 const mockChrome = {
   runtime: {

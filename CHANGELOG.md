@@ -6,6 +6,141 @@ All notable changes to Passkey Vault are documented here. The format follows
 
 ## [Unreleased]
 
+### Lock the vault with a passphrase
+
+Anyone with a copy of your browser profile (a computer backup, a stolen disk,
+malware) could try every 6-digit PIN against the vault in about 11 seconds on
+one gaming graphics card. A slower key now multiplies the cost of each guess;
+only a longer secret multiplies the number of guesses.
+
+- **Passphrases.** The vault takes a passphrase of 8 or more characters, or a
+  PIN of 4 or more digits, in the popup and in Options. Existing PINs keep
+  working. A short PIN mainly stops someone at your unlocked computer: even
+  with the slower key, every 6-digit PIN can be tried within hours from a copy
+  of the profile. Use four or more random words, or a PIN of 10 or more
+  digits.
+- **A slower key.** The vault key now comes from scrypt (128 MiB, the
+  parameters OWASP recommends) instead of 100,000 rounds of PBKDF2, which makes
+  each guess on a graphics card roughly a hundred times or more as expensive.
+  Unlocking takes about a third of a second longer on a fast laptop, and up to
+  a second or two on a slow one.
+- **Existing vaults upgrade themselves** on the next unlock; after this update
+  the vault asks for its PIN once. Everything is re-encrypted in one step, so
+  an interrupted upgrade leaves the vault as it was and is tried again next
+  time. An older version of the extension cannot open an upgraded vault.
+- **Encrypted backups** use the same key derivation and record it in the
+  file, so later versions can raise the cost. Older backups still import, and
+  a backup from a newer version says so instead of "wrong password". New
+  backups need a password of at least 12 characters.
+- **Android and iOS** read and write the same backup format, with the same
+  12-character minimum.
+
+### Imported passkeys sign in where they used to
+
+A passkey imported from Bitwarden failed on Teleport with nothing more than
+"invalid credentials". Sites built on go-webauthn, Teleport among them, store a
+passkey's backup eligible (BE) flag the first time it signs in and reject any
+later sign-in that changes it. Bitwarden, 1Password, iCloud Keychain and Google
+all report their passkeys as synced (BE and BS set), while the vault signed
+every passkey with one vault-wide setting that defaulted to off. Turning the
+Advanced toggles on fixed those passkeys, and would then have broken every
+passkey the vault created with them off.
+
+Backup flags now belong to each passkey and sync with it to every device:
+
+- **Imports** come in as synced passkeys, since every manager the vault imports
+  from syncs them. A Fenko backup keeps the flags each passkey had.
+- **Importing the same file again** fixes passkeys imported before this change.
+  Only their backup flags move, and only when the credential id, site and key
+  all match. Passkeys created in the vault, or set by hand, are left alone.
+- **Each passkey has a "Synced passkey" switch** in its details, for the rare
+  site that still disagrees.
+- **Existing passkeys keep signing exactly as before.** On upgrade the vault
+  records the flags it was using on every passkey, so nothing changes for a
+  site that already stored them. Unlocking finishes this for PIN-protected
+  vaults.
+- **New passkeys are backup eligible by default**, because the vault syncs
+  them. They are reported as backed up once sync is set up. The Advanced
+  toggles now apply only to passkeys created after a change.
+- **Android and iOS** sign with each passkey's own flags too, and a sync from
+  an older build cannot strip them.
+
+### Fixed
+
+- Passkeys imported from a Bitwarden JSON export now sign in (#17). Bitwarden
+  writes credential IDs as GUIDs, or with a `b64.` prefix, and the importer
+  stored those strings as they were, so the vault never matched a site's
+  `allowCredentials` and signed with an ID the site had never issued. The
+  importer now decodes them, and vaults that already hold such passkeys are
+  repaired on startup, on unlock and after each sync. The repair replaces each
+  bad ID with the decoded one and syncs a deletion record for the old ID, so
+  every device ends up with the same corrected passkey, including devices not
+  yet updated. The Android and iOS passkey providers also decode such IDs
+  when they read the vault, so they sign in before the app has been opened.
+- Registering a second passkey on a site that already had one failed with
+  "already registered". The vault now refuses only a credential the site lists
+  in `excludeCredentials`, so one site can hold several accounts.
+- Challenges, user IDs and credential IDs passed as a view onto a larger
+  buffer (for example from `subarray()`) were serialised with the whole
+  backing buffer instead of just the view's bytes.
+- The vault no longer asks for the PIN again about 30 seconds after unlocking.
+  Chrome stops an idle extension service worker, and the unlock key lived only
+  in its memory, so the auto-lock timeout never took effect. The key is now
+  kept in session storage, which stays in memory, is cleared when the browser
+  quits and cannot be read by content scripts. The vault locks once the
+  timeout passes with no activity, using a browser alarm (new `alarms`
+  permission) when the worker is asleep. Firefox before 115 keeps the old
+  behaviour.
+- The "Never" auto-lock option locked the vault immediately instead of
+  keeping it unlocked.
+- Creating a sync chain failed about one time in 85 with "Invalid BIP39 word:
+  undefined", on the extension and on Android. The word list is two words
+  short of what a new phrase can need; the vault now picks another phrase.
+  Recovery phrases already issued are unaffected.
+
+### Passkeys that behave like the browser's own
+
+A new test suite runs every ceremony through the extension the way a page
+does, checks the result the way a relying party's server does, and runs the
+same requests against Chrome's own WebAuthn client. It found the following,
+now fixed:
+
+- **clientDataJSON** now has the exact layout WebAuthn specifies, including
+  `crossOrigin`. Servers that check it byte for byte, as the spec allows,
+  rejected every vault passkey.
+- **Calls made as a page loads** reach the vault. The page shim used to arrive
+  late, so a site that started an autofill sign-in on load got the browser's
+  prompt instead; on Chrome it now runs before any page script (Chrome 111 or
+  later).
+- **PRF** (used by sites that encrypt data with a passkey, Bitwarden among
+  them) reports `enabled` at registration, so those sites no longer conclude a
+  vault passkey cannot do it, and PRF results survive `toJSON()`. `credProps`
+  is returned only when a site asks for it, never on sign-in.
+- **Sites that accept only other key types** (EdDSA, RS256) are handed to the
+  browser instead of getting an ES256 key they reject.
+- **Timeouts** follow the spec: 5 to 10 minutes rather than 60 seconds, and an
+  autofill sign-in no longer times out at all.
+- **A page that gives up** (aborts, times out) no longer leaves behind a
+  passkey it never received.
+- **Requests the browser refuses are refused too**, with the browser's error:
+  invalid option types and sizes, RP IDs in the wrong case, empty, on an IP
+  address or a public suffix, and PRF or credProps inputs Chrome rejects.
+- **One damaged entry** (from an import or a sync peer) no longer breaks
+  sign-in on every site, a page's promise no longer hangs when the vault's
+  answer is unreadable, a saved passkey is no longer reported as failed when
+  only sync bookkeeping fails, and a locked vault is no longer listed as an
+  extension error.
+
+### Security
+
+- The background only answers web pages' requests for the ceremony itself,
+  bound to the page's real origin as Chrome reports it. A browser exploit in a
+  web page could otherwise have asked it to export the vault, wipe it, or sign
+  for another site.
+- A cross-origin iframe gets the vault only when the page embedding it
+  delegates WebAuthn, as in Chrome, so a third-party frame cannot put the
+  vault's dialogs over the page.
+
 ## [0.12.0] - 2026-09-21
 
 ### Knowing a passkey by its site

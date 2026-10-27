@@ -23,6 +23,7 @@ import {
   SYNC_DELETIONS_KEY,
   type SyncDeletion,
 } from '../../../src/sync/merge';
+import { repairCredentialIds } from '../../../src/sync/credential-ids';
 import * as secp256k1 from '@noble/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
@@ -33,6 +34,14 @@ import {
   deriveEd25519Keypair,
 } from '../../../src/crypto/bip39';
 import { generateHotp, generateTotp, parseOtpauth, timeRemaining } from '../../../src/crypto/totp';
+import {
+  checkBackupPassword,
+  decryptBackup,
+  encryptBackup,
+  isEncryptedBackup,
+  MIN_BACKUP_PASSWORD_LENGTH,
+  UnsupportedBackupError,
+} from '../../../src/crypto/backup-crypto';
 
 declare const jsQR:
   | undefined
@@ -274,6 +283,22 @@ function mergeNativeSnapshot(snapshotJson?: string): void {
   } catch {
     // A bad native snapshot must not stop the WebView app from opening.
   }
+}
+
+/**
+ * Re-key passkeys imported with a Bitwarden-encoded credential ID (issue #17).
+ * Deletion records go first so the mirror to native carries both. Returns
+ * whether anything changed, so callers can broadcast the repair.
+ */
+function repairPasskeyIds(): boolean {
+  const repair = repairCredentialIds(getPasskeys());
+  if (repair.deletions.length === 0) return false;
+  localStorage.setItem(
+    SYNC_DELETIONS_KEY,
+    JSON.stringify(mergeDeletions(loadJson(SYNC_DELETIONS_KEY, []), repair.deletions))
+  );
+  setPasskeys(repair.passkeys);
+  return true;
 }
 
 function getTotpEntries(): StoredTotpEntry[] {
@@ -619,40 +644,39 @@ async function addTotpManual(form: HTMLFormElement): Promise<void> {
 }
 
 function codeFor(entry: StoredTotpEntry): { code: string; remaining: number } {
-  const secret = base64ToBytes(entry.secretB64);
-  const code =
-    entry.type === 'hotp'
-      ? generateHotp({
-          secret,
-          algorithm: entry.algorithm,
-          digits: entry.digits,
-          counter: entry.counter,
-        })
-      : generateTotp({
-          secret,
-          algorithm: entry.algorithm,
-          digits: entry.digits,
-          period: entry.period,
-          timestamp: Date.now(),
-        });
+  const code = generateTotp({
+    secret: base64ToBytes(entry.secretB64),
+    algorithm: entry.algorithm,
+    digits: entry.digits,
+    period: entry.period,
+    timestamp: Date.now(),
+  });
   return { code, remaining: timeRemaining(Date.now(), entry.period || 30) };
 }
 
-async function deriveBackupKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
-  const material = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(password),
-    'PBKDF2',
-    false,
-    ['deriveKey']
-  );
-  return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: new Uint8Array(salt), iterations: 100000, hash: 'SHA-256' },
-    material,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  );
+// HOTP codes are single-use (RFC 4226), so one is issued only on an explicit
+// tap: the code for the stored counter is returned and counter + 1 is saved
+// and synced (peers merge counters by max). Issued codes stay on screen for
+// this session, so re-rendering or copying again consumes nothing.
+const issuedHotpCodes = new Map<string, string>();
+
+function issueHotpCode(id: string): string | null {
+  const entries = getTotpEntries();
+  const index = entries.findIndex((e) => e.id === id);
+  const entry = entries[index];
+  if (!entry || entry.type !== 'hotp') return null;
+  const counter = entry.counter || 0;
+  const code = generateHotp({
+    secret: base64ToBytes(entry.secretB64),
+    algorithm: entry.algorithm,
+    digits: entry.digits,
+    counter,
+  });
+  entries[index] = { ...entry, counter: counter + 1, lastUsed: Date.now() };
+  setTotpEntries(entries);
+  issuedHotpCodes.set(id, code);
+  void state.sync?.broadcastUpdate();
+  return code;
 }
 
 function canBiometric(): boolean {
@@ -720,6 +744,13 @@ async function exportBackup(): Promise<void> {
     setStatus('Backup passwords do not match.', 'bad');
     return;
   }
+  if (password && checkBackupPassword(password)) {
+    setStatus(
+      `Use a backup password of at least ${MIN_BACKUP_PASSWORD_LENGTH} characters, ideally four or more random words.`,
+      'bad'
+    );
+    return;
+  }
   state.exportPassword = '';
   state.exportPasswordConfirm = '';
   if (password) {
@@ -759,22 +790,12 @@ async function exportEncryptedVault(password: string): Promise<void> {
     syncDevices: loadJson<SyncChain | null>(SYNC_DEVICES_KEY, null),
     customRelays: getRelays(),
   };
-  const salt = crypto.getRandomValues(new Uint8Array(32));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveBackupKey(password, salt);
-  const encrypted = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
-    key,
-    new TextEncoder().encode(JSON.stringify(payload))
-  );
+  // The same format and KDF as the extension's backups (src/crypto/backup-format.ts).
   const backup = {
     encrypted: true,
     version: '1.0',
     exportedAt: new Date().toISOString(),
-    data: arrayBufferToBase64(encrypted),
-    iv: bytesToBase64(iv),
-    salt: bytesToBase64(salt),
-    algorithm: 'AES-256-GCM',
+    ...(await encryptBackup(JSON.stringify(payload), password)),
   };
   const json = JSON.stringify(backup, null, 2);
   copyText(json);
@@ -795,22 +816,21 @@ async function importVault(raw: string): Promise<void> {
     setStatus("That doesn't look like backup JSON.", 'bad');
     return;
   }
-  if (payload.encrypted === true && payload.data && payload.iv && payload.salt) {
+  if (isEncryptedBackup(payload)) {
     const password = state.importPassword;
     if (!password) {
       setStatus('This backup is encrypted — enter its password above.', 'bad');
       return;
     }
     try {
-      const key = await deriveBackupKey(password, base64ToBytes(payload.salt));
-      const decrypted = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: base64ToBytes(payload.iv) },
-        key,
-        base64ToBytes(payload.data)
+      payload = JSON.parse(await decryptBackup(payload, password));
+    } catch (error) {
+      setStatus(
+        error instanceof UnsupportedBackupError
+          ? 'This backup was made by a newer version of Fenko Vault. Update the app to import it.'
+          : 'Wrong password or corrupted backup.',
+        'bad'
       );
-      payload = JSON.parse(new TextDecoder().decode(decrypted));
-    } catch {
-      setStatus('Wrong password or corrupted backup.', 'bad');
       return;
     }
   }
@@ -861,6 +881,7 @@ async function importVault(raw: string): Promise<void> {
   const totpMap = new Map(getTotpEntries().map((item) => [item.id, item]));
   for (const entry of totpEntries) totpMap.set(entry.id, entry);
   setPasskeys(Array.from(passkeyMap.values()));
+  repairPasskeyIds();
   setTotpEntries(Array.from(totpMap.values()));
   if (payload.syncConfig) setSyncConfig(payload.syncConfig);
   if (payload.syncDevices) saveJson(SYNC_DEVICES_KEY, payload.syncDevices);
@@ -1412,6 +1433,8 @@ class AndroidSync {
     saveJson(SYNC_DELETIONS_KEY, deletions);
     setPasskeys(mergeRecords(getPasskeys(), passkeys, deletions, 'passkey'));
     setTotpEntries(mergeRecords(getTotpEntries(), totpEntries, deletions, 'totp'));
+    // A peer on an older build can still send Bitwarden-encoded IDs.
+    if (repairPasskeyIds()) void this.broadcastUpdate();
   }
 }
 
@@ -1730,6 +1753,7 @@ function renderVault(): string {
 }
 
 function renderTotpItem(entry: StoredTotpEntry): string {
+  if (entry.type === 'hotp') return renderHotpItem(entry);
   const { code, remaining } = codeFor(entry);
   const width = Math.max(2, (remaining / (entry.period || 30)) * 100);
   const expanded = state.expanded.has(entry.id);
@@ -1749,6 +1773,37 @@ function renderTotpItem(entry: StoredTotpEntry): string {
         <p class="muted">${entry.type.toUpperCase()} &middot; ${entry.algorithm} &middot; ${entry.digits} digits &middot; ${entry.period}s period &middot; ${remaining}s left</p>
         <p class="muted">Added ${new Date(entry.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}</p>
         <button data-copy="${escapeHtml(code)}">Copy code</button>
+      </div>`
+          : ''
+      }
+    </article>
+  `;
+}
+
+function renderHotpItem(entry: StoredTotpEntry): string {
+  const code = issuedHotpCodes.get(entry.id);
+  const id = escapeHtml(entry.id);
+  const expanded = state.expanded.has(entry.id);
+  return `
+    <article class="item totp-card" data-item-kind="totp" data-item-id="${id}" data-expand="${id}">
+      <div class="item-head">
+        <div class="totp-text">
+          <h3>${escapeHtml(entry.issuer || 'Unknown issuer')}</h3>
+          <p class="muted">${escapeHtml(entry.account || '')}</p>
+        </div>
+        ${
+          code
+            ? `<button class="code code-compact" data-copy="${escapeHtml(code)}">${code}</button>`
+            : `<button class="code code-compact" data-hotp-next="${id}">Get code</button>`
+        }
+      </div>
+      ${
+        expanded
+          ? `<div class="totp-details">
+        <p class="muted">HOTP &middot; ${entry.algorithm} &middot; ${entry.digits} digits &middot; counter ${entry.counter || 0}</p>
+        <p class="muted">Added ${new Date(entry.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+        ${code ? `<button data-copy="${escapeHtml(code)}">Copy code</button>` : ''}
+        <button data-hotp-next="${id}">Next code</button>
       </div>`
           : ''
       }
@@ -1929,7 +1984,7 @@ function renderTools(): string {
       <div class="panel stack">
         <h2>Backup</h2>
         <h3>Export</h3>
-        <p class="muted">Set a password to export an encrypted backup, or leave it blank to export plain JSON. Exports copy to the clipboard and save to a file you choose.</p>
+        <p class="muted">Set a password of at least ${MIN_BACKUP_PASSWORD_LENGTH} characters to export an encrypted backup, or leave it blank to export plain JSON. Anyone with the file can guess its password offline, so use four or more random words. Exports copy to the clipboard and save to a file you choose.</p>
         <input type="password" id="export-password" placeholder="Backup password (optional)"
           autocomplete="new-password" autocapitalize="off" value="${escapeHtml(state.exportPassword)}" />
         <input type="password" id="export-password-confirm" placeholder="Confirm password"
@@ -2091,6 +2146,13 @@ function bindLongPress(el: HTMLElement, onLongPress: () => void): void {
 function bindVault(): void {
   document.querySelectorAll<HTMLElement>('[data-copy]').forEach((button) => {
     button.addEventListener('click', () => copyText(button.dataset.copy || ''));
+  });
+  document.querySelectorAll<HTMLElement>('[data-hotp-next]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const code = issueHotpCode(button.dataset.hotpNext || '');
+      if (code) copyText(code);
+      updateTabContent();
+    });
   });
   document.querySelectorAll<HTMLElement>('[data-item-kind]').forEach((item) => {
     bindLongPress(item, () => {
@@ -2287,6 +2349,7 @@ let pointerDown = false;
 window.__fenkoNativeRefresh = (snapshot?: string) => {
   const before = JSON.stringify([getPasskeys(), getTotpEntries()]);
   mergeNativeSnapshot(snapshot);
+  repairPasskeyIds();
   if (before !== JSON.stringify([getPasskeys(), getTotpEntries()])) {
     void state.sync?.broadcastUpdate();
     render();
@@ -2297,8 +2360,10 @@ async function boot(): Promise<void> {
   localStorage.removeItem(LEGACY_LOCK_KEY);
   purgeRecycleBin();
   mergeNativeSnapshot();
+  const repaired = repairPasskeyIds();
   state.unlocked = !localStorage.getItem(LOCKED_FLAG_KEY);
   if (state.unlocked) await bootSync();
+  if (repaired) void state.sync?.broadcastUpdate();
   render();
   mirrorVaultToAndroid();
   setupPullToRefresh();

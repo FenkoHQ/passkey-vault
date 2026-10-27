@@ -7,7 +7,9 @@
  */
 
 import { secureStorage } from './secure-storage';
+import { generateHotp } from './totp';
 import { arrayBufferToBase64, base64ToUint8Array } from '../utils/base64';
+import { wellFormedRecords } from '../utils/records';
 
 export type TotpAlgorithm = 'SHA1' | 'SHA256' | 'SHA512';
 
@@ -33,14 +35,15 @@ function isUnlocked(): boolean {
 
 export async function loadTotpEntries(): Promise<StoredTotpEntry[]> {
   if (isUnlocked()) {
-    const entries = (await secureStorage.getTotpEntries()) as unknown as StoredTotpEntry[];
-    return entries;
+    return wellFormedRecords(
+      (await secureStorage.getTotpEntries()) as unknown as StoredTotpEntry[]
+    );
   }
   if (await secureStorage.isSetup()) {
     throw new Error('Secure storage is locked. Please unlock with master password.');
   }
   const result = await chrome.storage.local.get(TOTP_STORAGE_KEY);
-  return (result[TOTP_STORAGE_KEY] || []) as StoredTotpEntry[];
+  return wellFormedRecords((result[TOTP_STORAGE_KEY] || []) as StoredTotpEntry[]);
 }
 
 export async function saveTotpEntries(entries: StoredTotpEntry[]): Promise<void> {
@@ -73,6 +76,41 @@ export async function deleteTotpEntry(id: string): Promise<boolean> {
     return true;
   }
   return false;
+}
+
+/**
+ * Issue the next code for an HOTP entry (RFC 4226 section 7.2): generate the
+ * code for the stored counter, then persist counter + 1 so the next request
+ * yields a fresh code. The stored counter is the next unused value, which is
+ * what an otpauth `counter` parameter means. Only call this on an explicit
+ * user request: every call consumes a counter value. Callers must serialize
+ * it with other vault writes. Returns null when no entry has that id.
+ */
+export async function issueHotpCode(
+  id: string,
+  now: number = Date.now()
+): Promise<{ code: string; counter: number; entry: StoredTotpEntry } | null> {
+  const entries = await loadTotpEntries();
+  const index = entries.findIndex((e) => e.id === id);
+  if (index < 0) return null;
+  const current = entries[index];
+  if (current.type !== 'hotp') {
+    throw new Error('Not an HOTP entry');
+  }
+  const counter = current.counter || 0;
+  const code = generateHotp({
+    secret: entryToSecretBytes(current),
+    algorithm: current.algorithm,
+    digits: current.digits,
+    counter,
+  });
+  // The counter is merged by max during sync, independent of record
+  // revisions, so it is not an edit: updatedAt stays put and a deletion made
+  // on another device still wins.
+  const entry: StoredTotpEntry = { ...current, counter: counter + 1, lastUsed: now };
+  entries[index] = entry;
+  await saveTotpEntries(entries);
+  return { code, counter, entry };
 }
 
 export function entryToSecretBytes(entry: StoredTotpEntry): Uint8Array {

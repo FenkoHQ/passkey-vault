@@ -1,8 +1,6 @@
 import {
   encrypt,
   decrypt,
-  encryptWithPassword,
-  decryptWithPassword,
   deriveKey,
   createChecksum,
   verifyChecksum,
@@ -107,38 +105,6 @@ describe('Encryption Module', () => {
       );
 
       expect(decrypted).toBe(plaintext);
-    });
-  });
-
-  describe('encryptWithPassword and decryptWithPassword', () => {
-    it('should encrypt and decrypt with password', async () => {
-      const plaintext = 'My secret password';
-      const password = 'master-password';
-
-      const encrypted = await encryptWithPassword(plaintext, password);
-      expect(encrypted).toHaveProperty('data');
-      expect(encrypted).toHaveProperty('iv');
-      expect(encrypted).toHaveProperty('salt');
-      expect(encrypted.algorithm).toBe('AES-256-GCM');
-
-      const decrypted = await decryptWithPassword(
-        encrypted.data,
-        encrypted.iv,
-        encrypted.salt,
-        password
-      );
-      expect(decrypted).toBe(plaintext);
-    });
-
-    it('should fail to decrypt with wrong password', async () => {
-      const plaintext = 'My secret password';
-      const correctPassword = 'master-password';
-      const wrongPassword = 'wrong-password';
-
-      const encrypted = await encryptWithPassword(plaintext, correctPassword);
-      await expect(
-        decryptWithPassword(encrypted.data, encrypted.iv, encrypted.salt, wrongPassword)
-      ).rejects.toThrow('Failed to decrypt data');
     });
   });
 
@@ -287,16 +253,21 @@ describe('Encryption Module', () => {
     it('should expire session after TTL', async () => {
       const sessionId = 'test-session';
       const password = 'test-password';
+      // A pinned clock: on a loaded machine the process can stall for longer
+      // than a 100 ms TTL between creating the key and reading it back.
+      let now = 1_000_000;
+      const clock = jest.spyOn(Date, 'now').mockImplementation(() => now);
+      try {
+        await manager.createSessionKey(sessionId, password, 100);
 
-      await manager.createSessionKey(sessionId, password, 100);
+        now += 100;
+        expect(manager.getSessionKey(sessionId)).not.toBeNull();
 
-      const keyBefore = manager.getSessionKey(sessionId);
-      expect(keyBefore).not.toBeNull();
-
-      await new Promise((resolve) => setTimeout(resolve, 150));
-
-      const keyAfter = manager.getSessionKey(sessionId);
-      expect(keyAfter).toBeNull();
+        now += 1;
+        expect(manager.getSessionKey(sessionId)).toBeNull();
+      } finally {
+        clock.mockRestore();
+      }
     });
 
     it('should remove session key', async () => {

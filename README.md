@@ -57,8 +57,8 @@ Intercepts WebAuthn API calls and stores passkeys locally, bypassing the browser
 - **Local storage** — passkeys stay in browser local storage, no external server
 - **TOTP / 2FA codes** — built-in RFC 6238 / 4226 authenticator with live codes, clipboard copy, and `otpauth://` import (paste a URI, paste a QR screenshot, or upload a QR image — decoded locally, no camera)
 - **Unified vault** — passkeys and 2FA codes share one searchable list with per-type filters; each entry expands to show its details
-- **Vault lock** — optional 4–12 digit master PIN encrypts the vault at rest and locks the popup; set, change, or remove it any time
-- **Backup & import** — export all passkeys (including private keys) and TOTP entries as a JSON file, import on another device
+- **Vault lock** — an optional PIN or passphrase encrypts the vault at rest and locks the popup; set, change, or remove it any time
+- **Backup & import** — export all passkeys (including private keys) and TOTP entries as a password-encrypted JSON file, import on another device or the mobile app
 - **Move in from anywhere** — import passkeys and MFA seeds from CXF, Bitwarden, Proton Pass, Dashlane, 1Password, KeePassXC, LastPass, Keeper, Google Authenticator, Aegis, 2FAS, andOTP, FreeOTP+, Raivo and Ente Auth; export back out as CXF, `otpauth://` or CSV — Options → Import & Export ([details](docs/porting/README.md))
 - **Cross-device sync** — optional Nostr-based sync chain using a BIP-39 seed phrase; passkeys and 2FA codes sync end-to-end encrypted
 - **Emergency access** — standalone recovery page for vault management without the extension popup
@@ -117,7 +117,7 @@ npm run build:all      # Both
 3. On `credentials.get()`, it signs the challenge with the stored private key using proper CBOR encoding
 4. The popup reads directly from `chrome.storage.local` — no background message passing for display
 5. TOTP codes are derived locally from each entry's secret using HMAC-SHA1/256/512; the popup caches the current code and refreshes it once per second while the vault is open
-6. With a master PIN set, the vault is also written as an AES-GCM encrypted copy and the popup gates behind a lock screen; removing the PIN drops the encrypted copy
+6. With a PIN or passphrase set, the vault moves into AES-256-GCM encrypted storage under a key derived with scrypt (N=2^17, r=8, p=1), and the popup gates behind a lock screen; removing it moves the vault back to cleartext. Vaults locked by older versions are re-keyed to scrypt on their next unlock
 
 ---
 
@@ -166,7 +166,7 @@ src/
 
 ## Security
 
-- Passkeys and TOTP secrets live in `chrome.storage.local`. Setting a master PIN adds an AES-GCM encrypted copy and a lock screen, but a raw copy is kept for display — treat the profile as sensitive regardless
+- Passkeys and TOTP secrets live in `chrome.storage.local`. Without a PIN or passphrase they are in cleartext. With one they are encrypted, but anyone with a copy of the browser profile can try every 6-digit PIN within hours on a GPU, however slow the key derivation; a short PIN mainly protects against someone at the unlocked computer. Use a passphrase of four or more random words, or a PIN of 10+ digits, and treat the profile as sensitive regardless
 - Export files contain private keys and TOTP secrets — treat them like passwords. The CXF, otpauth:// and CSV exports are plaintext because the receiving app expects that; delete them once imported. The popup's password-protected backup is the one to keep
 - Sync payloads are end-to-end encrypted; relays never see plaintext (see [How sync works](#how-sync-works))
 - Anyone who obtains your sync seed phrase can join your chain and receive your vault — protect it like the vault itself
