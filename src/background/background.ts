@@ -25,6 +25,7 @@ import {
   secureStorage,
   UnsupportedKdfError,
 } from '../crypto/secure-storage';
+import { checkVaultSecret, MAX_SECRET_LENGTH } from '../crypto/vault-secret';
 import { encryptWithPassword, decryptWithPassword } from '../crypto/encryption';
 import { logger } from '../utils/logger';
 import { arrayBufferToBase64, arrayBufferToBase64URL, base64urlToBase64 } from '../utils/base64';
@@ -310,6 +311,18 @@ class VaultLockedError extends Error {
   constructor() {
     super('Secure storage is locked. Please unlock with master password.');
     this.name = 'VaultLockedError';
+  }
+}
+
+/** Why a new master PIN or passphrase cannot be used, or null. */
+function vaultSecretProblem(secret: unknown): string | null {
+  switch (checkVaultSecret(secret)) {
+    case 'too-short':
+      return 'Use a PIN of at least 4 digits or a passphrase of at least 8 characters';
+    case 'too-long':
+      return `Use at most ${MAX_SECRET_LENGTH} characters`;
+    default:
+      return null;
   }
 }
 
@@ -2237,9 +2250,8 @@ class BackgroundService {
   private async handleSetupMasterPassword(payload: { password: string }): Promise<unknown> {
     try {
       const { password } = payload;
-      if (!/^\d{4,12}$/.test(password || '')) {
-        return { success: false, error: 'PIN must be 4 to 12 digits' };
-      }
+      const problem = vaultSecretProblem(password);
+      if (problem) return { success: false, error: problem };
 
       // Runs serialized with the other vault jobs, so this cannot race a
       // concurrent setup. On a configured vault initialize() would just unlock
@@ -2352,7 +2364,7 @@ class BackgroundService {
     try {
       const { currentPassword } = payload;
       if (!currentPassword) {
-        return { success: false, error: 'Current PIN is required' };
+        return { success: false, error: 'Current PIN or passphrase is required' };
       }
       // The cleartext copy is written before the encrypted vault is removed,
       // so an interrupted removal always leaves at least one of them.
@@ -2376,7 +2388,10 @@ class BackgroundService {
         });
       });
       if (!removed) {
-        return { success: false, error: 'Failed to remove PIN — check your current PIN' };
+        return {
+          success: false,
+          error: 'Failed to remove the lock — check your current PIN or passphrase',
+        };
       }
       return { success: true, message: 'Master PIN removed' };
     } catch (error: unknown) {
@@ -2404,11 +2419,13 @@ class BackgroundService {
     try {
       const { currentPassword, newPassword } = payload;
       if (!currentPassword || !newPassword) {
-        return { success: false, error: 'Both current and new PINs are required' };
+        return {
+          success: false,
+          error: 'Both the current and the new PIN or passphrase are required',
+        };
       }
-      if (!/^\d{4,12}$/.test(newPassword)) {
-        return { success: false, error: 'PIN must be 4 to 12 digits' };
-      }
+      const problem = vaultSecretProblem(newPassword);
+      if (problem) return { success: false, error: problem };
 
       const changed = await secureStorage.changeMasterPassword(currentPassword, newPassword);
       if (!changed) {

@@ -9,6 +9,7 @@ import { materialize, parseImport } from '../porting';
 import { formatCount, initAndLocalize, t } from '../i18n';
 import { initTheme } from '../theme';
 import { resolveSiteIcon } from '../site-icons';
+import { checkVaultSecret } from '../crypto/vault-secret';
 
 (function () {
   'use strict';
@@ -222,8 +223,10 @@ import { resolveSiteIcon } from '../site-icons';
       const confirm = confirmInput.value;
       errorEl.style.display = 'none';
 
-      if (!/^\d{4,12}$/.test(password)) {
-        errorEl.textContent = t('popupPasswordMin');
+      const problem = checkVaultSecret(password);
+      if (problem) {
+        errorEl.textContent =
+          problem === 'too-long' ? t('vaultSecretTooLong') : t('popupPasswordMin');
         errorEl.style.display = 'block';
         return;
       }
