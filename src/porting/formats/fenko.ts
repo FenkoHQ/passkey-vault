@@ -11,6 +11,7 @@ import { FormatParser, ParsedImport, PortableOtp, PortablePasskey, emptyImport }
 import { CsvRow, csvHeaders, parseCsv, parseCsvGrid, toCsv } from '../csv';
 import { makeOtp } from '../otp';
 import { base32Encode } from '../../crypto/totp';
+import { backupSourceOf, hasBackupFlags, normalizeBackupFlags } from '../../sync/backup-flags';
 
 type Json = Record<string, unknown>;
 
@@ -33,6 +34,8 @@ export const PASSKEY_TEMPLATE_HEADERS = [
   'credentialId',
   'privateKey',
   'counter',
+  'backupEligible',
+  'backupState',
 ];
 
 function asObject(value: unknown): Json | null {
@@ -41,6 +44,35 @@ function asObject(value: unknown): Json | null {
 
 function str(value: unknown): string {
   return value == null ? '' : String(value);
+}
+
+/**
+ * A native backup records each passkey's flags since they became
+ * per-passkey. One without them predates that, so the passkey keeps signing
+ * with whatever the vault used before rather than being assumed synced.
+ */
+function nativeBackup(passkey: Json): PortablePasskey['backup'] {
+  if (!hasBackupFlags(passkey)) return 'unknown';
+  return {
+    flags: normalizeBackupFlags(passkey.backupEligible === true, passkey.backupState === true),
+    source: backupSourceOf(passkey) ?? 'imported',
+  };
+}
+
+/** CSV cells: blank means "not recorded", which imports as a synced passkey. */
+function csvBackup(row: CsvRow): PortablePasskey['backup'] {
+  const parse = (cell: string | undefined): boolean | null => {
+    const value = (cell || '').trim().toLowerCase();
+    if (['1', 'true', 'yes'].includes(value)) return true;
+    if (['0', 'false', 'no'].includes(value)) return false;
+    return null;
+  };
+  const backupEligible = parse(row.backupeligible);
+  if (backupEligible === null) return undefined;
+  return {
+    flags: normalizeBackupFlags(backupEligible, parse(row.backupstate) ?? backupEligible),
+    source: 'imported',
+  };
 }
 
 /** Drop `#` comment rows before the header-keyed parse. */
@@ -85,6 +117,7 @@ export const fenkoJson: FormatParser = {
         privateKey: passkey.privateKey,
         counter: Number(passkey.counter) || 0,
         createdAt: Number(passkey.createdAt) || Date.now(),
+        backup: nativeBackup(passkey),
       });
     }
 
@@ -123,7 +156,9 @@ export const fenkoTotpCsv: FormatParser = {
   detect(input) {
     if (input.json !== undefined) return false;
     const headers = headersOf(input.text);
-    return headers.includes('secret') && (headers.includes('issuer') || headers.includes('account'));
+    return (
+      headers.includes('secret') && (headers.includes('issuer') || headers.includes('account'))
+    );
   },
 
   parse(input) {
@@ -176,6 +211,7 @@ export const fenkoPasskeyCsv: FormatParser = {
         privateKey: row.privatekey,
         counter: Number(row.counter) || 0,
         createdAt: Date.now(),
+        backup: csvBackup(row),
       });
     });
     return result;
@@ -194,6 +230,8 @@ const TEMPLATE_PASSKEY_NOTES = [
   '# Fenko Vault passkey import template.',
   '# privateKey: base64 PKCS#8 for an ES256 (P-256) key. PEM and JWK also work.',
   '# credentialId / userHandle: base64url. Leave credentialId blank to mint one.',
+  '# backupEligible / backupState: true or false. Leave blank for a passkey from',
+  '# another password manager; it is imported as a synced passkey.',
   '# Delete the example row before importing.',
 ];
 
@@ -207,7 +245,17 @@ export function totpCsvTemplate(): string {
 
 export function passkeyCsvTemplate(): string {
   const body = toCsv(PASSKEY_TEMPLATE_HEADERS, [
-    ['example.com', 'you@example.com', 'Your Name', '', '', 'MIGHAgEAMBMGByqGSM49AgEG...', 0],
+    [
+      'example.com',
+      'you@example.com',
+      'Your Name',
+      '',
+      '',
+      'MIGHAgEAMBMGByqGSM49AgEG...',
+      0,
+      '',
+      '',
+    ],
   ]);
   return `${TEMPLATE_PASSKEY_NOTES.join('\n')}\n${body}`;
 }
@@ -229,6 +277,11 @@ export function totpToCsv(entries: PortableOtp[]): string {
   );
 }
 
+function csvFlag(passkey: PortablePasskey, flag: 'backupEligible' | 'backupState'): string {
+  const backup = passkey.backup;
+  return backup && backup !== 'unknown' ? String(backup.flags[flag]) : '';
+}
+
 /** Write passkeys back out in the same template shape. */
 export function passkeysToCsv(passkeys: PortablePasskey[]): string {
   return toCsv(
@@ -241,6 +294,8 @@ export function passkeysToCsv(passkeys: PortablePasskey[]): string {
       passkey.credentialId,
       str(passkey.privateKey),
       passkey.counter,
+      csvFlag(passkey, 'backupEligible'),
+      csvFlag(passkey, 'backupState'),
     ])
   );
 }

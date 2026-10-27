@@ -33,11 +33,24 @@ import {
   type AuthenticatorDataOptions,
 } from './cbor';
 import {
+  ensureBackupFlagsSnapshot,
+  loadBackupFlagsSnapshot,
   loadWebAuthnFlags,
   saveWebAuthnFlags,
   transportsFor,
   type WebAuthnFlagSettings,
 } from './webauthn-settings';
+import {
+  applyBackupRepairs,
+  backupFlagsOf,
+  normalizeBackupFlags,
+  stampLegacyBackupFlags,
+  withBackupFlags,
+  PRE_UPGRADE_BACKUP_FLAGS,
+  type BackupFields,
+  type BackupFlags,
+  type BackupRepair,
+} from '../sync/backup-flags';
 import { verifyRelatedOrigin } from './related-origins';
 import { needsSiteIcon, saveSiteIcon, clearSiteIcons } from '../site-icons';
 import {
@@ -68,17 +81,23 @@ const SYNC_DEVICES_KEY = 'sync_devices';
 const SYNC_STATUS_KEY = 'sync_status';
 const UPGRADE_BACKUP_REQUIRED_KEY = 'upgrade_backup_required_0_9_5';
 
-/** Translate the user's Advanced settings into authenticator data flags. */
-function toAuthenticatorDataOptions(flags: WebAuthnFlagSettings): AuthenticatorDataOptions {
+/**
+ * Translate the user's Advanced settings, and the passkey's own backup flags,
+ * into authenticator data flags.
+ */
+function toAuthenticatorDataOptions(
+  flags: WebAuthnFlagSettings,
+  backup: BackupFlags
+): AuthenticatorDataOptions {
   return {
     userVerified: flags.userVerification === 'always',
-    backupEligible: flags.backupEligible,
-    backupState: flags.backupState,
+    backupEligible: backup.backupEligible,
+    backupState: backup.backupState,
     aaguid: flags.aaguid === 'zero' ? ANONYMOUS_AAGUID : PASSKEY_VAULT_AAGUID,
   };
 }
 
-interface StoredPasskey {
+interface StoredPasskey extends BackupFields {
   id: string;
   credentialId: string;
   type: string;
@@ -322,6 +341,38 @@ class BackgroundService {
     );
   }
 
+  /**
+   * Give every passkey from before per-credential backup flags the flags it
+   * was already being signed with, so a site that stored them sees no change.
+   * Needs the vault readable, so it runs at start-up and again on unlock. A
+   * no-op once every record carries flags.
+   */
+  private stampLegacyBackupFlags(): Promise<void> {
+    return this.withVault(async () => {
+      if ((await secureStorage.isSetup()) && !secureStorage.isStorageUnlocked()) return;
+      const snapshot = await ensureBackupFlagsSnapshot();
+      const { records, stamped } = stampLegacyBackupFlags(await this.loadPasskeys(), snapshot);
+      if (stamped === 0) return;
+      await this.savePasskeys(records);
+      logger.info(`Recorded pre-upgrade backup flags on ${stamped} passkeys`);
+      await this.incrementPendingChanges();
+      void this.triggerSync();
+    });
+  }
+
+  /** Flags for a passkey that has none of its own yet: what it was signed with before. */
+  private async fallbackBackupFlags(): Promise<BackupFlags> {
+    return (await loadBackupFlagsSnapshot()) ?? PRE_UPGRADE_BACKUP_FLAGS;
+  }
+
+  /** Whether this device is part of a sync chain, so a new passkey is already backed up. */
+  private async isSyncConfigured(): Promise<boolean> {
+    const config = (await chrome.storage.local.get(SYNC_CONFIG_KEY))[SYNC_CONFIG_KEY] as
+      | SyncConfig
+      | undefined;
+    return Boolean(config?.enabled && config.chainId);
+  }
+
   private async initialize(): Promise<void> {
     try {
       const saved = (await chrome.storage.local.get(SYNC_CONFIG_KEY))[SYNC_CONFIG_KEY];
@@ -332,6 +383,10 @@ class BackgroundService {
       logger.info('Background service initializing...');
       await this.sessionRestored;
       await this.withVault(() => this.repairStoredCredentialIds());
+      // Before anything else reads the Advanced toggles: from this build on
+      // they only describe new passkeys, so record what they meant until now.
+      await ensureBackupFlagsSnapshot();
+      await this.stampLegacyBackupFlags();
       await this.initializeSyncService();
       this.isInitialized = true;
       logger.info('Background service initialized successfully');
@@ -488,6 +543,7 @@ class BackgroundService {
       'GET_PASSKEYS',
       'LIST_PASSKEYS_FOR_RP',
       'DELETE_PASSKEY',
+      'SET_PASSKEY_BACKUP',
       'ENCRYPT_BACKUP',
       'LIST_TOTP_ENTRIES',
       'ADD_TOTP_ENTRY',
@@ -503,6 +559,7 @@ class BackgroundService {
     const upgradeBlockedTypes = new Set([
       'CREATE_PASSKEY',
       'DELETE_PASSKEY',
+      'SET_PASSKEY_BACKUP',
       'ADD_TOTP_ENTRY',
       'DELETE_TOTP_ENTRY',
       'IMPORT_VAULT',
@@ -530,6 +587,7 @@ class BackgroundService {
       'CREATE_PASSKEY',
       'GET_PASSKEY',
       'DELETE_PASSKEY',
+      'SET_PASSKEY_BACKUP',
       'ADD_TOTP_ENTRY',
       'DELETE_TOTP_ENTRY',
       'GENERATE_TOTP_CODE',
@@ -570,6 +628,8 @@ class BackgroundService {
         return this.handleSaveSiteIcon(payload || {});
       case 'DELETE_PASSKEY':
         return this.handleDeletePasskey(payload || {});
+      case 'SET_PASSKEY_BACKUP':
+        return this.handleSetPasskeyBackup(payload || {});
       case 'ENCRYPT_BACKUP':
         return this.handleEncryptBackup(payload as { data: string; password: string });
       case 'LIST_TOTP_ENTRIES':
@@ -773,6 +833,12 @@ class BackgroundService {
       const clientDataJSONBytes = new TextEncoder().encode(JSON.stringify(clientData));
 
       const flagSettings = await loadWebAuthnFlags();
+      // Fixed for the life of the credential: the site may store BE and
+      // reject any later sign-in that disagrees.
+      const backupFlags = normalizeBackupFlags(
+        flagSettings.backupEligible,
+        flagSettings.backupState || (await this.isSyncConfigured())
+      );
       const authenticatorData = await createAuthenticatorData(
         rpId,
         credentialId,
@@ -780,7 +846,7 @@ class BackgroundService {
         true,
         0,
         null,
-        toAuthenticatorDataOptions(flagSettings)
+        toAuthenticatorDataOptions(flagSettings, backupFlags)
       );
 
       const attestationObject = createAttestationObjectNone(authenticatorData);
@@ -809,6 +875,7 @@ class BackgroundService {
         createdAt: Date.now(),
         counter: 0,
         prfKey: prfKeyBase64,
+        ...withBackupFlags({}, backupFlags, 'created'),
       });
 
       await this.savePasskeys(passkeys);
@@ -937,6 +1004,7 @@ class BackgroundService {
       // detection. Sending zero is what platform passkey providers do; the
       // stored counter keeps moving either way so the UI still shows use.
       const reportedCounter = flagSettings.signCounter === 'zero' ? 0 : passkey.counter;
+      const backupFlags = backupFlagsOf(passkey, await this.fallbackBackupFlags());
       const authenticatorData = await createAuthenticatorData(
         rpId,
         null,
@@ -944,7 +1012,7 @@ class BackgroundService {
         false,
         reportedCounter,
         null,
-        toAuthenticatorDataOptions(flagSettings)
+        toAuthenticatorDataOptions(flagSettings, backupFlags)
       );
 
       const clientDataHash = await crypto.subtle.digest('SHA-256', clientDataJSONBytes.buffer);
@@ -985,6 +1053,8 @@ class BackgroundService {
         rpId,
         credentialId: passkey.id,
         user: passkey.user?.name || '',
+        backupEligible: backupFlags.backupEligible,
+        backupState: backupFlags.backupState,
       });
 
       return {
@@ -1099,6 +1169,47 @@ class BackgroundService {
     return { success: saved };
   }
 
+  /**
+   * The user's answer to "is this a synced passkey?" for one credential. Sets
+   * both flags together, the way syncing managers report them, and marks the
+   * choice as the user's so later imports leave it alone.
+   */
+  private async handleSetPasskeyBackup(payload: MessagePayload): Promise<unknown> {
+    try {
+      const credentialId = payload.credentialId as string | undefined;
+      if (!credentialId || typeof payload.synced !== 'boolean') {
+        return { success: false, error: 'credentialId and synced are required' };
+      }
+      const synced = payload.synced;
+      const passkeys = await this.loadPasskeys();
+      const index = passkeys.findIndex(
+        (p) => p.id === credentialId || p.credentialId === credentialId
+      );
+      if (index < 0) return { success: false, error: 'Passkey not found' };
+
+      const current = passkeys[index];
+      const flags = normalizeBackupFlags(synced, synced);
+      passkeys[index] = {
+        ...withBackupFlags(current, flags, 'manual'),
+        updatedAt: Math.max(Date.now(), (current.updatedAt ?? current.createdAt) + 1),
+      };
+      await this.savePasskeys(passkeys);
+      this.logWebAuthn(
+        'BACKUP',
+        'info',
+        `Marked passkey for ${current.rpId} as ${synced ? 'synced' : 'device-bound'}`,
+        { rpId: current.rpId, credentialId: current.id }
+      );
+      await this.incrementPendingChanges();
+      void this.triggerSync();
+      const { backupEligible, backupState, backupSource, updatedAt } = passkeys[index];
+      return { success: true, passkey: { backupEligible, backupState, backupSource, updatedAt } };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  }
+
   private async handleDeletePasskey(payload: MessagePayload): Promise<unknown> {
     try {
       const credentialId = payload.credentialId as string;
@@ -1162,21 +1273,34 @@ class BackgroundService {
         Object.assign(item, restoreRecord(item, deletions, 'totp'));
       }
     }
-    const passkeys = await this.loadPasskeys();
+    const backupRepairs = Array.isArray(payload.backupRepairs)
+      ? (payload.backupRepairs as BackupRepair[])
+      : [];
+    const { records: passkeys, repaired } = applyBackupRepairs(
+      await this.loadPasskeys(),
+      backupRepairs
+    );
     const knownPasskeys = new Set(passkeys.map((entry) => entry.id));
     const newPasskeys = incomingPasskeys.filter((entry) => !knownPasskeys.has(entry.id));
-    if (newPasskeys.length > 0) await this.savePasskeys([...passkeys, ...newPasskeys]);
+    if (newPasskeys.length > 0 || repaired > 0) {
+      await this.savePasskeys([...passkeys, ...newPasskeys]);
+    }
 
     const totpEntries = await loadTotpEntries();
     const knownTotp = new Set(totpEntries.map((entry) => entry.id));
     const newTotp = incomingTotp.filter((entry) => entry?.id && !knownTotp.has(entry.id));
     if (newTotp.length > 0) await saveTotpEntries([...totpEntries, ...newTotp]);
 
-    if (newPasskeys.length > 0 || newTotp.length > 0) {
+    if (newPasskeys.length > 0 || newTotp.length > 0 || repaired > 0) {
       await this.incrementPendingChanges();
       void this.triggerSync();
     }
-    return { success: true, passkeys: newPasskeys.length, totpEntries: newTotp.length };
+    return {
+      success: true,
+      passkeys: newPasskeys.length,
+      totpEntries: newTotp.length,
+      backupRepaired: repaired,
+    };
   }
 
   private async handleExportVault(): Promise<unknown> {
@@ -1777,6 +1901,7 @@ class BackgroundService {
       if (!unlocked) {
         return { success: false, error: 'Invalid password or storage not initialized' };
       }
+      await this.stampLegacyBackupFlags();
       // The seed lives in the encrypted store, so sync could not have started
       // while locked. Now that the key is in memory, bring it up.
       await this.initializeSyncService();
