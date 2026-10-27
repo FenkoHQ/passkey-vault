@@ -86,6 +86,8 @@ const SYNC_CONFIG_KEY = 'sync_config';
 const SYNC_DEVICES_KEY = 'sync_devices';
 const SYNC_STATUS_KEY = 'sync_status';
 const UPGRADE_BACKUP_REQUIRED_KEY = 'upgrade_backup_required_0_9_5';
+/** How long a page may take back a passkey it stopped waiting for. */
+const REGISTRATION_UNDO_MS = 10 * 60 * 1000;
 
 /**
  * The content script's account of the calling frame, for clientData
@@ -180,6 +182,8 @@ interface ExtensionMessage {
   type: string;
   payload?: MessagePayload;
   requestId?: string;
+  /** Which tab, frame and origin a web page's message came from; set by bindToWebPage. */
+  requester?: string;
   timestamp?: number;
   deviceName?: string;
   wordCount?: number;
@@ -196,6 +200,7 @@ interface ExtensionMessage {
  */
 const WEB_PAGE_MESSAGES = new Set([
   'CREATE_PASSKEY',
+  'DISCARD_REGISTRATION',
   'GET_PASSKEY',
   'LIST_PASSKEYS_FOR_RP',
   'VERIFY_RELATED_ORIGIN',
@@ -287,7 +292,7 @@ async function bindToWebPage(
       payload.origin = origin;
       break;
   }
-  return { ...message, payload };
+  return { ...message, payload, requester: `${sender.tab?.id}:${sender.frameId}:${origin}` };
 }
 
 /**
@@ -307,6 +312,11 @@ class BackgroundService {
   private isInitialized: boolean;
   private sessionRestored: Promise<unknown>;
   private vaultJobs: Promise<unknown> = Promise.resolve();
+  /** Passkeys made for a web page recently, by request, so the page can take one back. */
+  private recentRegistrations = new Map<
+    string,
+    { requester: string; credentialId: string; at: number }
+  >();
 
   private withVault<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.vaultJobs.then(operation);
@@ -738,6 +748,7 @@ class BackgroundService {
 
     const lockedTypes = new Set([
       'CREATE_PASSKEY',
+      'DISCARD_REGISTRATION',
       'GET_PASSKEY',
       'RETRIEVE_PASSKEY',
       'LIST_PASSKEYS',
@@ -784,6 +795,7 @@ class BackgroundService {
     // Serialize read/modify/write operations. Lookups and relay waits stay independent.
     const mutations = new Set([
       'CREATE_PASSKEY',
+      'DISCARD_REGISTRATION',
       'GET_PASSKEY',
       'DELETE_PASSKEY',
       'SET_PASSKEY_BACKUP',
@@ -810,7 +822,9 @@ class BackgroundService {
     const { type, payload } = message;
     switch (type) {
       case 'CREATE_PASSKEY':
-        return this.handleCreatePasskey(payload || {});
+        return this.handleCreatePasskey(payload || {}, message.requestId, message.requester);
+      case 'DISCARD_REGISTRATION':
+        return this.handleDiscardRegistration(message.requestId, message.requester);
       case 'GET_PASSKEY':
         return this.handleGetPasskey(payload || {});
       case 'RETRIEVE_PASSKEY':
@@ -959,7 +973,11 @@ class BackgroundService {
 
   // ==================== PASSKEY OPERATIONS ====================
 
-  private async handleCreatePasskey(payload: MessagePayload): Promise<unknown> {
+  private async handleCreatePasskey(
+    payload: MessagePayload,
+    requestId?: string,
+    requester?: string
+  ): Promise<unknown> {
     try {
       const options = payload.publicKey as Record<string, unknown> | undefined;
       const origin = payload.origin as string | undefined;
@@ -1095,6 +1113,9 @@ class BackgroundService {
 
       await this.savePasskeys(passkeys);
       logger.debug('Created and stored passkey', credentialIdBase64);
+      if (requestId && requester) {
+        this.rememberRegistration(requestId, requester, credentialIdBase64);
+      }
 
       this.logWebAuthn('CREATE', 'info', `Created passkey for ${rpId}`, {
         rpId,
@@ -1302,6 +1323,45 @@ class BackgroundService {
       logger.error('Error getting passkey:', error);
       return { success: false, error: errorMessage };
     }
+  }
+
+  private rememberRegistration(requestId: string, requester: string, credentialId: string): void {
+    const now = Date.now();
+    for (const [id, entry] of this.recentRegistrations) {
+      if (now - entry.at > REGISTRATION_UNDO_MS) this.recentRegistrations.delete(id);
+    }
+    this.recentRegistrations.set(requestId, { requester, credentialId, at: now });
+  }
+
+  /**
+   * Take back a passkey made for a page that stopped waiting for it (it
+   * aborted, or its request timed out) before the credential reached it.
+   * The site never registered that passkey, so keeping it would leave the
+   * user a passkey that cannot sign in. Only the tab, frame and origin the
+   * passkey was made for can take it back, and only for a little while.
+   */
+  private async handleDiscardRegistration(
+    requestId: string | undefined,
+    requester: string | undefined
+  ): Promise<unknown> {
+    const entry = requestId ? this.recentRegistrations.get(requestId) : undefined;
+    if (!entry || entry.requester !== requester || Date.now() - entry.at > REGISTRATION_UNDO_MS) {
+      return { success: false, error: 'Nothing to discard' };
+    }
+    this.recentRegistrations.delete(requestId!);
+    const passkeys = await this.loadPasskeys();
+    const kept = passkeys.filter((p) => p.credentialId !== entry.credentialId);
+    if (kept.length === passkeys.length) {
+      return { success: false, error: 'Nothing to discard' };
+    }
+    // A sync may already have sent it to other devices.
+    await this.recordDeletions([
+      { kind: 'passkey', id: entry.credentialId, deletedAt: Date.now() },
+    ]);
+    await this.savePasskeys(kept);
+    logger.debug('Discarded a passkey the page stopped waiting for', entry.credentialId);
+    await this.noteVaultChange();
+    return { success: true };
   }
 
   private async handleRetrievePasskey(payload: MessagePayload): Promise<unknown> {

@@ -329,6 +329,16 @@ class ContentScript {
           timestamp: Date.now(),
         });
 
+        // The page stopped waiting while the passkey was being made, so the
+        // site will never register it. Take it back instead of leaving the
+        // user a passkey that cannot sign in.
+        if (signal.aborted) {
+          if (response.success) {
+            this.sendMessage({ type: 'DISCARD_REGISTRATION', requestId }).catch(() => undefined);
+          }
+          return;
+        }
+
         if (response.success && response.credential) {
           const pkUser = (pk?.user as Record<string, string>) || {};
           const userName = pkUser.displayName || pkUser.name || t('commonUnknownUser');
