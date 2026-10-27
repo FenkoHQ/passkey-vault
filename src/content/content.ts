@@ -321,6 +321,20 @@ class ContentScript {
           timestamp: Date.now(),
         });
 
+        // A locked vault cannot tell whether it holds a passkey for this site,
+        // so it must not be reported as "no passkey". Say it is locked, then
+        // follow the user's fallback setting: blocking the native prompt on
+        // every locked sign-in would also lock out their security keys.
+        if (!listResponse.success && listResponse.code === 'VAULT_LOCKED') {
+          _showErrorNotification(t('popupVaultLocked'), t('pageVaultLockedMsg'));
+          if (rules.passthroughOnNoPasskey !== false) {
+            this.postPassthroughResponse('PASSKEY_GET_RESPONSE', requestId, 'Vault is locked');
+          } else {
+            this.postBlockedResponse('PASSKEY_GET_RESPONSE', requestId, t('pageVaultLockedMsg'));
+          }
+          return;
+        }
+
         const passkeys = listResponse.passkeys as Record<string, unknown>[] | undefined;
 
         // If the RP specified allowCredentials, the server only accepts those

@@ -151,6 +151,19 @@ interface ExtensionMessage {
   deviceId?: string;
 }
 
+/**
+ * The vault has a PIN and is locked. Responses carry `code: 'VAULT_LOCKED'`
+ * so the content script can tell this apart from an empty vault.
+ */
+class VaultLockedError extends Error {
+  readonly code = 'VAULT_LOCKED';
+
+  constructor() {
+    super('Secure storage is locked. Please unlock with master password.');
+    this.name = 'VaultLockedError';
+  }
+}
+
 class BackgroundService {
   private isInitialized: boolean;
   private vaultJobs: Promise<unknown> = Promise.resolve();
@@ -197,7 +210,7 @@ class BackgroundService {
       return (await secureStorage.getPasskeys()) as unknown as StoredPasskey[];
     }
     if (await secureStorage.isSetup()) {
-      throw new Error('Secure storage is locked. Please unlock with master password.');
+      throw new VaultLockedError();
     }
     const result = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
     return result[PASSKEY_STORAGE_KEY] || [];
@@ -209,7 +222,7 @@ class BackgroundService {
       return;
     }
     if (await secureStorage.isSetup()) {
-      throw new Error('Secure storage is locked. Please unlock with master password.');
+      throw new VaultLockedError();
     }
     await chrome.storage.local.set({ [PASSKEY_STORAGE_KEY]: passkeys });
   }
@@ -513,7 +526,8 @@ class BackgroundService {
     } catch (error: unknown) {
       const message_str = error instanceof Error ? error.message : String(error);
       console.error('Message handling error:', error);
-      sendResponse({ success: false, error: message_str });
+      const code = error instanceof VaultLockedError ? error.code : undefined;
+      sendResponse({ success: false, error: message_str, ...(code && { code }) });
     }
   }
 
@@ -556,7 +570,7 @@ class BackgroundService {
       (await secureStorage.isSetup()) &&
       !secureStorage.isStorageUnlocked()
     ) {
-      throw new Error('Secure storage is locked. Please unlock with master password.');
+      throw new VaultLockedError();
     }
     if (upgradeBlockedTypes.has(type) && (await this.isUpgradeBackupRequired())) {
       throw new Error('Export an encrypted backup before changing this upgraded vault.');
@@ -1092,7 +1106,8 @@ class BackgroundService {
       };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
+      const code = error instanceof VaultLockedError ? error.code : undefined;
+      return { success: false, error: message, ...(code && { code }) };
     }
   }
 
