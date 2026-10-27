@@ -161,3 +161,41 @@ describe('changing the master PIN', () => {
     expect(storage.passkeys).toEqual([passkey]);
   });
 });
+
+describe('setting up a master PIN', () => {
+  it('refuses a second setup instead of emptying the vault', async () => {
+    storage.passkeys = [passkey];
+    const { send } = await loadBackground();
+    const setup = { type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } };
+
+    expect((await send(setup)).success).toBe(true);
+    expect(storage.passkeys).toBeUndefined();
+    const again = await send(setup);
+
+    expect(again.success).toBe(false);
+    expect((await send({ type: 'LIST_PASSKEYS' })).passkeys).toEqual([passkey]);
+    expect(await unlocksWith(send, PIN)).toBe(true);
+    expect((await send({ type: 'LIST_PASSKEYS' })).passkeys).toEqual([passkey]);
+  });
+
+  it('survives a double-clicked setup', async () => {
+    storage.passkeys = [passkey];
+    const { send } = await loadBackground();
+    const setup = { type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } };
+
+    const results = await Promise.all([send(setup), send(setup)]);
+
+    expect(results.map((r) => r.success).sort()).toEqual([false, true]);
+    expect((await send({ type: 'LIST_PASSKEYS' })).passkeys).toEqual([passkey]);
+  });
+
+  it('does not let a reconcile wipe a migrated vault', async () => {
+    storage.passkeys = [passkey];
+    const { send } = await loadBackground();
+    await send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+
+    expect((await send({ type: 'RECONCILE_STORAGE' })).success).toBe(true);
+
+    expect((await send({ type: 'LIST_PASSKEYS' })).passkeys).toEqual([passkey]);
+  });
+});

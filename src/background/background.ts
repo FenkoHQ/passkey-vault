@@ -229,13 +229,19 @@ class BackgroundService {
       });
     }
 
+    // A missing raw key means the encrypted copy is the only one (a migrated
+    // vault), not that the vault is empty, so leave that store alone.
     const passkeysResult = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
     const passkeys: StoredPasskey[] = passkeysResult[PASSKEY_STORAGE_KEY] || [];
-    await secureStorage.storePasskeys(passkeys as unknown as Record<string, unknown>[]);
+    if (passkeysResult[PASSKEY_STORAGE_KEY] !== undefined) {
+      await secureStorage.storePasskeys(passkeys as unknown as Record<string, unknown>[]);
+    }
 
     const totpResult = await chrome.storage.local.get('totp_entries');
     const totpEntries: StoredTotpEntry[] = totpResult['totp_entries'] || [];
-    await secureStorage.storeTotpEntries(totpEntries as unknown as Record<string, unknown>[]);
+    if (totpResult['totp_entries'] !== undefined) {
+      await secureStorage.storeTotpEntries(totpEntries as unknown as Record<string, unknown>[]);
+    }
 
     if (passkeys.length > 0 || totpEntries.length > 0) {
       logger.info(
@@ -1682,6 +1688,14 @@ class BackgroundService {
       const { password } = payload;
       if (!/^\d{4,12}$/.test(password || '')) {
         return { success: false, error: 'PIN must be 4 to 12 digits' };
+      }
+
+      // Runs serialized with the other vault jobs, so this cannot race a
+      // concurrent setup. On a configured vault initialize() would just unlock
+      // it, and the reconcile below would then overwrite the encrypted store
+      // with raw storage that the first setup already emptied.
+      if (await secureStorage.isSetup()) {
+        return { success: false, error: 'A PIN is already set' };
       }
 
       const unlocked = await secureStorage.initialize(password);
