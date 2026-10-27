@@ -40,6 +40,10 @@ before(async () => {
   );
 });
 
+// Chrome's account of a message from the popup, an extension page.
+const EXTENSION_ORIGIN = 'chrome-extension://fenkovaulttest';
+const POPUP = { id: 'fenkovaulttest', url: `${EXTENSION_ORIGIN}/popup.html` };
+
 function env(code) {
   const storage = new Map();
   const timers = new Map();
@@ -61,6 +65,7 @@ function env(code) {
       removeItem: (k) => storage.delete(k),
     },
     chrome: {
+      runtime: { getURL: (path) => `${EXTENSION_ORIGIN}/${path}` },
       storage: {
         local: {
           get: async (k) => ({ [k]: storage.get(k) }),
@@ -677,7 +682,7 @@ test('browser HOTP next-code advances, persists and publishes the counter', asyn
     { id: 'h', type: 'hotp', secretB64, algorithm: 'SHA1', digits: 6, counter: 0, createdAt: 1 },
   ]);
   const send = (type) =>
-    new Promise((resolve) => owner.handleMessage({ type, payload: { id: 'h' } }, resolve));
+    new Promise((resolve) => owner.handleMessage({ type, payload: { id: 'h' } }, resolve, POPUP));
   // Rendering a code is a pure read and must not consume a counter value.
   assert.equal((await send('GENERATE_TOTP_CODE')).code, '755224');
   assert.equal((await send('GENERATE_TOTP_CODE')).code, '755224');
@@ -712,12 +717,16 @@ test('a stalled sync request does not block a passkey lookup', async () => {
       release = resolve;
     });
   owner.handleListPasskeys = async () => ({ success: true });
-  const sync = owner.handleMessage({ type: 'TRIGGER_SYNC' }, () => {});
+  const sync = owner.handleMessage({ type: 'TRIGGER_SYNC' }, () => {}, POPUP);
   await new Promise((resolve) => setImmediate(resolve));
   let replied = false;
-  const lookup = owner.handleMessage({ type: 'LIST_PASSKEYS' }, () => {
-    replied = true;
-  });
+  const lookup = owner.handleMessage(
+    { type: 'LIST_PASSKEYS' },
+    () => {
+      replied = true;
+    },
+    POPUP
+  );
   await new Promise((resolve) => setImmediate(resolve));
   const completed = replied;
   release();
@@ -1093,9 +1102,13 @@ test('messages wait for the restored session before checking the lock', async ()
   });
   owner.handleListPasskeys = async () => ({ success: true });
   let replied = false;
-  const lookup = owner.handleMessage({ type: 'LIST_PASSKEYS' }, () => {
-    replied = true;
-  });
+  const lookup = owner.handleMessage(
+    { type: 'LIST_PASSKEYS' },
+    () => {
+      replied = true;
+    },
+    POPUP
+  );
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(replied, false);
   restore();
