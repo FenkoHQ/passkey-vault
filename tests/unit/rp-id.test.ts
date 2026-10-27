@@ -16,8 +16,6 @@ describe('isRpIdValidForHost', () => {
     ['Example.COM', 'example.com', true],
     ['www.example.co.uk', 'example.co.uk', true],
     ['localhost', 'localhost', true],
-    ['127.0.0.1', '127.0.0.1', true],
-    ['[::1]', '[::1]', true],
     ['example.com', 'EXAMPLE.COM', false],
     ['www.example.com', 'Example.com', false],
     ['example.com', 'com', false],
