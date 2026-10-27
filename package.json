@@ -48,6 +48,7 @@
     "url": ""
   },
   "devDependencies": {
+    "@simplewebauthn/server": "^14.0.3",
     "@types/chrome": "^0.0.254",
     "@types/jest": "^29.5.8",
     "@types/node": "^20.9.0",
