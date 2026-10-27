@@ -52,6 +52,7 @@ import {
   type BackupRepair,
 } from '../sync/backup-flags';
 import { verifyRelatedOrigin } from './related-origins';
+import { serializeClientData } from './client-data';
 import { needsSiteIcon, saveSiteIcon, clearSiteIcons } from '../site-icons';
 import {
   selectPrfEval,
@@ -81,6 +82,16 @@ const SYNC_CONFIG_KEY = 'sync_config';
 const SYNC_DEVICES_KEY = 'sync_devices';
 const SYNC_STATUS_KEY = 'sync_status';
 const UPGRADE_BACKUP_REQUIRED_KEY = 'upgrade_backup_required_0_9_5';
+
+/**
+ * The content script's account of the calling frame, for clientData
+ * crossOrigin/topOrigin. Absent fields mean a top-level, same-origin call.
+ */
+function callerFrame(payload: MessagePayload): { crossOrigin: boolean; topOrigin?: string } {
+  const crossOrigin = payload.crossOrigin === true;
+  const topOrigin = typeof payload.topOrigin === 'string' ? payload.topOrigin : undefined;
+  return crossOrigin && topOrigin ? { crossOrigin, topOrigin } : { crossOrigin };
+}
 
 /**
  * Translate the user's Advanced settings, and the passkey's own backup flags,
@@ -907,8 +918,14 @@ class BackgroundService {
       // be embedded in authenticatorData, which is forwarded to the RP server.
       const clientExtensionResults = buildClientExtensionResults(prfResults);
 
-      const clientData = { type: 'webauthn.create', challenge, origin };
-      const clientDataJSONBytes = new TextEncoder().encode(JSON.stringify(clientData));
+      const clientDataJSONBytes = new TextEncoder().encode(
+        serializeClientData({
+          type: 'webauthn.create',
+          challenge: challenge as string,
+          origin: origin as string,
+          ...callerFrame(payload),
+        })
+      );
 
       const flagSettings = await loadWebAuthnFlags();
       // Fixed for the life of the credential: the site may store BE and
@@ -1061,8 +1078,14 @@ class BackgroundService {
         ['sign']
       );
 
-      const clientData = { type: 'webauthn.get', challenge, origin };
-      const clientDataJSONBytes = new TextEncoder().encode(JSON.stringify(clientData));
+      const clientDataJSONBytes = new TextEncoder().encode(
+        serializeClientData({
+          type: 'webauthn.get',
+          challenge: challenge as string,
+          origin: origin as string,
+          ...callerFrame(payload),
+        })
+      );
 
       const prfInput = (options?.extensions as Record<string, unknown> | undefined)?.prf;
       const prfEvalInput = selectPrfEval(

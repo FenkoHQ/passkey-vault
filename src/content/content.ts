@@ -8,6 +8,7 @@
 import { initI18n, t } from '../i18n';
 import { logger } from '../utils/logger';
 import { readPageIcon } from '../site-icons/page-capture';
+import { describeFrame } from './frame';
 
 interface PasskeyOption {
   id: string;
@@ -162,8 +163,17 @@ class ContentScript {
     } catch {
       return null;
     }
-    // Bind the origin that will be written into clientDataJSON to the real one.
+    // Bind the origin that will be written into clientDataJSON to the real one,
+    // and say whether the call comes from a frame that is not same-origin with
+    // its ancestors (clientData crossOrigin/topOrigin).
     payload.origin = trueOrigin;
+    const frame = describeFrame();
+    payload.crossOrigin = !frame.sameOriginWithAncestors;
+    if (payload.crossOrigin && frame.topOrigin) {
+      payload.topOrigin = frame.topOrigin;
+    } else {
+      delete payload.topOrigin;
+    }
 
     const pk = payload.publicKey as Record<string, unknown> | undefined;
     const pkRp = (pk?.rp as Record<string, string>) || {};
