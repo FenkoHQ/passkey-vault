@@ -668,6 +668,12 @@
   }
 
   function convertCreationOptions(value: unknown) {
+    const converted = convertCreationMembers(value);
+    checkExtensionRules(converted.extensions, 'create', []);
+    return converted;
+  }
+
+  function convertCreationMembers(value: unknown) {
     const options = dictionary(value, 'publicKey');
     const rp = dictionary(required(options.rp, 'rp'), 'rp');
     const user = dictionary(required(options.user, 'user'), 'user');
@@ -721,6 +727,16 @@
   }
 
   function convertRequestOptions(value: unknown) {
+    const converted = convertRequestMembers(value);
+    checkExtensionRules(
+      converted.extensions,
+      'get',
+      (converted.allowCredentials ?? []).map((descriptor) => descriptor.id)
+    );
+    return converted;
+  }
+
+  function convertRequestMembers(value: unknown) {
     const options = dictionary(value, 'publicKey');
     return {
       rpId: optionalString(options.rpId) ?? window.location.hostname,
@@ -771,6 +787,62 @@
       converted.prf = inputs;
     }
     return converted;
+  }
+
+  /**
+   * The rules Chrome enforces for the extensions the vault implements, with
+   * the errors Chrome throws, checked once the options are converted:
+   *
+   *   credProps   registration only (NotSupportedError at sign-in)
+   *   prf         evalByCredential is sign-in only (NotSupportedError at
+   *               registration), needs a non-empty allowCredentials
+   *               (NotSupportedError), and each key must be the unpadded
+   *               base64url of one of those credential IDs (SyntaxError),
+   *               WebAuthn Level 3 §10.1.4
+   */
+  function checkExtensionRules(
+    extensions: Dictionary | undefined,
+    ceremony: 'create' | 'get',
+    allowedIds: string[]
+  ): void {
+    if (!extensions) return;
+    if (ceremony === 'get' && extensions.credProps) {
+      throw new DOMException(
+        "The 'credProps' extension is only valid when creating a credential",
+        'NotSupportedError'
+      );
+    }
+    const byCredential = (extensions.prf as Dictionary | undefined)?.evalByCredential as
+      | Dictionary
+      | undefined;
+    if (byCredential === undefined) return;
+    if (ceremony === 'create') {
+      throw new DOMException(
+        "The 'evalByCredential' field cannot be set when creating a credential.",
+        'NotSupportedError'
+      );
+    }
+    const keys = Object.keys(byCredential);
+    if (keys.length > 0 && allowedIds.length === 0) {
+      throw new DOMException(
+        "'prf' extension has 'evalByCredential' with an empty allow list",
+        'NotSupportedError'
+      );
+    }
+    for (const key of keys) {
+      if (!/^[A-Za-z0-9_-]+$/.test(key) || key.length % 4 === 1) {
+        throw new DOMException(
+          "'prf' extension contains invalid base64url data in 'evalByCredential'",
+          'SyntaxError'
+        );
+      }
+      if (!allowedIds.includes(arrayBufferToBase64URL(base64ToArrayBuffer(key)))) {
+        throw new DOMException(
+          "'prf' extension contains 'evalByCredential' key that doesn't match any in allowCredentials",
+          'SyntaxError'
+        );
+      }
+    }
   }
 
   function convertPrfValues(value: unknown, member: string): { first: string; second?: string } {
