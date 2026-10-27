@@ -226,18 +226,22 @@ import {
       return;
     }
 
-    let message = t('importFoundEntries', {
-      passkeys: result.passkeys.length,
-      totp: result.totpEntries.length,
-    });
-    if (duplicates > 0) {
+    // A file that only fixes passkeys already in the vault says just that.
+    let message =
+      total === 0
+        ? ''
+        : t('importFoundEntries', {
+            passkeys: result.passkeys.length,
+            totp: result.totpEntries.length,
+          });
+    if (total > 0 && duplicates > 0) {
       message += t('importDuplicatesSkipped', {
         count: duplicates,
         plural: duplicates !== 1 ? 's' : '',
       });
     }
     if (repairs > 0) {
-      message += ` ${formatCount('importBackupRepairs', repairs)}`;
+      message = `${message} ${formatCount('importBackupRepairs', repairs)}`.trim();
     }
     showStatus(message, 'info');
     reportWarnings(result);
@@ -348,13 +352,19 @@ import {
       });
       if (!response.success) throw new Error(response.error || 'Import failed');
 
-      let message = t('importSucceeded', {
-        passkeys: Number(response.passkeys || 0),
-        totp: Number(response.totpEntries || 0),
-      });
+      const added = Number(response.passkeys || 0) + Number(response.totpEntries || 0);
       const repaired = Number(response.backupRepaired || 0);
-      if (repaired > 0) message += ` ${formatCount('importBackupRepaired', repaired)}`;
-      showStatus(message, 'success');
+      const parts = [];
+      if (added > 0 || repaired === 0) {
+        parts.push(
+          t('importSucceeded', {
+            passkeys: Number(response.passkeys || 0),
+            totp: Number(response.totpEntries || 0),
+          })
+        );
+      }
+      if (repaired > 0) parts.push(formatCount('importBackupRepaired', repaired));
+      showStatus(parts.join(' '), 'success');
 
       actionsEl.classList.add('hidden');
       closeLink.textContent = t('importCloseReturn');
@@ -366,7 +376,8 @@ import {
 
   function showStatus(message: string, type: 'success' | 'error' | 'info'): void {
     statusEl.textContent = message;
-    statusEl.className = 'status ' + type;
+    // .status is display:none until .visible is set.
+    statusEl.className = `status visible ${type}`;
   }
 
   function resetState(): void {
