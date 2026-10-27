@@ -30,7 +30,7 @@ Every result is then verified twice:
 | `tests/helpers/oracle.ts`      | [`@simplewebauthn/server`](https://simplewebauthn.dev), a widely deployed server library, fed the credential's `toJSON()` as a page would POST it.                                                                                                           |
 
 `tests/conformance/verifier.test.ts` tests the strict verifier itself: it
-accepts the spec's §16 test vectors and rejects 37 single-field corruptions of
+accepts the spec's §16 test vectors and rejects 39 single-field corruptions of
 real vault credentials, so a green run means what it says.
 
 ## What is covered
