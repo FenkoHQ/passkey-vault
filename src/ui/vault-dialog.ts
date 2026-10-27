@@ -149,7 +149,11 @@ export class VaultDialog {
         )
       );
     } else {
-      list.hidden = true;
+      // The account the passkey is for, where the picker lists passkeys:
+      // what a native prompt shows, and it fills the frame's fixed body.
+      list.removeAttribute('role');
+      list.appendChild(this.newPasskeySummary(view.userName, view.rpId));
+      this.el('body').classList.add('centered');
       this.el('title').textContent = t('pageCreatePasskeyTitle');
       this.el('subtitle').textContent = t('pageCreatePasskeyMsg', {
         user: view.userName || t('commonUnknownUser'),
@@ -187,6 +191,26 @@ export class VaultDialog {
     // a keystroke meant for the page cannot confirm.
     const checked = list.querySelector<HTMLElement>('[aria-checked="true"]');
     (checked ?? card).focus({ preventScroll: true });
+  }
+
+  /** A read-only row like a picker entry: the new passkey's account and site. */
+  private newPasskeySummary(userName: string, rpId: string): HTMLElement {
+    const row = this.doc.createElement('div');
+    row.className = 'passkey-item passkey-summary';
+    const avatar = this.doc.createElement('span');
+    avatar.className = 'passkey-avatar';
+    avatar.innerHTML = LOCK_ICON;
+    const info = this.doc.createElement('span');
+    info.className = 'passkey-info';
+    const name = this.doc.createElement('span');
+    name.className = 'passkey-name';
+    name.textContent = userName || t('commonUnknownUser');
+    const detail = this.doc.createElement('span');
+    detail.className = 'passkey-detail';
+    detail.textContent = rpId;
+    info.append(name, detail);
+    row.append(avatar, info);
+    return row;
   }
 
   private passkeyItem(

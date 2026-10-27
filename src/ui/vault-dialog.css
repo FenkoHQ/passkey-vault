@@ -101,6 +101,13 @@ body {
   background: var(--bg);
 }
 
+/* A body with one row (the create confirmation): centred in the fixed frame. */
+.card-body.centered {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
 .card-footer {
   flex: none;
   display: grid;
@@ -138,7 +145,11 @@ body {
   cursor: pointer;
 }
 
-.passkey-item:hover,
+.passkey-summary {
+  cursor: default;
+}
+
+.passkey-item:hover:not(.passkey-summary),
 .passkey-item[aria-checked='true'] {
   background: var(--accent-soft);
   border-color: var(--accent-border);
