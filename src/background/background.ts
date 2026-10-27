@@ -53,6 +53,7 @@ import {
 } from '../sync/backup-flags';
 import { verifyRelatedOrigin } from './related-origins';
 import { serializeClientData } from './client-data';
+import { acceptsEs256 } from '../utils/algorithms';
 import { needsSiteIcon, saveSiteIcon, clearSiteIcons } from '../site-icons';
 import {
   selectPrfEval,
@@ -858,6 +859,16 @@ class BackgroundService {
         (origin ? new URL(origin).hostname : 'localhost');
 
       logger.debug('Creating passkey for', rpId, 'user:', (user?.name as string) || 'unknown');
+
+      // The content script hands these to the browser; refuse here too rather
+      // than mint a key type the relying party did not offer.
+      if (!acceptsEs256(options?.pubKeyCredParams)) {
+        return {
+          success: false,
+          error: 'None of the requested algorithms is supported',
+          name: 'NotSupportedError',
+        };
+      }
 
       // Refuse only a credential the RP says this account already has. A site
       // can hold several accounts, and an account several passkeys.

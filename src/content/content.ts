@@ -9,6 +9,7 @@ import { initI18n, t } from '../i18n';
 import { logger } from '../utils/logger';
 import { readPageIcon } from '../site-icons/page-capture';
 import { describeFrame } from './frame';
+import { acceptsEs256 } from '../utils/algorithms';
 
 interface PasskeyOption {
   id: string;
@@ -257,6 +258,17 @@ class ContentScript {
             'PASSKEY_CREATE_RESPONSE',
             requestId,
             'Domain not intercepted'
+          );
+          return;
+        }
+
+        // The vault only makes ES256 keys. When the site does not accept
+        // them, another authenticator may support what it asks for.
+        if (!acceptsEs256(pk?.pubKeyCredParams)) {
+          this.postPassthroughResponse(
+            'PASSKEY_CREATE_RESPONSE',
+            requestId,
+            'No requested algorithm is supported'
           );
           return;
         }
