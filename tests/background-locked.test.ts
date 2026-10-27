@@ -21,7 +21,15 @@ chromeMock.storage.local.set.mockResolvedValue(undefined);
 
 function send(message: Record<string, unknown>): Promise<any> {
   const listener = chromeMock.runtime.onMessage.addListener.mock.calls[0][0] as Listener;
-  return new Promise((resolve) => listener(message, {}, resolve));
+  // Chrome's account of a message from a content script on example.com.
+  const contentScript = {
+    id: chromeMock.runtime.id,
+    url: 'https://example.com/login',
+    origin: 'https://example.com',
+    tab: { id: 1, url: 'https://example.com/login' },
+    frameId: 0,
+  };
+  return new Promise((resolve) => listener(message, contentScript, resolve));
 }
 
 beforeAll(() => {

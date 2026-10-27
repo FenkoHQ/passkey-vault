@@ -113,8 +113,10 @@ async function loadBackground(): Promise<{
     sync = ((await import('../src/sync/sync-service')) as unknown as SyncServiceModule).syncService;
   });
 
+  // Chrome's account of a message from the popup, an extension page.
+  const popup = { id: chrome.runtime.id, url: chrome.runtime.getURL('popup.html') };
   const send: Respond = (message) =>
-    new Promise((resolve) => listeners[0](message, {}, (v) => resolve(v as Reply)));
+    new Promise((resolve) => listeners[0](message, popup, (v) => resolve(v as Reply)));
   return { send, secure, sync };
 }
 

@@ -68,7 +68,9 @@ function installChromeStorage(): void {
 
 function send(type: string, payload?: unknown): Promise<{ success: boolean; error?: string }> {
   return new Promise((resolve) => {
-    listener({ type, payload }, {}, resolve as (response: unknown) => void);
+    // Chrome's account of a message from the popup, an extension page.
+    const popup = { id: chrome.runtime.id, url: chrome.runtime.getURL('popup.html') };
+    listener({ type, payload }, popup, resolve as (response: unknown) => void);
   });
 }
 
