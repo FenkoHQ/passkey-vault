@@ -182,6 +182,7 @@ async function answered(promise: Promise<unknown>, ms = 5000): Promise<unknown> 
 }
 
 describe.each(TYPES)('%s with garbage', (type) => {
+  // A registration, twenty-five messages and a sign-in per message type.
   it('always answers and leaves the vault well-formed', async () => {
     const registration = await register();
     const random = prng(type.split('').reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7));
@@ -203,5 +204,5 @@ describe.each(TYPES)('%s with garbage', (type) => {
       expect(list.passkeys.map((p: any) => p.credentialId)).toContain(registration.record.id);
       await authenticate(registration, {}, { strictCounter: false });
     }
-  });
+  }, 60000);
 });

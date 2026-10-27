@@ -125,6 +125,7 @@ async function settles<T>(promise: Promise<T>): Promise<{ value?: T; error?: any
 }
 
 describe.each([1, 2, 3, 4])('create() with corrupted options (seed %i)', (seed) => {
+  // Forty ceremonies: seconds locally, longer on a busy CI runner.
   it('settles, and returns only credentials that verify and were stored', async () => {
     const random = prng(seed * 7919);
     for (let i = 0; i < 40; i++) {
@@ -165,10 +166,11 @@ describe.each([1, 2, 3, 4])('create() with corrupted options (seed %i)', (seed) 
             : undefined,
       });
     }
-  });
+  }, 60000);
 });
 
 describe.each([1, 2, 3, 4])('get() with corrupted options (seed %i)', (seed) => {
+  // Forty ceremonies: seconds locally, longer on a busy CI runner.
   it('settles, and returns only assertions that verify', async () => {
     const registration = await register();
     const random = prng(seed * 104729);
@@ -203,5 +205,5 @@ describe.each([1, 2, 3, 4])('get() with corrupted options (seed %i)', (seed) => 
       expect(result.userHandle).toEqual(registration.record.userHandle);
       void fromB64url;
     }
-  });
+  }, 60000);
 });

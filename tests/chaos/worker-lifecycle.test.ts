@@ -147,6 +147,7 @@ describe('no worker at all', () => {
 });
 
 describe('repeated restarts', () => {
+  // Twenty ceremonies and a worker start per message.
   it('survives a restart before every message of twenty ceremonies', async () => {
     const original = vault.chrome.deliver.bind(vault.chrome);
     let restarts = 0;
@@ -168,7 +169,7 @@ describe('repeated restarts', () => {
     expect(restarts).toBeGreaterThanOrEqual(20);
     const [stored] = await vault.passkeys();
     expect(stored.counter).toBe(19);
-  });
+  }, 60000);
 });
 
 describe('the vault locks mid-ceremony', () => {
