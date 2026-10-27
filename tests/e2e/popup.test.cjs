@@ -44,8 +44,25 @@ const PASSKEYS = [
   },
 ];
 
+function base32ToBytes(text) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  const out = [];
+  let buffer = 0;
+  let bits = 0;
+  for (const ch of text) {
+    buffer = (buffer << 5) | alphabet.indexOf(ch);
+    bits += 5;
+    if (bits >= 8) {
+      bits -= 8;
+      out.push((buffer >> bits) & 0xff);
+    }
+  }
+  return out;
+}
+
 let context;
 let popup;
+let worker;
 const consoleErrors = [];
 
 before(async () => {
@@ -58,7 +75,7 @@ before(async () => {
     args: [`--disable-extensions-except=${DIST}`, `--load-extension=${DIST}`],
   });
 
-  const worker = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
+  worker = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
   const extensionId = new URL(worker.url()).host;
 
   // Seed the unencrypted display copies the popup reads when no PIN is set.
@@ -119,7 +136,10 @@ test('labels each row icon with its site, not the entry type', async () => {
 test('shows a stored site icon in place of the placeholder glyph', async () => {
   const row = popup.locator('.passkey-item', { hasText: 'google.com' });
   await row.locator('.vault-item-icon img.site-icon').waitFor({ state: 'attached' });
-  assert.equal(await row.locator('.vault-item-icon').evaluate((el) => el.querySelector('svg') === null), true);
+  assert.equal(
+    await row.locator('.vault-item-icon').evaluate((el) => el.querySelector('svg') === null),
+    true
+  );
 
   // A row with no captured icon keeps the glyph.
   const bare = popup.locator('.passkey-item', { hasText: 'cveform-api.mitre.org' });
@@ -155,6 +175,50 @@ test('copies metadata but never the private key once confirmed', async () => {
   assert.equal(copied.rpId, 'google.com');
   assert.equal(copied.publicKey, 'BASE64-PUBLIC-KEY');
   assert.equal('privateKey' in copied, false);
+});
+
+test('explains what is wrong with a mistyped setup key', async () => {
+  await popup.locator('#add-totp-btn').click();
+  const dialog = popup.locator('.modal-overlay', { has: popup.locator('#totp-uri-input') });
+  await dialog.locator('#totp-uri-input').fill('kpvg 0irr 6z5n 4nzr');
+  assert.equal(await dialog.locator('#totp-key-details').isVisible(), false);
+
+  await dialog.locator('#totp-add-save').click();
+  await dialog.locator('#totp-add-error').waitFor({ state: 'visible' });
+  assert.match(await dialog.locator('#totp-add-error').textContent(), /2–7.*: 0$/);
+  await dialog.locator('#totp-add-cancel').click();
+});
+
+test('adds a 2FA code from a bare setup key once it has a name', async () => {
+  await popup.locator('#add-totp-btn').click();
+  const dialog = popup.locator('.modal-overlay', { has: popup.locator('#totp-uri-input') });
+  // The way services print keys for manual entry: grouped and lowercase.
+  await dialog.locator('#totp-uri-input').fill('kpvg zirr 6z5n 4nzr qdqn loiy jqm2 kg5z');
+  await dialog.locator('#totp-key-details').waitFor({ state: 'visible' });
+
+  await dialog.locator('#totp-add-save').click();
+  assert.match(await dialog.locator('#totp-add-error').textContent(), /service name/);
+
+  await dialog.locator('#totp-key-issuer').fill('Example');
+  await dialog.locator('#totp-key-account').fill('ali@example.com');
+  await dialog.locator('#totp-add-save').click();
+  await dialog.waitFor({ state: 'detached' });
+
+  await popup.locator('.totp-item', { hasText: 'Example' }).waitFor();
+  const stored = await worker.evaluate(async () => {
+    const { totp_entries: entries } = await chrome.storage.local.get('totp_entries');
+    return entries;
+  });
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].issuer, 'Example');
+  assert.equal(stored[0].account, 'ali@example.com');
+  assert.equal(stored[0].algorithm, 'SHA1');
+  assert.equal(stored[0].digits, 6);
+  assert.equal(stored[0].period, 30);
+  assert.equal(
+    stored[0].secretB64,
+    Buffer.from(base32ToBytes('KPVGZIRR6Z5N4NZRQDQNLOIYJQM2KG5Z')).toString('base64')
+  );
 });
 
 test('renders the popup without console errors', () => {

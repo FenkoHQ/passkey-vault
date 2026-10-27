@@ -32,7 +32,14 @@ import {
   mnemonicToBytes,
   deriveEd25519Keypair,
 } from '../../../src/crypto/bip39';
-import { generateHotp, generateTotp, parseOtpauth, timeRemaining } from '../../../src/crypto/totp';
+import {
+  base32Decode,
+  checkSetupKey,
+  generateHotp,
+  generateTotp,
+  parseOtpauth,
+  timeRemaining,
+} from '../../../src/crypto/totp';
 
 declare const jsQR:
   | undefined
@@ -583,9 +590,24 @@ async function addTotpManual(form: HTMLFormElement): Promise<void> {
   const data = new FormData(form);
   const issuer = String(data.get('issuer') || '').trim();
   const account = String(data.get('account') || '').trim();
-  const secret = String(data.get('secret') || '').trim();
-  if (!issuer || !secret) {
-    setStatus('TOTP needs an issuer and secret.', 'bad');
+  const key = checkSetupKey(String(data.get('secret') || ''));
+  if (!issuer) {
+    setStatus('Enter the service name for this code.', 'bad');
+    return;
+  }
+  if (key.kind === 'invalid-chars') {
+    setStatus(
+      `Setup keys only use the letters A–Z and the digits 2–7. Check these characters: ${key.invalidChars.join(' ')}`,
+      'bad'
+    );
+    return;
+  }
+  if (key.kind === 'too-short') {
+    setStatus('That setup key is too short. Check that you copied all of it.', 'bad');
+    return;
+  }
+  if (key.kind !== 'valid') {
+    setStatus('Enter the setup key from the service.', 'bad');
     return;
   }
   const type = String(data.get('type') || 'totp') as 'totp' | 'hotp';
@@ -593,11 +615,19 @@ async function addTotpManual(form: HTMLFormElement): Promise<void> {
   const digits = Number(data.get('digits') || 6);
   const period = Number(data.get('period') || 30);
   const counter = Number(data.get('counter') || 0);
-  const bytes = /^[A-Za-z2-7=\s]+$/.test(secret)
-    ? parseOtpauth(
-        `otpauth://${type}/${encodeURIComponent(issuer + ':' + account)}?secret=${encodeURIComponent(secret)}&issuer=${encodeURIComponent(issuer)}&algorithm=${algorithm}&digits=${digits}&period=${period}&counter=${counter}`
-      ).secret
-    : new TextEncoder().encode(secret);
+  if (!Number.isInteger(digits) || digits < 6 || digits > 10) {
+    setStatus('Digits must be a whole number from 6 to 10.', 'bad');
+    return;
+  }
+  if (!Number.isInteger(period) || period < 1) {
+    setStatus('Period must be a whole number of seconds.', 'bad');
+    return;
+  }
+  if (!Number.isSafeInteger(counter) || counter < 0) {
+    setStatus('Counter must be a whole number, 0 or more.', 'bad');
+    return;
+  }
+  const bytes = base32Decode(key.secret);
 
   const entry: StoredTotpEntry = {
     id: uuid(),
@@ -1792,7 +1822,7 @@ function renderAdd(): string {
     <section class="grid">
       <form id="totp-uri-form" class="panel stack">
         <h2>Add 2FA by URI</h2>
-        <textarea name="uri" placeholder="otpauth://totp/..."></textarea>
+        <textarea name="uri" placeholder="otpauth://totp/... or setup key" spellcheck="false" autocapitalize="off"></textarea>
         <div class="row">
           <button class="primary" type="submit">Add URI</button>
           <button type="button" id="scan-qr">Scan QR</button>
@@ -1805,9 +1835,9 @@ function renderAdd(): string {
       </form>
       <form id="totp-manual-form" class="panel stack">
         <h2>Add 2FA manually</h2>
-        <input name="issuer" placeholder="Issuer" />
-        <input name="account" placeholder="Account" />
-        <input name="secret" placeholder="Base32 secret" />
+        <input name="issuer" placeholder="Service (e.g. GitHub)" />
+        <input name="account" placeholder="Account (optional)" />
+        <input name="secret" placeholder="Setup key" spellcheck="false" autocapitalize="off" autocomplete="off" />
         <div class="row">
           <select name="algorithm">
             <option>SHA1</option>
@@ -2112,7 +2142,22 @@ function bindAdd(): void {
   document.getElementById('totp-uri-form')?.addEventListener('submit', (event) => {
     event.preventDefault();
     const form = event.currentTarget as HTMLFormElement;
-    const uri = String(new FormData(form).get('uri') || '');
+    const uri = String(new FormData(form).get('uri') || '').trim();
+    // A bare setup key pasted here still needs a name, so hand it to the
+    // manual form instead of rejecting it as a bad URI.
+    if (!uri.includes('://') && checkSetupKey(uri).kind === 'valid') {
+      const manual = document.getElementById('totp-manual-form') as HTMLFormElement | null;
+      const secretField = manual?.elements.namedItem('secret') as HTMLInputElement | null;
+      const issuerField = manual?.elements.namedItem('issuer') as HTMLInputElement | null;
+      if (secretField && issuerField) {
+        secretField.value = uri;
+        form.reset();
+        issuerField.focus();
+        issuerField.scrollIntoView({ block: 'center' });
+        setStatus('Setup key moved to "Add 2FA manually". Enter the service name and add it.');
+        return;
+      }
+    }
     void addTotpFromUri(uri).catch((error) => setStatus(String(error), 'bad'));
   });
   document.getElementById('totp-manual-form')?.addEventListener('submit', (event) => {

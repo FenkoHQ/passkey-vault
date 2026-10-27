@@ -6,6 +6,13 @@
 
 import jsQR from 'jsqr';
 import { materialize, parseImport } from '../porting';
+import {
+  base32Decode,
+  buildOtpauth,
+  checkSetupKey,
+  SetupKeyCheck,
+  TotpAlgorithm,
+} from '../crypto/totp';
 import { formatCount, initAndLocalize, t } from '../i18n';
 import { initTheme } from '../theme';
 import { resolveSiteIcon } from '../site-icons';
@@ -1345,6 +1352,32 @@ import { resolveSiteIcon } from '../site-icons';
     }
   }
 
+  function setupKeyError(check: SetupKeyCheck): string {
+    switch (check.kind) {
+      case 'invalid-chars':
+        return t('popupTotpKeyInvalidChars', { chars: check.invalidChars.join(' ') });
+      case 'too-short':
+        return t('popupTotpKeyTooShort');
+      default:
+        return t('popupTotpUriRequired');
+    }
+  }
+
+  // Suggest the site the user is on as the service name; setup keys are almost
+  // always copied from the page behind the popup. Needs host permission for
+  // the tab, so non-https pages just leave the field empty.
+  async function suggestIssuerFromActiveTab(): Promise<string> {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab?.url) return '';
+      const url = new URL(tab.url);
+      if (url.protocol !== 'https:') return '';
+      return url.hostname.replace(/^www\./, '');
+    } catch {
+      return '';
+    }
+  }
+
   function showAddTotpDialog(): void {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -1352,8 +1385,46 @@ import { resolveSiteIcon } from '../site-icons';
       <div class="modal-content" style="max-width: 360px">
         <h3 class="modal-title">${popupEscapeHtml(t('popupAddTotpTitle'))}</h3>
         <p class="modal-message">${popupEscapeHtml(t('popupAddTotpHelp'))}</p>
-        <textarea id="totp-uri-input" rows="3" placeholder="otpauth://totp/..."
+        <textarea id="totp-uri-input" rows="3" placeholder="${popupEscapeHtml(t('popupTotpInputPlaceholder'))}"
+          spellcheck="false" autocomplete="off" autocapitalize="off"
           style="width: 100%; padding: 8px; border: 1px solid var(--border); background: var(--bg-elev); color: var(--text); border-radius: var(--radius-md); font-family: var(--font-mono); font-size: 12px; box-sizing: border-box; resize: vertical"></textarea>
+        <div class="totp-key-details" id="totp-key-details" hidden>
+          <p class="totp-key-detected">${popupEscapeHtml(t('popupTotpSetupKeyDetected'))}</p>
+          <label class="totp-key-field">
+            <span>${popupEscapeHtml(t('popupTotpServiceLabel'))}</span>
+            <input type="text" id="totp-key-issuer" autocomplete="off" placeholder="${popupEscapeHtml(t('popupTotpServicePlaceholder'))}" />
+          </label>
+          <label class="totp-key-field">
+            <span>${popupEscapeHtml(t('popupTotpAccountLabel'))}</span>
+            <input type="text" id="totp-key-account" autocomplete="off" placeholder="${popupEscapeHtml(t('popupTotpAccountPlaceholder'))}" />
+          </label>
+          <details class="totp-key-advanced">
+            <summary>${popupEscapeHtml(t('popupTotpAdvanced'))}</summary>
+            <p class="totp-key-advanced-hint">${popupEscapeHtml(t('popupTotpAdvancedHint'))}</p>
+            <div class="totp-key-advanced-row">
+              <label class="totp-key-field">
+                <span>${popupEscapeHtml(t('popupTotpAlgorithmLabel'))}</span>
+                <select id="totp-key-algorithm">
+                  <option value="SHA1" selected>SHA-1</option>
+                  <option value="SHA256">SHA-256</option>
+                  <option value="SHA512">SHA-512</option>
+                </select>
+              </label>
+              <label class="totp-key-field">
+                <span>${popupEscapeHtml(t('popupTotpDigitsLabel'))}</span>
+                <select id="totp-key-digits">
+                  <option value="6" selected>6</option>
+                  <option value="7">7</option>
+                  <option value="8">8</option>
+                </select>
+              </label>
+              <label class="totp-key-field">
+                <span>${popupEscapeHtml(t('popupTotpPeriodLabel'))}</span>
+                <input type="number" id="totp-key-period" value="30" min="1" max="300" step="1" />
+              </label>
+            </div>
+          </details>
+        </div>
         <div class="totp-uri-import">
           <button type="button" class="btn btn-secondary" id="totp-upload-btn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1382,12 +1453,68 @@ import { resolveSiteIcon } from '../site-icons';
     const cancelBtn = overlay.querySelector('#totp-add-cancel') as HTMLButtonElement;
     const uploadBtn = overlay.querySelector('#totp-upload-btn') as HTMLButtonElement;
     const imageInput = overlay.querySelector('#totp-image-input') as HTMLInputElement;
+    const keyDetails = overlay.querySelector('#totp-key-details') as HTMLElement;
+    const issuerInput = overlay.querySelector('#totp-key-issuer') as HTMLInputElement;
+    const accountInput = overlay.querySelector('#totp-key-account') as HTMLInputElement;
+    const algorithmInput = overlay.querySelector('#totp-key-algorithm') as HTMLSelectElement;
+    const digitsInput = overlay.querySelector('#totp-key-digits') as HTMLSelectElement;
+    const periodInput = overlay.querySelector('#totp-key-period') as HTMLInputElement;
 
     input.focus();
 
     const showError = (msg: string) => {
       errorEl.textContent = msg;
       errorEl.style.display = 'block';
+    };
+
+    // Anything with a scheme goes down the URI/import path; otherwise treat
+    // the text as a setup key typed or pasted from the service's page.
+    const looksLikeUri = (text: string) => /:\/\//.test(text);
+
+    let suggestedIssuer: Promise<string> | null = null;
+    const updateKeyMode = () => {
+      const text = input.value.trim();
+      const isKey = !looksLikeUri(text) && checkSetupKey(text).kind === 'valid';
+      if (isKey === !keyDetails.hidden) return;
+      keyDetails.hidden = !isKey;
+      if (!isKey) return;
+      errorEl.style.display = 'none';
+      suggestedIssuer ??= suggestIssuerFromActiveTab();
+      void suggestedIssuer.then((issuer) => {
+        if (issuer && !issuerInput.value) issuerInput.value = issuer;
+      });
+    };
+    input.addEventListener('input', updateKeyMode);
+    for (const field of [issuerInput, accountInput, periodInput]) {
+      field.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') saveBtn.click();
+      });
+    }
+
+    const addFromSetupKey = async (
+      secret: string
+    ): Promise<{ success: boolean; error?: string }> => {
+      const issuer = issuerInput.value.trim();
+      if (!issuer) {
+        issuerInput.focus();
+        return { success: false, error: t('popupTotpServiceRequired') };
+      }
+      const period = Number(periodInput.value);
+      if (!Number.isInteger(period) || period < 1 || period > 300) {
+        periodInput.focus();
+        return { success: false, error: t('popupTotpPeriodInvalid') };
+      }
+      const otpauthUri = buildOtpauth({
+        type: 'totp',
+        issuer,
+        account: accountInput.value.trim(),
+        secret: base32Decode(secret),
+        algorithm: algorithmInput.value as TotpAlgorithm,
+        digits: Number(digitsInput.value),
+        period,
+        counter: 0,
+      });
+      return chrome.runtime.sendMessage({ type: 'ADD_TOTP_ENTRY', payload: { otpauthUri } });
     };
 
     const fillFromImage = async (blob: Blob) => {
@@ -1399,6 +1526,7 @@ import { resolveSiteIcon } from '../site-icons';
           return;
         }
         input.value = uri.trim();
+        updateKeyMode();
       } catch (error) {
         console.error('QR decode failed:', error);
         showError(t('popupTotpDecodeFailed'));
@@ -1433,14 +1561,25 @@ import { resolveSiteIcon } from '../site-icons';
     };
 
     saveBtn.addEventListener('click', async () => {
-      const uri = input.value.trim();
-      if (!uri) {
-        errorEl.textContent = t('popupTotpUriRequired');
-        errorEl.style.display = 'block';
+      const text = input.value.trim();
+      if (!text) {
+        showError(t('popupTotpUriRequired'));
         return;
       }
+
+      let response: { success: boolean; error?: string };
+      const keyCheck = looksLikeUri(text) ? null : checkSetupKey(text);
       saveBtn.disabled = true;
-      const response = await addOtpFromText(uri);
+      if (keyCheck?.kind === 'valid') {
+        response = await addFromSetupKey(keyCheck.secret);
+      } else {
+        response = await addOtpFromText(text);
+        // Without a scheme this was most likely a mistyped setup key, so say
+        // what is wrong with the key rather than surfacing an import error.
+        if (!response.success && keyCheck) {
+          response = { success: false, error: setupKeyError(keyCheck) };
+        }
+      }
       if (response.success) {
         codeCache.clear();
         showNotification(t('popupTotpAdded'));

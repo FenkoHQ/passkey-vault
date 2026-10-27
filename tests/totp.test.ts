@@ -6,6 +6,7 @@ import {
   base32Encode,
   parseOtpauth,
   buildOtpauth,
+  checkSetupKey,
 } from '../src/crypto/totp';
 
 describe('TOTP module', () => {
@@ -123,8 +124,16 @@ describe('TOTP module', () => {
     const secret = new TextEncoder().encode('12345678901234567890');
 
     const expected = [
-      '755224', '287082', '359152', '969429', '338314',
-      '254676', '287922', '162583', '399871', '520489',
+      '755224',
+      '287082',
+      '359152',
+      '969429',
+      '338314',
+      '254676',
+      '287922',
+      '162583',
+      '399871',
+      '520489',
     ];
 
     expected.forEach((code, i) => {
@@ -222,8 +231,7 @@ describe('TOTP module', () => {
     });
 
     it('parses HOTP with counter', () => {
-      const uri =
-        'otpauth://hotp/Example:alice?secret=JBSWY3DPEHPK3PXP&counter=5';
+      const uri = 'otpauth://hotp/Example:alice?secret=JBSWY3DPEHPK3PXP&counter=5';
       const parsed = parseOtpauth(uri);
       expect(parsed.type).toBe('hotp');
       expect(parsed.counter).toBe(5);
@@ -292,6 +300,48 @@ describe('TOTP module', () => {
       expect(uri).not.toMatch(/algorithm=/);
       expect(uri).not.toMatch(/digits=/);
       expect(uri).not.toMatch(/period=/);
+    });
+  });
+
+  describe('checkSetupKey', () => {
+    it('accepts a key the way services print it: grouped, lowercase, dashed, padded', () => {
+      const canonical = 'KPVGZIRR6Z5N4NZRQDQNLOIYJQM2KG5Z';
+      for (const typed of [
+        canonical,
+        'kpvg zirr 6z5n 4nzr qdqn loiy jqm2 kg5z',
+        'KPVG-ZIRR-6Z5N-4NZR-QDQN-LOIY-JQM2-KG5Z',
+        `  ${canonical}\n`,
+        'JBSWY3DPEHPK3PXP====',
+      ]) {
+        const result = checkSetupKey(typed);
+        expect(result.kind).toBe('valid');
+      }
+      expect(checkSetupKey('kpvg zirr 6z5n 4nzr qdqn loiy jqm2 kg5z')).toEqual({
+        kind: 'valid',
+        secret: canonical,
+      });
+    });
+
+    it('produces the same codes as the equivalent otpauth URI', () => {
+      const key = checkSetupKey('jbsw y3dp ehpk 3pxp');
+      if (key.kind !== 'valid') throw new Error('expected a valid key');
+      const fromUri = parseOtpauth('otpauth://totp/A:b?secret=JBSWY3DPEHPK3PXP').secret;
+      const timestamp = 1_700_000_000_000;
+      expect(generateTotp({ secret: base32Decode(key.secret), timestamp })).toBe(
+        generateTotp({ secret: fromUri, timestamp })
+      );
+    });
+
+    it('names characters that cannot appear in a key', () => {
+      expect(checkSetupKey('KPVG0IRR6Z5N1NZRQ8QN')).toEqual({
+        kind: 'invalid-chars',
+        invalidChars: ['0', '1', '8'],
+      });
+    });
+
+    it('rejects keys too short to be real and empty input', () => {
+      expect(checkSetupKey('JBSWY3DP')).toEqual({ kind: 'too-short' });
+      expect(checkSetupKey(' - ')).toEqual({ kind: 'empty' });
     });
   });
 });

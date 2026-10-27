@@ -425,6 +425,47 @@ h3 {
   text-align: center;
 }
 
+/* Name + options shown once the dialog sees a bare setup key */
+.totp-key-details:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.totp-key-detected {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.totp-key-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.totp-key-advanced summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.totp-key-advanced-hint {
+  margin: 6px 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.totp-key-advanced-row {
+  display: flex;
+  gap: 8px;
+}
+
 /* ---------- Unified vault list ---------- */
 .vault-list {
   display: flex;
