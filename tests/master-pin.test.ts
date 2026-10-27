@@ -399,3 +399,161 @@ describe('the sync config when the PIN is removed', () => {
     expect(config.seedHash?.startsWith(chainB as string)).toBe(true);
   });
 });
+
+describe('creating or joining a sync chain on a PIN-protected vault', () => {
+  /** Everything outside the encrypted store, as it would sit on disk. */
+  const cleartext = (): string =>
+    JSON.stringify(Object.entries(storage).filter(([key]) => !key.startsWith('passext_')));
+
+  async function pinned() {
+    storage.passkeys = [passkey];
+    const background = await loadBackground();
+    await background.send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+    background.sync.initialize.mockClear();
+    return background;
+  }
+
+  it('keeps the seed of a created chain in the encrypted store only', async () => {
+    const { send, secure, sync } = await pinned();
+
+    const created = await send({ type: 'CREATE_SYNC_CHAIN', deviceName: 'Laptop', wordCount: 12 });
+
+    expect(created.success).toBe(true);
+    const encrypted = await secure.getSyncConfig();
+    expect(encrypted?.chainId).toBe(created.chainId);
+    expect(encrypted?.seedHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(cleartext()).not.toContain(encrypted?.seedHash);
+    expect((storage.sync_config as SyncConfigData).chainId).toBe(created.chainId);
+    expect(sync.initialize).toHaveBeenCalledWith(
+      created.chainId,
+      created.deviceId,
+      encrypted?.seedHash,
+      'Laptop',
+      expect.anything()
+    );
+  });
+
+  it('keeps the seed of a joined chain in the encrypted store only', async () => {
+    const { send, secure } = await pinned();
+    const mnemonic = await generateMnemonic(12);
+
+    const joined = await send({ type: 'JOIN_SYNC_CHAIN', deviceName: 'Laptop', mnemonic });
+
+    expect(joined.success).toBe(true);
+    const encrypted = await secure.getSyncConfig();
+    expect(encrypted?.seedHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(cleartext()).not.toContain(encrypted?.seedHash);
+
+    await send({ type: 'REMOVE_MASTER_PASSWORD', payload: { currentPassword: PIN } });
+    expect((storage.sync_config as SyncConfigData).seedHash).toBe(encrypted?.seedHash);
+  });
+
+  it('refuses while the vault is locked', async () => {
+    const { send, sync } = await pinned();
+    await send({ type: 'LOCK_SECURE_STORAGE' });
+    const before = cleartext();
+
+    const created = await send({ type: 'CREATE_SYNC_CHAIN', deviceName: 'Laptop', wordCount: 12 });
+    const joined = await send({
+      type: 'JOIN_SYNC_CHAIN',
+      deviceName: 'Laptop',
+      mnemonic: await generateMnemonic(12),
+    });
+
+    expect(created.success).toBe(false);
+    expect(joined.success).toBe(false);
+    expect(cleartext()).toBe(before);
+    expect(storage.passext_encrypted_sync_config).toBeUndefined();
+    expect(sync.initialize).not.toHaveBeenCalled();
+  });
+
+  it('still stores the seed in cleartext without a PIN', async () => {
+    const { send } = await loadBackground();
+
+    const created = await send({ type: 'CREATE_SYNC_CHAIN', deviceName: 'Laptop', wordCount: 12 });
+
+    expect(created.success).toBe(true);
+    const config = storage.sync_config as SyncConfigData;
+    expect(config.chainId).toBe(created.chainId);
+    expect(config.seedHash?.startsWith(created.chainId as string)).toBe(true);
+  });
+});
+
+describe('the cleartext seed older builds left in the chain record', () => {
+  type ChainRecord = { id: string; createdAt: number; devices: unknown[]; seedHash?: string };
+  const recordFor = (config: SyncConfigData): ChainRecord => ({
+    id: config.chainId as string,
+    createdAt: 1,
+    devices: [],
+    seedHash: config.seedHash as string,
+  });
+  const chainB: SyncConfigData = {
+    ...chainA,
+    chainId: 'b'.repeat(32),
+    seedHash: 'b'.repeat(64),
+  };
+
+  it('is stripped when a PIN is set up', async () => {
+    storage.sync_config = { ...chainA };
+    storage.sync_devices = recordFor(chainA);
+    const { send, secure } = await loadBackground();
+
+    await send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+
+    expect((await secure.getSyncConfig())?.seedHash).toBe(chainA.seedHash);
+    expect(storage.sync_devices).toEqual({ ...recordFor(chainA), seedHash: undefined });
+    expect(JSON.stringify(storage)).not.toContain('"seedHash":"' + chainA.seedHash);
+  });
+
+  it('is stripped from an existing PIN vault on unlock, keeping the seed', async () => {
+    storage.sync_config = { ...chainA };
+    const { send, secure } = await loadBackground();
+    await send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+    await send({ type: 'LOCK_SECURE_STORAGE' });
+    storage.sync_devices = recordFor(chainA);
+
+    expect(await unlocksWith(send, PIN)).toBe(true);
+
+    expect((storage.sync_devices as ChainRecord).seedHash).toBeUndefined();
+    expect((await secure.getSyncConfig())?.seedHash).toBe(chainA.seedHash);
+    await send({ type: 'REMOVE_MASTER_PASSWORD', payload: { currentPassword: PIN } });
+    expect(storage.sync_config).toEqual(chainA);
+  });
+
+  it('moves the seed into the encrypted config when that is the only copy', async () => {
+    const { send, secure, sync } = await loadBackground();
+    await send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+    await send({ type: 'LOCK_SECURE_STORAGE' });
+    const publicConfig: SyncConfigData = { ...chainA };
+    delete publicConfig.seedHash;
+    storage.sync_config = publicConfig;
+    storage.sync_devices = recordFor(chainA);
+
+    expect(await unlocksWith(send, PIN)).toBe(true);
+
+    expect((await secure.getSyncConfig())?.seedHash).toBe(chainA.seedHash);
+    expect((storage.sync_devices as ChainRecord).seedHash).toBeUndefined();
+    expect(sync.initialize).toHaveBeenLastCalledWith(
+      chainA.chainId,
+      chainA.deviceId,
+      chainA.seedHash,
+      chainA.deviceName,
+      expect.anything()
+    );
+  });
+
+  it('is left alone while locked and for a chain the device is not on', async () => {
+    storage.sync_config = { ...chainA };
+    const { send } = await loadBackground();
+    await send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+    await send({ type: 'LOCK_SECURE_STORAGE' });
+    storage.sync_devices = recordFor(chainB);
+
+    const restarted = await loadBackground();
+    expect((storage.sync_devices as ChainRecord).seedHash).toBe(chainB.seedHash);
+    expect(await unlocksWith(restarted.send, PIN)).toBe(true);
+
+    expect((storage.sync_devices as ChainRecord).seedHash).toBe(chainB.seedHash);
+    expect((await restarted.secure.getSyncConfig())?.seedHash).toBe(chainA.seedHash);
+  });
+});

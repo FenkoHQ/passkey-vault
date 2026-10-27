@@ -243,13 +243,18 @@ export class SecureStorage {
   }
 
   /**
-   * Store sync configuration securely
+   * Store sync configuration securely. `alongside` holds other keys to write
+   * in the same storage operation, so the two land together or not at all.
    */
-  async storeSyncConfig(config: SecureStorageConfig): Promise<void> {
+  async storeSyncConfig(
+    config: SecureStorageConfig,
+    alongside: Record<string, unknown> = {}
+  ): Promise<void> {
     this.ensureUnlocked();
 
     const encrypted = encryptData(JSON.stringify(cleanSyncConfig(config)), this.encryptionKey!);
     await chrome.storage.local.set({
+      ...alongside,
       [STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG]: encrypted,
     });
 

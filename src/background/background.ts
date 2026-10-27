@@ -131,7 +131,11 @@ interface SyncChain {
   id: string;
   createdAt: number;
   devices: SyncDevice[];
-  seedHash: string;
+  /**
+   * Written by older builds only. Nothing reads it, and it put the seed in
+   * cleartext; stripCleartextChainSeed() removes it from PIN'd vaults.
+   */
+  seedHash?: string;
 }
 
 type MessagePayload = Record<string, unknown>;
@@ -318,6 +322,49 @@ class BackgroundService {
       `Migrated legacy cleartext vault into the encrypted store ` +
         `(${rawPasskeys.length} passkeys, ${rawTotp.length} TOTP); cleartext copies removed`
     );
+  }
+
+  /**
+   * Older builds also kept the sync seed in the cleartext `sync_devices` chain
+   * record, and PIN setup never stripped it. Strip it once the encrypted sync
+   * config is known to hold that seed, which needs the key, so stripping never
+   * drops the only copy. When the record is for the device's current chain
+   * and the encrypted config lacks the seed, the seed is moved there first.
+   * A record for any other chain is left alone. Run inside a vault job, after
+   * migrateLegacyRawStorage(); a no-op while locked or without a PIN.
+   */
+  private async stripCleartextChainSeed(): Promise<void> {
+    if (!secureStorage.isStorageUnlocked()) return;
+    const chain = (await chrome.storage.local.get(SYNC_DEVICES_KEY))[SYNC_DEVICES_KEY] as
+      | SyncChain
+      | null
+      | undefined;
+    if (!chain?.seedHash) return;
+
+    const stored = await secureStorage.getSyncConfig();
+    if (stored?.seedHash !== chain.seedHash) {
+      const config = (await chrome.storage.local.get(SYNC_CONFIG_KEY))[SYNC_CONFIG_KEY] as
+        | SyncConfig
+        | undefined;
+      const currentChain =
+        !!config?.chainId &&
+        config.chainId === chain.id &&
+        !config.seedHash &&
+        chain.seedHash.startsWith(chain.id);
+      if (!currentChain) return;
+      await secureStorage.storeSyncConfig({
+        chainId: config.chainId,
+        deviceId: config.deviceId || '',
+        deviceName: config.deviceName || '',
+        seedHash: chain.seedHash,
+        enabled: config.enabled || false,
+      });
+    }
+
+    const publicChain = { ...chain };
+    delete publicChain.seedHash;
+    await chrome.storage.local.set({ [SYNC_DEVICES_KEY]: publicChain });
+    logger.info('Removed the cleartext sync seed from the chain record');
   }
 
   private async initialize(): Promise<void> {
@@ -1330,20 +1377,13 @@ class BackgroundService {
       const chain: SyncChain = {
         id: chainId,
         createdAt: Date.now(),
-        seedHash: seedHashHex,
         devices: [newDevice],
       };
 
-      await chrome.storage.local.set({
-        [SYNC_CONFIG_KEY]: {
-          enabled: true,
-          chainId,
-          deviceId,
-          deviceName,
-          seedHash: seedHashHex,
-        },
-        [SYNC_DEVICES_KEY]: chain,
-      });
+      await this.saveSyncChain(
+        { enabled: true, chainId, deviceId, deviceName, seedHash: seedHashHex },
+        chain
+      );
 
       await syncService.initialize(
         chainId,
@@ -1393,7 +1433,6 @@ class BackgroundService {
       const chain: SyncChain = {
         id: chainId,
         createdAt: Date.now(),
-        seedHash: seedHashHex,
         devices: [newDevice],
       };
 
@@ -1405,10 +1444,7 @@ class BackgroundService {
         seedHash: seedHashHex,
       };
 
-      await chrome.storage.local.set({
-        [SYNC_CONFIG_KEY]: config,
-        [SYNC_DEVICES_KEY]: chain,
-      });
+      await this.saveSyncChain(config, chain);
 
       await syncService.initialize(
         chainId,
@@ -1426,6 +1462,33 @@ class BackgroundService {
       console.error('Failed to join sync chain:', error);
       return { success: false, error: message };
     }
+  }
+
+  /**
+   * Save a chain this device just created or joined. With a PIN set, the seed
+   * goes only into the encrypted store, which needs the vault unlocked, in the
+   * same storage write as the cleartext config that keeps every other field.
+   * Serialized with PIN setup and removal, which read both sync configs.
+   */
+  private saveSyncChain(config: SyncConfig, chain: SyncChain): Promise<void> {
+    return this.withVault(async () => {
+      if (!(await secureStorage.isSetup())) {
+        await chrome.storage.local.set({ [SYNC_CONFIG_KEY]: config, [SYNC_DEVICES_KEY]: chain });
+        return;
+      }
+      const publicConfig = { ...config };
+      delete publicConfig.seedHash;
+      await secureStorage.storeSyncConfig(
+        {
+          chainId: config.chainId,
+          deviceId: config.deviceId,
+          deviceName: config.deviceName,
+          seedHash: config.seedHash,
+          enabled: config.enabled,
+        },
+        { [SYNC_CONFIG_KEY]: publicConfig, [SYNC_DEVICES_KEY]: chain }
+      );
+    });
   }
 
   private async leaveSyncChain(): Promise<unknown> {
@@ -1729,6 +1792,7 @@ class BackgroundService {
         delete publicConfig.seedHash;
         await chrome.storage.local.set({ [SYNC_CONFIG_KEY]: publicConfig });
       }
+      await this.stripCleartextChainSeed();
 
       return { success: true, message: 'Master password setup complete' };
     } catch (error: unknown) {
@@ -1749,6 +1813,7 @@ class BackgroundService {
         const ready = await secureStorage.initialize(password);
         if (ready) {
           await this.migrateLegacyRawStorage();
+          await this.stripCleartextChainSeed();
         }
         return ready;
       });
