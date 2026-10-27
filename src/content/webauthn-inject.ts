@@ -132,7 +132,9 @@
         throw new Error('navigator.credentials.create is not available');
       }
 
-      const publicKey = options.publicKey;
+      // Converted before anything else, as the browser's bindings do: a bad
+      // option rejects with TypeError and never reaches the vault.
+      const publicKey = convertCreationOptions(options.publicKey);
 
       return new Promise((resolve, reject) => {
         const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -149,28 +151,8 @@
           return;
         }
 
-        // Serialize the options for message passing
         const serializablePayload = {
-          publicKey: {
-            rp: publicKey.rp,
-            rpId: publicKey.rp?.id || window.location.hostname,
-            user: {
-              id: serializeBufferSource(publicKey.user?.id),
-              name: publicKey.user?.name,
-              displayName: publicKey.user?.displayName,
-            },
-            challenge: serializeBufferSource(publicKey.challenge),
-            pubKeyCredParams: publicKey.pubKeyCredParams,
-            timeout: publicKey.timeout,
-            excludeCredentials: publicKey.excludeCredentials?.map((cred) => ({
-              id: serializeBufferSource(cred.id),
-              type: cred.type,
-              transports: cred.transports,
-            })),
-            authenticatorSelection: publicKey.authenticatorSelection,
-            attestation: publicKey.attestation,
-            extensions: serializeExtensions(publicKey.extensions),
-          },
+          publicKey,
           origin: window.location.origin,
         };
 
@@ -200,7 +182,8 @@
         throw new Error('navigator.credentials.get is not available');
       }
 
-      const publicKey = options.publicKey;
+      const publicKey = convertRequestOptions(options.publicKey);
+      const mediation = options.mediation === undefined ? undefined : `${options.mediation}`;
 
       try {
         return await new Promise((resolve, reject) => {
@@ -218,21 +201,9 @@
             return;
           }
 
-          // Serialize the options for message passing
           const serializablePayload = {
-            publicKey: {
-              rpId: publicKey.rpId || window.location.hostname,
-              challenge: serializeBufferSource(publicKey.challenge),
-              timeout: publicKey.timeout,
-              allowCredentials: publicKey.allowCredentials?.map((cred) => ({
-                id: serializeBufferSource(cred.id),
-                type: cred.type,
-                transports: cred.transports,
-              })),
-              userVerification: publicKey.userVerification,
-              extensions: serializeExtensions(publicKey.extensions),
-            },
-            mediation: options.mediation,
+            publicKey,
+            mediation,
             origin: window.location.origin,
           };
 
@@ -508,67 +479,213 @@
   }
 
   /**
-   * Copy the extension inputs with every PRF salt encoded as base64url, like
-   * the challenge and credential IDs. The payload reaches the background
-   * through chrome.runtime.sendMessage, which Chrome serialises as JSON: a raw
-   * ArrayBuffer salt would arrive as `{}` and the PRF result would be silently
-   * dropped. The vault implements no other extension, so the rest pass as-is.
+   * The WebIDL conversions a browser applies to the options before any
+   * authenticator is involved (WebAuthn Level 3 §5.4, §5.5, §5.8). Without
+   * them a page that passed, say, a string challenge or a 65-byte user.id
+   * would get a passkey whose clientDataJSON or user handle its server can
+   * never check, where the browser would have thrown a TypeError. Buffers
+   * leave here as base64url strings: the payload reaches the background
+   * through chrome.runtime.sendMessage, which Chrome serialises as JSON.
    */
-  function serializeExtensions(
-    extensions: AuthenticationExtensionsClientInputs | undefined
-  ): Record<string, unknown> | undefined {
-    if (!extensions) {
-      return undefined;
-    }
-    const serialized: Record<string, unknown> = { ...extensions };
-    const prf = extensions.prf;
-    if (prf) {
-      const prfInputs: Record<string, unknown> = {};
-      if (prf.eval) {
-        prfInputs.eval = serializePrfValues(prf.eval);
-      }
-      if (prf.evalByCredential) {
-        const byCredential: Record<string, unknown> = {};
-        for (const [credentialId, values] of Object.entries(prf.evalByCredential)) {
-          byCredential[credentialId] = serializePrfValues(values);
-        }
-        prfInputs.evalByCredential = byCredential;
-      }
-      serialized.prf = prfInputs;
-    }
-    return serialized;
+  type Dictionary = Record<string, unknown>;
+
+  function invalid(member: string, problem: string): TypeError {
+    return new TypeError(`Failed to read the '${member}' property: ${problem}`);
   }
 
-  function serializePrfValues(values: AuthenticationExtensionsPRFValues): {
-    first?: string;
-    second?: string;
-  } {
-    const out: { first?: string; second?: string } = {};
-    const first = serializeBufferSource(values?.first);
-    const second = serializeBufferSource(values?.second);
-    if (first != null) out.first = first;
-    if (second != null) out.second = second;
-    return out;
+  function dictionary(value: unknown, member: string): Dictionary {
+    if (value === undefined || value === null) return {};
+    if (typeof value !== 'object' && typeof value !== 'function') {
+      throw invalid(member, 'The provided value is not a dictionary.');
+    }
+    return value as Dictionary;
+  }
+
+  function required<T>(value: T | undefined, member: string): T {
+    if (value === undefined) throw invalid(member, 'Required member is undefined.');
+    return value;
+  }
+
+  /** DOMString: ToString, which throws for a Symbol like the bindings do. */
+  function domString(value: unknown): string {
+    return `${value}`;
+  }
+
+  function optionalString(value: unknown): string | undefined {
+    return value === undefined ? undefined : domString(value);
+  }
+
+  /** BufferSource (ArrayBuffer or a view on one, never shared memory) as base64url. */
+  function bufferSource(value: unknown, member: string): string {
+    return arrayBufferToBase64URL(bufferBytes(value, member));
+  }
+
+  function bufferBytes(value: unknown, member: string): ArrayBuffer {
+    if (isArrayBuffer(value)) return value.slice(0);
+    if (ArrayBuffer.isView(value) && isArrayBuffer(value.buffer)) return viewToArrayBuffer(value);
+    if (value === undefined) throw invalid(member, 'Required member is undefined.');
+    throw invalid(member, "The provided value is not of type '(ArrayBuffer or ArrayBufferView)'.");
+  }
+
+  /** Tag check, so a buffer from another frame's realm still counts. */
+  function isArrayBuffer(value: unknown): value is ArrayBuffer {
+    return Object.prototype.toString.call(value) === '[object ArrayBuffer]';
+  }
+
+  function sequence<T>(
+    value: unknown,
+    member: string,
+    item: (entry: unknown, at: string) => T
+  ): T[] {
+    if (
+      value === null ||
+      (typeof value !== 'object' && typeof value !== 'function') ||
+      typeof (value as Iterable<unknown>)[Symbol.iterator] !== 'function'
+    ) {
+      throw invalid(member, 'The provided value cannot be converted to a sequence.');
+    }
+    return Array.from(value as Iterable<unknown>, (entry, index) =>
+      item(entry, `${member}[${index}]`)
+    );
+  }
+
+  /** WebIDL long: ToNumber, then ToInt32 with non-finite values as 0. */
+  function long(value: unknown): number {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.trunc(number) | 0 : 0;
+  }
+
+  /** WebIDL unsigned long, used for timeout. */
+  function unsignedLong(value: unknown): number | undefined {
+    if (value === undefined) return undefined;
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.trunc(number) >>> 0 : 0;
+  }
+
+  function credentialDescriptor(value: unknown, member: string) {
+    const descriptor = dictionary(value, member);
+    return {
+      type: domString(required(descriptor.type, `${member}.type`)),
+      id: bufferSource(descriptor.id, `${member}.id`),
+      transports:
+        descriptor.transports === undefined
+          ? undefined
+          : sequence(descriptor.transports, `${member}.transports`, domString),
+    };
+  }
+
+  function convertCreationOptions(value: unknown) {
+    const options = dictionary(value, 'publicKey');
+    const rp = dictionary(required(options.rp, 'rp'), 'rp');
+    const user = dictionary(required(options.user, 'user'), 'user');
+    const rpId = optionalString(rp.id);
+    const userId = bufferBytes(user.id, 'user.id');
+    // §5.1.3 step 5.
+    if (userId.byteLength < 1 || userId.byteLength > 64) {
+      throw new TypeError('user.id must be between 1 and 64 bytes.');
+    }
+    const selection = dictionary(options.authenticatorSelection, 'authenticatorSelection');
+    return {
+      rp: {
+        name: domString(required(rp.name, 'rp.name')),
+        ...(rpId !== undefined && { id: rpId }),
+      },
+      rpId: rpId || window.location.hostname,
+      user: {
+        id: arrayBufferToBase64URL(userId),
+        name: domString(required(user.name, 'user.name')),
+        displayName: domString(required(user.displayName, 'user.displayName')),
+      },
+      challenge: bufferSource(options.challenge, 'challenge'),
+      pubKeyCredParams: sequence(
+        required(options.pubKeyCredParams, 'pubKeyCredParams'),
+        'pubKeyCredParams',
+        (entry, at) => {
+          const parameters = dictionary(entry, at);
+          return {
+            type: domString(required(parameters.type, `${at}.type`)),
+            alg: long(required(parameters.alg, `${at}.alg`)),
+          };
+        }
+      ),
+      timeout: unsignedLong(options.timeout),
+      excludeCredentials:
+        options.excludeCredentials === undefined
+          ? undefined
+          : sequence(options.excludeCredentials, 'excludeCredentials', credentialDescriptor),
+      authenticatorSelection: {
+        authenticatorAttachment: optionalString(selection.authenticatorAttachment),
+        residentKey: optionalString(selection.residentKey),
+        requireResidentKey: Boolean(selection.requireResidentKey),
+        userVerification: optionalString(selection.userVerification),
+      },
+      hints: options.hints === undefined ? undefined : sequence(options.hints, 'hints', domString),
+      attestation: optionalString(options.attestation),
+      extensions: convertExtensions(options.extensions),
+    };
+  }
+
+  function convertRequestOptions(value: unknown) {
+    const options = dictionary(value, 'publicKey');
+    return {
+      rpId: optionalString(options.rpId) || window.location.hostname,
+      challenge: bufferSource(options.challenge, 'challenge'),
+      timeout: unsignedLong(options.timeout),
+      allowCredentials:
+        options.allowCredentials === undefined
+          ? undefined
+          : sequence(options.allowCredentials, 'allowCredentials', credentialDescriptor),
+      userVerification: optionalString(options.userVerification),
+      hints: options.hints === undefined ? undefined : sequence(options.hints, 'hints', domString),
+      extensions: convertExtensions(options.extensions),
+    };
   }
 
   /**
-   * Serialize a BufferSource (ArrayBuffer, TypedArray, DataView) to base64url string
+   * Only the extensions the vault implements are passed on, PRF salts as
+   * base64url like every other buffer. The browser likewise reads only the
+   * extensions it knows, so an exotic value under some other name cannot
+   * fail the call.
    */
-  function serializeBufferSource(value: BufferInput): string | null {
-    if (value == null) {
-      return null;
+  function convertExtensions(value: unknown): Dictionary | undefined {
+    if (value === undefined || value === null) {
+      return undefined;
     }
-    if (typeof value === 'string') {
-      return value; // Already a string (possibly base64)
+    const extensions = dictionary(value, 'extensions');
+    const converted: Dictionary = {};
+    if (extensions.credProps !== undefined) {
+      converted.credProps = Boolean(extensions.credProps);
     }
-    if (value instanceof ArrayBuffer) {
-      return arrayBufferToBase64URL(value);
+    if (extensions.prf !== undefined) {
+      const prf = dictionary(extensions.prf, 'extensions.prf');
+      const inputs: Dictionary = {};
+      if (prf.eval !== undefined) {
+        inputs.eval = convertPrfValues(prf.eval, 'extensions.prf.eval');
+      }
+      if (prf.evalByCredential !== undefined) {
+        const record = dictionary(prf.evalByCredential, 'extensions.prf.evalByCredential');
+        const byCredential: Dictionary = {};
+        for (const credentialId of Object.keys(record)) {
+          byCredential[credentialId] = convertPrfValues(
+            record[credentialId],
+            `extensions.prf.evalByCredential.${credentialId}`
+          );
+        }
+        inputs.evalByCredential = byCredential;
+      }
+      converted.prf = inputs;
     }
-    if (ArrayBuffer.isView(value)) {
-      return arrayBufferToBase64URL(viewToArrayBuffer(value));
-    }
-    // Unknown type, try to convert
-    return String(value);
+    return converted;
+  }
+
+  function convertPrfValues(value: unknown, member: string): { first: string; second?: string } {
+    const values = dictionary(value, member);
+    return {
+      first: bufferSource(values.first, `${member}.first`),
+      ...(values.second !== undefined && {
+        second: bufferSource(values.second, `${member}.second`),
+      }),
+    };
   }
 
   /**
