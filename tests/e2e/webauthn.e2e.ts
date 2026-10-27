@@ -17,7 +17,7 @@
  *   npm run test:e2e:webauthn
  */
 
-import type { BrowserContext, Page } from 'playwright';
+import type { BrowserContext, Frame, Page } from 'playwright';
 import {
   addVirtualAuthenticator,
   launchNative,
@@ -123,6 +123,20 @@ async function clickInDialog(page: Page, selector: string, timeout = 8000): Prom
     if (Date.now() > deadline) throw new Error(`No vault dialog took ${selector}`);
     await page.waitForTimeout(50);
   }
+}
+
+/** The vault dialog's frame on the page, once it is there. */
+async function dialogFrame(page: Page): Promise<Frame> {
+  for (let i = 0; i < 160; i++) {
+    const frame = page
+      .frames()
+      .find(
+        (candidate) => !candidate.isDetached() && candidate.url().includes('/vault-dialog.html')
+      );
+    if (frame) return frame;
+    await page.waitForTimeout(50);
+  }
+  throw new Error('No vault dialog');
 }
 
 /** Run create() in the page (or a frame), clicking the vault's dialog if one opens. */
@@ -475,6 +489,227 @@ describe('ceremonies through the installed extension', () => {
         return passkeys.length;
       });
     expect(after).toBe(before);
+  });
+});
+
+/**
+ * What a page can do to the vault's dialog, with a real browser's
+ * rendering: read it, or get a click out of the user that they did not
+ * mean for it. The page's script runs here as page.evaluate(); the user's
+ * clicks are Playwright's trusted mouse input.
+ */
+describe('a page attacking the vault’s dialog', () => {
+  let page: Page;
+  const SECRETS = ['alice.secret', 'Alice Secret', 'bob.hidden', 'Bob Hidden'];
+
+  beforeAll(async () => {
+    page = await vault.newPage();
+    await page.goto('https://snoop.test/');
+    for (const [name, displayName] of [
+      ['alice.secret@snoop.test', 'Alice Secret'],
+      ['bob.hidden@snoop.test', 'Bob Hidden'],
+    ]) {
+      const json = creationJSON('snoop.test', { user: { id: random(16), name, displayName } });
+      expect((await create(page, json)).ok).toBe(true);
+    }
+    // A later visit: nothing of the registrations is left on the page.
+    await page.goto('https://snoop.test/');
+  });
+
+  afterAll(() => page.close());
+
+  /** Start a sign-in the page keeps a handle on, and wait for the dialog. */
+  async function pendingSignIn(): Promise<Frame> {
+    // The last test's dialog has gone.
+    for (let i = 0; i < 100 && dialogOpen(page); i++) await page.waitForTimeout(50);
+    const before = new Set(page.frames());
+    await page.evaluate(
+      (input: any) => {
+        const w = window as any;
+        w.controller = new AbortController();
+        w.signIn = navigator.credentials
+          .get({
+            publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(input),
+            signal: w.controller.signal,
+          })
+          .then(
+            (credential: any) => `signed in as ${credential.id}`,
+            (error: any) => error.name
+          );
+      },
+      { challenge: random(32), rpId: 'snoop.test' }
+    );
+    let frame = await dialogFrame(page);
+    for (let i = 0; i < 100 && before.has(frame); i++) {
+      await page.waitForTimeout(50);
+      frame = await dialogFrame(page);
+    }
+    // Every trusted click that reaches Continue, taken or not.
+    await frame.waitForSelector('#pkv-continue');
+    await frame.evaluate(() => {
+      (window as any).clicks = 0;
+      document.getElementById('pkv-continue')!.addEventListener('click', (event) => {
+        if (event.isTrusted) (window as any).clicks++;
+      });
+    });
+    return frame;
+  }
+
+  const signInOutcome = (waitMs = 300) =>
+    page.evaluate(
+      (ms) =>
+        Promise.race([
+          (window as any).signIn,
+          new Promise((resolve) => setTimeout(() => resolve('still waiting'), ms)),
+        ]),
+      waitMs
+    );
+
+  async function ready(frame: Frame, expected: boolean): Promise<void> {
+    for (let i = 0; i < 100; i++) {
+      const disabled = await frame.locator('#pkv-continue').getAttribute('aria-disabled');
+      if (disabled === String(!expected)) return;
+      await page.waitForTimeout(50);
+    }
+    throw new Error(`Continue never became ${expected ? 'enabled' : 'disabled'}`);
+  }
+
+  /**
+   * The user's click on Continue, wherever the page has put it: real mouse
+   * input at the button's place on screen, which the page knows (it can
+   * measure the frame's host), whether or not the dialog takes it.
+   */
+  async function clickAt(frame: Frame): Promise<void> {
+    const host = await page.evaluate(() => {
+      const rect = document.documentElement.lastElementChild!.getBoundingClientRect();
+      return { x: rect.x, y: rect.y, width: rect.width };
+    });
+    const inFrame = await frame.evaluate(() => {
+      const rect = document.getElementById('pkv-continue')!.getBoundingClientRect();
+      return {
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
+        width: document.documentElement.clientWidth,
+      };
+    });
+    const scale = host.width / inFrame.width;
+    await page.mouse.click(host.x + inFrame.x * scale, host.y + inFrame.y * scale);
+  }
+
+  it('cannot read the accounts the vault holds for it', async () => {
+    await page.evaluate(() => {
+      const w = window as any;
+      w.seen = [];
+      new MutationObserver((records) => {
+        for (const record of records) {
+          record.addedNodes.forEach((node: any) => w.seen.push(node.outerHTML ?? node.textContent));
+          if (record.type === 'attributes') {
+            const target = record.target as Element;
+            w.seen.push(`${record.attributeName}=${target.getAttribute(record.attributeName!)}`);
+          }
+        }
+      }).observe(document, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        characterData: true,
+      });
+    });
+
+    const frame = await pendingSignIn();
+    // The user sees the accounts...
+    expect(await frame.locator('body').innerText()).toContain('ALICE SECRET');
+
+    // ...and the page sees none of them, however it looks.
+    const pageView = await page.evaluate(() => {
+      const w = window as any;
+      const host = document.documentElement.lastElementChild as HTMLElement;
+      return {
+        text: [
+          w.seen.join('\n'),
+          document.documentElement.outerHTML,
+          document.documentElement.innerText,
+          JSON.stringify(performance.getEntries().map((entry) => entry.name)),
+        ].join('\n'),
+        frames: window.length,
+        // Nothing marks the page's own <html> (theme, language).
+        htmlAttributes: document.documentElement.getAttributeNames(),
+        iframes: document.querySelectorAll('iframe').length,
+        shadowRoot: host.shadowRoot,
+        found: (window as any).find('Alice Secret'),
+      };
+    });
+    for (const secret of SECRETS) expect(pageView.text).not.toContain(secret);
+    expect(pageView.text).not.toContain('vault-dialog');
+    expect(pageView).toMatchObject({
+      frames: 0,
+      iframes: 0,
+      shadowRoot: null,
+      found: false,
+      htmlAttributes: [],
+    });
+
+    await page.evaluate(() => (window as any).controller.abort());
+    expect(await signInOutcome()).toBe('AbortError');
+  });
+
+  it('cannot get a click through an invisible layer it lays over the dialog', async () => {
+    const frame = await pendingSignIn();
+    await ready(frame, true);
+
+    // A layer over everything, all but transparent and letting clicks
+    // through, so the user sees the page's decoy and clicks the dialog.
+    await page.evaluate(() => {
+      const decoy = document.createElement('div');
+      decoy.id = 'decoy';
+      decoy.setAttribute('popover', 'manual');
+      decoy.textContent = 'Click here to claim your prize';
+      decoy.style.cssText =
+        'position:fixed;inset:0;width:100vw;height:100vh;max-width:none;max-height:none;' +
+        'margin:0;border:0;opacity:0.01;pointer-events:none;background:#fff';
+      document.body.appendChild(decoy);
+      (decoy as any).showPopover();
+    });
+    await ready(frame, false);
+    await clickAt(frame);
+
+    expect(await frame.evaluate(() => (window as any).clicks)).toBe(1);
+    expect(await signInOutcome()).toBe('still waiting');
+
+    // The same click, with the dialog in plain view, signs in: it was aimed right.
+    await page.evaluate(() => document.getElementById('decoy')!.remove());
+    await ready(frame, true);
+    await clickAt(frame);
+    expect(await signInOutcome(5000)).toMatch(/^signed in as /);
+  });
+
+  it('cannot get a click on a dialog it shrank with CSS zoom', async () => {
+    const frame = await pendingSignIn();
+    await ready(frame, true);
+
+    await page.evaluate(() => (document.documentElement.style.zoom = '0.3'));
+    await ready(frame, false);
+    await clickAt(frame);
+
+    expect(await frame.evaluate(() => (window as any).clicks)).toBe(1);
+    expect(await signInOutcome()).toBe('still waiting');
+
+    await page.evaluate(() => {
+      document.documentElement.style.zoom = '';
+      (window as any).controller.abort();
+    });
+    expect(await signInOutcome()).toBe('AbortError');
+  });
+
+  it('cannot get a click the moment the dialog appears', async () => {
+    const frame = await pendingSignIn();
+
+    await clickAt(frame);
+
+    expect(await frame.evaluate(() => (window as any).clicks)).toBe(1);
+    expect(await signInOutcome()).toBe('still waiting');
+    await page.evaluate(() => (window as any).controller.abort());
+    expect(await signInOutcome()).toBe('AbortError');
   });
 });
 
