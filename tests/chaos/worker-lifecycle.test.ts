@@ -14,6 +14,7 @@
  */
 
 import { setupVault, vaultReady, type PasskeyOption } from '../helpers/harness';
+import { legacyVault } from '../helpers/legacy-vault';
 import { authenticate, outcome, register } from '../helpers/ceremony';
 import {
   authenticationJSON,
@@ -55,6 +56,20 @@ describe('a worker restart between the picker and the signature', () => {
 
     await authenticate(registration);
     expect((await vault.send({ type: 'IS_SECURE_STORAGE_UNLOCKED' })).isUnlocked).toBe(true);
+  });
+
+  it('keeps a vault whose key was upgraded on unlock unlocked across the restart', async () => {
+    await vault.reset(legacyVault(PIN));
+    expect(
+      (await vault.send({ type: 'UNLOCK_SECURE_STORAGE', payload: { password: PIN } })).success
+    ).toBe(true);
+    expect(vault.storage.passext_vault_kdf).toMatchObject({ kdf: 'scrypt' });
+    const registration = await register();
+
+    // The session saved for the next worker holds the new key, not the old.
+    await vault.restartWorker();
+    expect((await vault.send({ type: 'IS_SECURE_STORAGE_UNLOCKED' })).isUnlocked).toBe(true);
+    await authenticate(registration);
   });
 
   it('registers on a worker that started after the user confirmed', async () => {

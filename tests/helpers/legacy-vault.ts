@@ -6,7 +6,7 @@
  * with whatever the code under test does.
  */
 
-import { createCipheriv, pbkdf2Sync, randomBytes } from 'crypto';
+import { createCipheriv, pbkdf2Sync, randomBytes, scryptSync } from 'crypto';
 
 export interface LegacyVaultContents {
   passkeys?: unknown[];
@@ -29,8 +29,24 @@ function seal(plaintext: string, key: Buffer) {
 export function legacyVault(pin: string, contents: LegacyVaultContents = {}) {
   const salt = randomBytes(32);
   const key = pbkdf2Sync(pin, salt, 100000, 32, 'sha256');
+  return sealVault(key, { passext_encryption_salt: salt.toString('base64') }, contents);
+}
+
+/** A vault with a scrypt KDF record, as an earlier, cheaper default would leave it. */
+export function scryptVault(
+  pin: string,
+  params: { N: number; r: number; p: number },
+  contents: LegacyVaultContents = {}
+) {
+  const salt = randomBytes(32);
+  const key = scryptSync(pin.normalize('NFC'), salt, 32, params);
+  const record = { kdf: 'scrypt', params, salt: salt.toString('base64') };
+  return sealVault(key, { passext_vault_kdf: record }, contents);
+}
+
+function sealVault(key: Buffer, kdf: Record<string, unknown>, contents: LegacyVaultContents) {
   const storage: Record<string, unknown> = {
-    passext_encryption_salt: salt.toString('base64'),
+    ...kdf,
     passext_master_key_check: seal('passkey-vault-check', key),
   };
   if (contents.passkeys) {

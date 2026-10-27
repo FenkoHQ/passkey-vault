@@ -9,6 +9,7 @@ import { randomBytes } from '@noble/hashes/utils';
 import { uint8ArrayToBase64, base64ToUint8Array } from '../utils/base64';
 import {
   deriveKey,
+  isWeakerThanDefault,
   legacyKdfSpec,
   newKdfSpec,
   parseKdfSpec,
@@ -325,7 +326,10 @@ export class SecureStorage {
 
   /**
    * Unlock with the master PIN, or set it up when the vault has none yet.
-   * A vault from before KDF records unlocks with its legacy PBKDF2 key.
+   * A vault whose key comes from a weaker KDF than the current default
+   * (every vault from before KDF records) is re-keyed under the default on
+   * the way: see rekey(). If that fails, the vault still unlocks with its old
+   * key and the upgrade is tried again on the next unlock.
    *
    * Returns false for a wrong PIN. Throws UnsupportedKdfError when the vault
    * was set up by a newer build with a KDF this one does not know.
@@ -335,6 +339,7 @@ export class SecureStorage {
     // wrong PIN then leaves an unlocked vault unlocked with its own key, and
     // concurrent readers never decrypt with an unverified key.
     let candidate: Uint8Array | null = null;
+    let upgraded: Uint8Array | null = null;
     try {
       const spec = await this.readVaultKdf();
       const check = await this.readCheck();
@@ -364,22 +369,39 @@ export class SecureStorage {
       candidate = await deriveKey(masterPassword, spec);
       if (!opensVault(check, candidate)) return false;
 
+      const upgradeSpec = isWeakerThanDefault(spec) ? newKdfSpec() : null;
+      if (upgradeSpec) upgraded = await deriveKey(masterPassword, upgradeSpec);
+
       const verified = candidate;
+      const stronger = upgraded;
       const installed = await this.exclusive(async () => {
         // The PIN may have changed while this was deriving.
-        if (!(await this.stillOpens(spec, verified))) return false;
+        if (!(await this.stillOpens(spec, verified))) return null;
+        if (upgradeSpec && stronger) {
+          try {
+            await this.rekey(verified, upgradeSpec, stronger);
+            this.install(stronger, upgradeSpec);
+            return stronger;
+          } catch (error) {
+            console.error('Key derivation upgrade failed; it will be retried next unlock:', error);
+            // Unlock with the old key, unless the vault moved on regardless.
+            if (!(await this.stillOpens(spec, verified))) return null;
+          }
+        }
         this.install(verified, spec);
         await this.dropStaleLegacySalt();
-        return true;
+        return verified;
       });
-      if (installed) candidate = null;
-      return installed;
+      if (installed === candidate) candidate = null;
+      if (installed === upgraded) upgraded = null;
+      return installed !== null;
     } catch (error) {
       if (error instanceof UnsupportedKdfError) throw error;
       console.error('SecureStorage initialization failed:', error);
       return false;
     } finally {
       secureWipe(candidate);
+      secureWipe(upgraded);
     }
   }
 
