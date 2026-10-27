@@ -459,6 +459,17 @@ class ContentScript {
         }
 
         if (selectorResult.action === 'cancel') {
+          // A conditional (autofill) request is meant to stay open for the
+          // life of the page, so dismissing the picker hands it to the
+          // browser's own autofill instead of failing it.
+          if (payload.mediation === 'conditional') {
+            this.postPassthroughResponse(
+              'PASSKEY_GET_RESPONSE',
+              requestId,
+              'Vault picker dismissed'
+            );
+            return;
+          }
           window.postMessage(
             {
               source: 'PASSKEY_VAULT_CONTENT',

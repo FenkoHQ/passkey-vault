@@ -73,7 +73,11 @@
   // Store pending requests
   const pendingRequests = new Map<string, PendingRequest>();
 
-  const REQUEST_TIMEOUT_MS = 60000; // 60 seconds for user interaction
+  // WebAuthn Level 3 §15.1: the recommended range for a ceremony timeout,
+  // and the default when the relying party gives none.
+  const MIN_TIMEOUT_MS = 300000;
+  const MAX_TIMEOUT_MS = 600000;
+  const DEFAULT_TIMEOUT_MS = 300000;
 
   // Listen for responses from content script
   window.addEventListener('message', (event) => {
@@ -145,7 +149,8 @@
             reject,
             nativeFallback: nativeCreate ? () => nativeCreate(options) : undefined,
           },
-          options.signal
+          options.signal,
+          ceremonyTimeout(publicKey.timeout, false)
         );
         if (!tracked) {
           return;
@@ -195,7 +200,8 @@
               reject,
               nativeFallback: nativeGet ? () => nativeGet(options) : undefined,
             },
-            options.signal
+            options.signal,
+            ceremonyTimeout(publicKey.timeout, mediation === 'conditional')
           );
           if (!tracked) {
             return;
@@ -265,7 +271,8 @@
   function trackRequest(
     requestId: string,
     handlers: Pick<PendingRequest, 'resolve' | 'reject' | 'nativeFallback'>,
-    signal: AbortSignal | null | undefined
+    signal: AbortSignal | null | undefined,
+    timeoutMs: number | null
   ): boolean {
     if (signal?.aborted) {
       handlers.reject(abortReason(signal));
@@ -288,11 +295,14 @@
     };
 
     const onAbort = () => stop(abortReason(signal!));
-    const timeoutId = window.setTimeout(() => {
-      const error = new DOMException('The operation timed out.', 'NotAllowedError');
-      Object.defineProperty(error, '__passkeyVaultBlockNativeFallback', { value: true });
-      stop(error);
-    }, REQUEST_TIMEOUT_MS);
+    const timeoutId =
+      timeoutMs === null
+        ? 0
+        : window.setTimeout(() => {
+            const error = new DOMException('The operation timed out.', 'NotAllowedError');
+            Object.defineProperty(error, '__passkeyVaultBlockNativeFallback', { value: true });
+            stop(error);
+          }, timeoutMs);
     signal?.addEventListener('abort', onAbort, { once: true });
 
     pendingRequests.set(requestId, {
@@ -301,6 +311,24 @@
       detachSignal: () => signal?.removeEventListener('abort', onAbort),
     });
     return true;
+  }
+
+  /**
+   * How long the user has to answer the vault. The relying party's timeout
+   * is only a hint the client corrects into a reasonable range (WebAuthn
+   * Level 3 §5.1.3 step 4); the spec recommends 5 to 10 minutes, which also
+   * gives users who need it enough time (WCAG 2.2.1). A conditional
+   * (autofill) sign-in has no timeout at all: it stays available for the
+   * lifetime of the page (§5.1.4.1 step 3).
+   */
+  function ceremonyTimeout(timeout: number | undefined, conditional: boolean): number | null {
+    if (conditional) {
+      return null;
+    }
+    if (timeout === undefined) {
+      return DEFAULT_TIMEOUT_MS;
+    }
+    return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, timeout));
   }
 
   function abortReason(signal: AbortSignal): unknown {
