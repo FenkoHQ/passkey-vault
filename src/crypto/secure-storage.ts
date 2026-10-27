@@ -73,6 +73,14 @@ function encryptData(data: string, key: Uint8Array): EncryptedData {
   };
 }
 
+function opensVault(check: EncryptedData, key: Uint8Array): boolean {
+  try {
+    return decryptData(check, key) === 'passkey-vault-check';
+  } catch {
+    return false;
+  }
+}
+
 function decryptData(encryptedData: EncryptedData, key: Uint8Array): string {
   const iv = base64ToUint8Array(encryptedData.iv);
   const encrypted = base64ToUint8Array(encryptedData.data);
@@ -150,6 +158,27 @@ export class SecureStorage {
       console.error('SecureStorage initialization failed:', error);
       this.lock();
       return false;
+    }
+  }
+
+  /**
+   * Check a PIN against the stored check value without touching the unlock
+   * state: the candidate key is derived locally and wiped afterwards. False
+   * when no PIN is set up.
+   */
+  private async verifyPassword(password: string): Promise<boolean> {
+    const salt = (await chrome.storage.local.get(STORAGE_KEYS.ENCRYPTION_SALT))[
+      STORAGE_KEYS.ENCRYPTION_SALT
+    ];
+    const check = (await chrome.storage.local.get(STORAGE_KEYS.MASTER_KEY_CHECK))[
+      STORAGE_KEYS.MASTER_KEY_CHECK
+    ];
+    if (!salt || !check) return false;
+    const key = await deriveKeyFromPassword(password, base64ToUint8Array(salt));
+    try {
+      return opensVault(check, key);
+    } finally {
+      secureWipe(key);
     }
   }
 
@@ -373,12 +402,13 @@ export class SecureStorage {
    * Change the master password
    */
   async changeMasterPassword(currentPassword: string, newPassword: string): Promise<boolean> {
-    // Verify current password
-    if (!this.isUnlocked) {
-      const verified = await this.initialize(currentPassword);
-      if (!verified) {
-        return false;
-      }
+    // Always check the current PIN. The background only routes this message
+    // while unlocked, so a check that ran only when locked never ran at all.
+    if (!(await this.verifyPassword(currentPassword))) {
+      return false;
+    }
+    if (!this.isStorageUnlocked() && !(await this.initialize(currentPassword))) {
+      return false;
     }
 
     try {
