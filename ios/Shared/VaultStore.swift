@@ -195,6 +195,23 @@ final class VaultStore {
         record["updatedAt"] as? Double ?? record["createdAt"] as? Double ?? 0
     }
 
+    private func isBool(_ value: Any?) -> Bool {
+        guard let number = value as? NSNumber else { return false }
+        return CFGetTypeID(number) == CFBooleanGetTypeID()
+    }
+
+    /// A copy written by a build that predates per-credential backup flags must
+    /// not erase them: keep the other copy's flags when the winner has none.
+    /// Mirrors carryBackupFields() in src/sync/backup-flags.ts.
+    private func carryBackupFields(_ winner: [String: Any], _ other: [String: Any]) -> [String: Any] {
+        guard !isBool(winner["backupEligible"]), isBool(other["backupEligible"]) else { return winner }
+        var merged = winner
+        merged["backupEligible"] = other["backupEligible"]
+        merged["backupState"] = (other["backupState"] as? Bool) ?? false
+        if let source = other["backupSource"] { merged["backupSource"] = source }
+        return merged
+    }
+
     private func mergeEntries(_ local: String, _ incoming: String,
                               _ deletions: [[String: Any]], _ kind: String) -> String {
         var records: [String: [String: Any]] = [:]
@@ -205,7 +222,7 @@ final class VaultStore {
                 guard let current = records[id] else { records[id] = item; continue }
                 let newer = revision(item) > revision(current) ||
                     (revision(item) == revision(current) && recordOrder(item) > recordOrder(current))
-                var winner = newer ? item : current
+                var winner = carryBackupFields(newer ? item : current, newer ? current : item)
                 winner["counter"] = max(item["counter"] as? Int ?? 0, current["counter"] as? Int ?? 0)
                 records[id] = winner
             }

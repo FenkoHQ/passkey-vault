@@ -29,6 +29,7 @@
     "capture:promo": "node scripts/capture-assets.js promo",
     "test:sync": "node tests/sync/regression.test.cjs",
     "test:e2e": "npm run build:chrome && node tests/e2e/popup.test.cjs",
+    "test:e2e:webauthn": "npm run build:chrome && jest --config jest.e2e.config.js",
     "typecheck:mobile": "tsc --noEmit -p tsconfig.mobile.json"
   },
   "keywords": [
@@ -48,6 +49,7 @@
     "url": ""
   },
   "devDependencies": {
+    "@simplewebauthn/server": "^14.0.3",
     "@types/chrome": "^0.0.254",
     "@types/jest": "^29.5.8",
     "@types/node": "^20.9.0",

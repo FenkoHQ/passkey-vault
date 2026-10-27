@@ -55,10 +55,12 @@ enum WebAuthn {
                                   credentialId: Data?,
                                   cosePublicKey: Data?,
                                   includeAttestedCredentialData: Bool,
-                                  counter: Int) -> Data {
+                                  counter: Int,
+                                  backupFlags: UInt8 = 0) -> Data {
         var out = Data()
         out.append(sha256(Data(rpId.utf8)))
-        out.append(includeAttestedCredentialData ? 0x45 : 0x05)   // flags: UP+UV(+AT)
+        // flags: UP+UV(+AT), plus the credential's own BE/BS bits
+        out.append((includeAttestedCredentialData ? 0x45 : 0x05) | (backupFlags & 0x18))
         var be = UInt32(truncatingIfNeeded: counter).bigEndian
         out.append(Data(bytes: &be, count: 4))
         if includeAttestedCredentialData, let credentialId, let cosePublicKey {

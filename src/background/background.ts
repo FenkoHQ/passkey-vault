@@ -6,6 +6,7 @@ import {
   SYNC_DELETIONS_KEY,
   type SyncDeletion,
 } from '../sync/merge';
+import { repairCredentialIds, toBase64Url } from '../sync/credential-ids';
 import {
   generateMnemonic,
   validateMnemonic,
@@ -18,7 +19,7 @@ import {
   type SyncTotpEntry,
   type SyncVaultAdapter,
 } from '../sync/sync-service';
-import { secureStorage } from '../crypto/secure-storage';
+import { AUTO_LOCK_ALARM, AUTO_LOCK_SETTING_KEY, secureStorage } from '../crypto/secure-storage';
 import { encryptWithPassword, decryptWithPassword } from '../crypto/encryption';
 import { logger } from '../utils/logger';
 import { arrayBufferToBase64, arrayBufferToBase64URL, base64urlToBase64 } from '../utils/base64';
@@ -32,18 +33,38 @@ import {
   type AuthenticatorDataOptions,
 } from './cbor';
 import {
+  ensureBackupFlagsSnapshot,
+  loadBackupFlagsSnapshot,
   loadWebAuthnFlags,
   saveWebAuthnFlags,
   transportsFor,
   type WebAuthnFlagSettings,
 } from './webauthn-settings';
+import {
+  applyBackupRepairs,
+  backupFlagsOf,
+  normalizeBackupFlags,
+  stampLegacyBackupFlags,
+  withBackupFlags,
+  PRE_UPGRADE_BACKUP_FLAGS,
+  type BackupFields,
+  type BackupFlags,
+  type BackupRepair,
+} from '../sync/backup-flags';
 import { verifyRelatedOrigin } from './related-origins';
+import { serializeClientData } from './client-data';
+import { acceptsEs256 } from '../utils/algorithms';
+import { isRpIdValidForHost } from '../utils/rp-id';
+import { hasStringId, wellFormedRecords } from '../utils/records';
+import { DIALOG_MESSAGES, isVaultDialogSender } from '../utils/vault-dialog';
+import { DialogBroker } from './dialog-broker';
 import { needsSiteIcon, saveSiteIcon, clearSiteIcons } from '../site-icons';
 import {
   selectPrfEval,
   getOrCreatePrfKey,
   computePrfResults,
   buildClientExtensionResults,
+  usablePrfInput,
 } from './prf';
 import {
   generateTotp as generateTotpCode,
@@ -55,6 +76,7 @@ import {
   saveTotpEntries,
   addTotpEntry as addTotpEntryStore,
   deleteTotpEntry as deleteTotpEntryStore,
+  issueHotpCode,
   entryToSecretBytes,
   generateTotpId,
   TOTP_STORAGE_KEY,
@@ -66,18 +88,36 @@ const SYNC_CONFIG_KEY = 'sync_config';
 const SYNC_DEVICES_KEY = 'sync_devices';
 const SYNC_STATUS_KEY = 'sync_status';
 const UPGRADE_BACKUP_REQUIRED_KEY = 'upgrade_backup_required_0_9_5';
+/** How long a page may take back a passkey it stopped waiting for. */
+const REGISTRATION_UNDO_MS = 10 * 60 * 1000;
 
-/** Translate the user's Advanced settings into authenticator data flags. */
-function toAuthenticatorDataOptions(flags: WebAuthnFlagSettings): AuthenticatorDataOptions {
+/**
+ * The content script's account of the calling frame, for clientData
+ * crossOrigin/topOrigin. Absent fields mean a top-level, same-origin call.
+ */
+function callerFrame(payload: MessagePayload): { crossOrigin: boolean; topOrigin?: string } {
+  const crossOrigin = payload.crossOrigin === true;
+  const topOrigin = typeof payload.topOrigin === 'string' ? payload.topOrigin : undefined;
+  return crossOrigin && topOrigin ? { crossOrigin, topOrigin } : { crossOrigin };
+}
+
+/**
+ * Translate the user's Advanced settings, and the passkey's own backup flags,
+ * into authenticator data flags.
+ */
+function toAuthenticatorDataOptions(
+  flags: WebAuthnFlagSettings,
+  backup: BackupFlags
+): AuthenticatorDataOptions {
   return {
     userVerified: flags.userVerification === 'always',
-    backupEligible: flags.backupEligible,
-    backupState: flags.backupState,
+    backupEligible: backup.backupEligible,
+    backupState: backup.backupState,
     aaguid: flags.aaguid === 'zero' ? ANONYMOUS_AAGUID : PASSKEY_VAULT_AAGUID,
   };
 }
 
-interface StoredPasskey {
+interface StoredPasskey extends BackupFields {
   id: string;
   credentialId: string;
   type: string;
@@ -131,7 +171,11 @@ interface SyncChain {
   id: string;
   createdAt: number;
   devices: SyncDevice[];
-  seedHash: string;
+  /**
+   * Written by older builds only. Nothing reads it, and it put the seed in
+   * cleartext; stripCleartextChainSeed() removes it from PIN'd vaults.
+   */
+  seedHash?: string;
 }
 
 type MessagePayload = Record<string, unknown>;
@@ -140,6 +184,8 @@ interface ExtensionMessage {
   type: string;
   payload?: MessagePayload;
   requestId?: string;
+  /** Which tab, frame and origin a web page's message came from; set by bindToWebPage. */
+  requester?: string;
   timestamp?: number;
   deviceName?: string;
   wordCount?: number;
@@ -147,9 +193,142 @@ interface ExtensionMessage {
   deviceId?: string;
 }
 
+/**
+ * What a content script may ask for. A content script runs in the web
+ * page's renderer process, which a browser exploit can take over and use to
+ * send any message the content script could, so these are the only
+ * messages accepted from a web page: the ceremony itself, and nothing that
+ * reads, exports, changes or deletes the vault or its settings.
+ */
+const WEB_PAGE_MESSAGES = new Set([
+  DIALOG_MESSAGES.OPEN,
+  DIALOG_MESSAGES.LAUNCH,
+  DIALOG_MESSAGES.CANCEL,
+  'CREATE_PASSKEY',
+  'DISCARD_REGISTRATION',
+  'GET_PASSKEY',
+  'VERIFY_RELATED_ORIGIN',
+  'NEEDS_SITE_ICON',
+  'SAVE_SITE_ICON',
+  'ACTIVATE_UI',
+]);
+
+/** The popup, options and other pages bundled with the extension. */
+function isExtensionPage(sender: chrome.runtime.MessageSender): boolean {
+  return typeof sender?.url === 'string' && sender.url.startsWith(chrome.runtime.getURL(''));
+}
+
+/** The web origin Chrome says a message came from, or null if it has none. */
+function webOrigin(sender: chrome.runtime.MessageSender): string | null {
+  try {
+    const origin = sender.origin || new URL(sender.url || '').origin;
+    return /^https?:\/\//.test(origin) ? origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Refuse an RP ID the sending origin may not use, as the content script does. */
+async function requireRpIdFor(rpId: string, origin: string): Promise<void> {
+  if (isRpIdValidForHost(rpId, new URL(origin).hostname)) return;
+  if (await verifyRelatedOrigin(rpId, origin)) return;
+  throw new Error(`RP ID ${rpId} is not valid for ${origin}`);
+}
+
+/**
+ * Check a content script's message against Chrome's account of the sender,
+ * and rewrite what the page could otherwise lie about: the origin written
+ * into clientDataJSON, the RP ID it signs for, and whether it runs in a
+ * cross-origin frame. Throws for anything a web page may not ask.
+ */
+async function bindToWebPage(
+  message: ExtensionMessage,
+  sender: chrome.runtime.MessageSender
+): Promise<ExtensionMessage> {
+  if (!WEB_PAGE_MESSAGES.has(message.type)) {
+    throw new Error(`${message.type} is not available to web pages`);
+  }
+  const origin = webOrigin(sender);
+  if (!origin) {
+    throw new Error('Message from an unknown sender');
+  }
+  const host = new URL(origin).hostname;
+  const payload: MessagePayload = { ...(message.payload || {}) };
+
+  switch (message.type) {
+    case DIALOG_MESSAGES.OPEN:
+    case 'CREATE_PASSKEY':
+    case 'GET_PASSKEY': {
+      const publicKey = { ...((payload.publicKey as MessagePayload) || {}) };
+      const rp = publicKey.rp as Record<string, unknown> | undefined;
+      const rpId = String(publicKey.rpId ?? rp?.id ?? host);
+      await requireRpIdFor(rpId, origin);
+      publicKey.rpId = rpId;
+      payload.publicKey = publicKey;
+      payload.origin = origin;
+      // A frame whose origin differs from the tab's top-level page is
+      // cross-origin whatever the page claims.
+      let tabOrigin: string | null = null;
+      try {
+        tabOrigin = sender.tab?.url ? new URL(sender.tab.url).origin : null;
+      } catch {
+        tabOrigin = null;
+      }
+      if (sender.frameId !== 0 && tabOrigin && tabOrigin !== origin) {
+        payload.crossOrigin = true;
+        payload.topOrigin = tabOrigin;
+      } else if (sender.frameId === 0) {
+        payload.crossOrigin = false;
+        delete payload.topOrigin;
+      }
+      break;
+    }
+    case 'NEEDS_SITE_ICON':
+    case 'SAVE_SITE_ICON':
+      // Only a page of the site itself may supply its icon.
+      if (!isRpIdValidForHost(String(payload.rpId || ''), host)) {
+        throw new Error('A page may only supply its own site icon');
+      }
+      break;
+    case 'VERIFY_RELATED_ORIGIN':
+      payload.origin = origin;
+      break;
+  }
+  return { ...message, payload, requester: `${sender.tab?.id}:${sender.frameId}:${origin}` };
+}
+
+/**
+ * The vault has a PIN and is locked. Responses carry `code: 'VAULT_LOCKED'`
+ * so the content script can tell this apart from an empty vault.
+ */
+class VaultLockedError extends Error {
+  readonly code = 'VAULT_LOCKED';
+
+  constructor() {
+    super('Secure storage is locked. Please unlock with master password.');
+    this.name = 'VaultLockedError';
+  }
+}
+
 class BackgroundService {
   private isInitialized: boolean;
+  private sessionRestored: Promise<unknown>;
   private vaultJobs: Promise<unknown> = Promise.resolve();
+  /** Passkeys made for a web page recently, by request, so the page can take one back. */
+  private recentRegistrations = new Map<
+    string,
+    { requester: string; credentialId: string; at: number }
+  >();
+
+  /** The vault's ceremony dialogs, and the approvals they give. */
+  private dialogs = new DialogBroker({
+    assertUnlocked: async () => {
+      if ((await secureStorage.isSetup()) && !secureStorage.isStorageUnlocked()) {
+        throw new VaultLockedError();
+      }
+    },
+    passkeysFor: async (rpId) => (await this.loadPasskeys()).filter((p) => p.rpId === rpId),
+  });
 
   private withVault<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.vaultJobs.then(operation);
@@ -157,6 +336,7 @@ class BackgroundService {
     return result;
   }
   private syncStatus: SyncStatus;
+  private syncStatusLoaded: Promise<void>;
 
   constructor() {
     this.isInitialized = false;
@@ -169,9 +349,17 @@ class BackgroundService {
       localPasskeyCount: 0,
       syncedPasskeyCount: 0,
     };
+    // A restarted worker must build on the persisted status, not the defaults.
+    this.syncStatusLoaded = this.loadSyncStatus();
     // MV3: listeners must be attached synchronously at SW wake, before any
     // await — otherwise the first message after a cold start is dropped with
     // "Could not establish connection. Receiving end does not exist."
+    secureStorage.onAutoLock = () => void syncService.disconnect();
+    // Messages wait for this, so a worker restarted by a request answers it
+    // with the unlock the previous worker held.
+    this.sessionRestored = secureStorage.restoreSession().catch((error) => {
+      console.error('Failed to restore the unlocked session:', error);
+    });
     this.setupMessageHandlers();
     this.setupLifecycleHandlers();
     this.initialize();
@@ -187,13 +375,13 @@ class BackgroundService {
 
   private async loadPasskeys(): Promise<StoredPasskey[]> {
     if (this.useSecureStorage) {
-      return (await secureStorage.getPasskeys()) as unknown as StoredPasskey[];
+      return wellFormedRecords((await secureStorage.getPasskeys()) as unknown as StoredPasskey[]);
     }
     if (await secureStorage.isSetup()) {
-      throw new Error('Secure storage is locked. Please unlock with master password.');
+      throw new VaultLockedError();
     }
     const result = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
-    return result[PASSKEY_STORAGE_KEY] || [];
+    return wellFormedRecords(result[PASSKEY_STORAGE_KEY] || []);
   }
 
   private async savePasskeys(passkeys: StoredPasskey[]): Promise<void> {
@@ -202,7 +390,7 @@ class BackgroundService {
       return;
     }
     if (await secureStorage.isSetup()) {
-      throw new Error('Secure storage is locked. Please unlock with master password.');
+      throw new VaultLockedError();
     }
     await chrome.storage.local.set({ [PASSKEY_STORAGE_KEY]: passkeys });
   }
@@ -229,13 +417,19 @@ class BackgroundService {
       });
     }
 
+    // A missing raw key means the encrypted copy is the only one (a migrated
+    // vault), not that the vault is empty, so leave that store alone.
     const passkeysResult = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
     const passkeys: StoredPasskey[] = passkeysResult[PASSKEY_STORAGE_KEY] || [];
-    await secureStorage.storePasskeys(passkeys as unknown as Record<string, unknown>[]);
+    if (passkeysResult[PASSKEY_STORAGE_KEY] !== undefined) {
+      await secureStorage.storePasskeys(passkeys as unknown as Record<string, unknown>[]);
+    }
 
     const totpResult = await chrome.storage.local.get('totp_entries');
     const totpEntries: StoredTotpEntry[] = totpResult['totp_entries'] || [];
-    await secureStorage.storeTotpEntries(totpEntries as unknown as Record<string, unknown>[]);
+    if (totpResult['totp_entries'] !== undefined) {
+      await secureStorage.storeTotpEntries(totpEntries as unknown as Record<string, unknown>[]);
+    }
 
     if (passkeys.length > 0 || totpEntries.length > 0) {
       logger.info(
@@ -314,6 +508,80 @@ class BackgroundService {
     );
   }
 
+  /**
+   * Give every passkey from before per-credential backup flags the flags it
+   * was already being signed with, so a site that stored them sees no change.
+   * Needs the vault readable, so it runs at start-up and again on unlock. A
+   * no-op once every record carries flags.
+   */
+  private stampLegacyBackupFlags(): Promise<void> {
+    return this.withVault(async () => {
+      if ((await secureStorage.isSetup()) && !secureStorage.isStorageUnlocked()) return;
+      const snapshot = await ensureBackupFlagsSnapshot();
+      const { records, stamped } = stampLegacyBackupFlags(await this.loadPasskeys(), snapshot);
+      if (stamped === 0) return;
+      await this.savePasskeys(records);
+      logger.info(`Recorded pre-upgrade backup flags on ${stamped} passkeys`);
+      await this.noteVaultChange();
+    });
+  }
+
+  /** Flags for a passkey that has none of its own yet: what it was signed with before. */
+  private async fallbackBackupFlags(): Promise<BackupFlags> {
+    return (await loadBackupFlagsSnapshot()) ?? PRE_UPGRADE_BACKUP_FLAGS;
+  }
+
+  /** Whether this device is part of a sync chain, so a new passkey is already backed up. */
+  private async isSyncConfigured(): Promise<boolean> {
+    const config = (await chrome.storage.local.get(SYNC_CONFIG_KEY))[SYNC_CONFIG_KEY] as
+      | SyncConfig
+      | undefined;
+    return Boolean(config?.enabled && config.chainId);
+  }
+
+  /**
+   * Older builds also kept the sync seed in the cleartext `sync_devices` chain
+   * record, and PIN setup never stripped it. Strip it once the encrypted sync
+   * config is known to hold that seed, which needs the key, so stripping never
+   * drops the only copy. When the record is for the device's current chain
+   * and the encrypted config lacks the seed, the seed is moved there first.
+   * A record for any other chain is left alone. Run inside a vault job, after
+   * migrateLegacyRawStorage(); a no-op while locked or without a PIN.
+   */
+  private async stripCleartextChainSeed(): Promise<void> {
+    if (!secureStorage.isStorageUnlocked()) return;
+    const chain = (await chrome.storage.local.get(SYNC_DEVICES_KEY))[SYNC_DEVICES_KEY] as
+      | SyncChain
+      | null
+      | undefined;
+    if (!chain?.seedHash) return;
+
+    const stored = await secureStorage.getSyncConfig();
+    if (stored?.seedHash !== chain.seedHash) {
+      const config = (await chrome.storage.local.get(SYNC_CONFIG_KEY))[SYNC_CONFIG_KEY] as
+        | SyncConfig
+        | undefined;
+      const currentChain =
+        !!config?.chainId &&
+        config.chainId === chain.id &&
+        !config.seedHash &&
+        chain.seedHash.startsWith(chain.id);
+      if (!currentChain) return;
+      await secureStorage.storeSyncConfig({
+        chainId: config.chainId,
+        deviceId: config.deviceId || '',
+        deviceName: config.deviceName || '',
+        seedHash: chain.seedHash,
+        enabled: config.enabled || false,
+      });
+    }
+
+    const publicChain = { ...chain };
+    delete publicChain.seedHash;
+    await chrome.storage.local.set({ [SYNC_DEVICES_KEY]: publicChain });
+    logger.info('Removed the cleartext sync seed from the chain record');
+  }
+
   private async initialize(): Promise<void> {
     try {
       const saved = (await chrome.storage.local.get(SYNC_CONFIG_KEY))[SYNC_CONFIG_KEY];
@@ -322,13 +590,13 @@ class BackgroundService {
       }
       await logger.init();
       logger.info('Background service initializing...');
+      await this.sessionRestored;
+      await this.withVault(() => this.repairStoredCredentialIds());
+      // Before anything else reads the Advanced toggles: from this build on
+      // they only describe new passkeys, so record what they meant until now.
+      await ensureBackupFlagsSnapshot();
+      await this.stampLegacyBackupFlags();
       await this.initializeSyncService();
-      // Restore auto-lock timeout from storage
-      const stored = await chrome.storage.local.get('auto_lock_timeout');
-      if (stored.auto_lock_timeout != null) {
-        const ms = stored.auto_lock_timeout === 0 ? 0 : stored.auto_lock_timeout * 60 * 1000;
-        secureStorage.setAutoLockTimeout(ms);
-      }
       this.isInitialized = true;
       logger.info('Background service initialized successfully');
     } catch (error) {
@@ -365,7 +633,9 @@ class BackgroundService {
           config.deviceName || undefined,
           this.syncVaultAdapter()
         );
-        await this.updateSyncStatus({ connectionStatus: 'connected' });
+        await this.updateSyncStatus({
+          connectionStatus: syncService.getStatus().connected ? 'connected' : 'disconnected',
+        });
         logger.info('Sync service started');
       }
     } catch (error: unknown) {
@@ -376,6 +646,21 @@ class BackgroundService {
         lastError: message,
       });
     }
+  }
+
+  /**
+   * Re-key passkeys imported with a Bitwarden-encoded credential ID (issue
+   * #17). Runs at startup, on unlock and after every sync merge, because a
+   * peer on an older build can still send them. Callers hold the vault lock.
+   */
+  private async repairStoredCredentialIds(): Promise<void> {
+    if (!secureStorage.isStorageUnlocked() && (await secureStorage.isSetup())) return;
+    const repair = repairCredentialIds(await this.loadPasskeys());
+    if (repair.deletions.length === 0) return;
+    await this.recordDeletions(repair.deletions);
+    await this.savePasskeys(repair.passkeys);
+    logger.info(`Re-keyed ${repair.deletions.length} passkeys with Bitwarden credential IDs`);
+    await this.noteVaultChange();
   }
 
   private async loadDeletions(): Promise<SyncDeletion[]> {
@@ -406,15 +691,23 @@ class BackgroundService {
           if (JSON.stringify(current) !== JSON.stringify(snapshot)) {
             return;
           }
+          // A relay accepted the snapshot, also when the socket reconnected
+          // on its own after triggerSync had reported it disconnected.
           await this.updateSyncStatus({
             lastSyncSuccess: Date.now(),
             pendingChanges: 0,
             syncedPasskeyCount: current.passkeys.length,
+            connectionStatus: 'connected',
+            lastError: null,
           });
         }),
       mergeRemote: (remotePasskeys, remoteTotpEntries, sourceDeviceId, remoteDeletions = []) =>
         this.withVault(async () => {
           void sourceDeviceId;
+          // A peer on another build or platform can send a damaged record;
+          // it must not stop the rest of its snapshot from merging.
+          remotePasskeys = wellFormedRecords(remotePasskeys).filter(hasStringId);
+          remoteTotpEntries = wellFormedRecords(remoteTotpEntries).filter(hasStringId);
           const deletions = mergeDeletions(await this.loadDeletions(), remoteDeletions);
           // Persist deletion records first, so interrupted merges cannot resurrect entries.
           await chrome.storage.local.set({ [SYNC_DELETIONS_KEY]: deletions });
@@ -429,48 +722,75 @@ class BackgroundService {
           await saveTotpEntries(
             mergeRecords(await loadTotpEntries(), remoteTotpEntries, deletions, 'totp')
           );
+          await this.repairStoredCredentialIds();
         }),
     };
   }
 
   private setupMessageHandlers(): void {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      void sender;
-      this.handleMessage(message, sendResponse);
+      this.handleMessage(message, sendResponse, sender);
       return true;
     });
   }
 
   private async handleMessage(
     message: ExtensionMessage,
-    sendResponse: (response?: unknown) => void
+    sendResponse: (response?: unknown) => void,
+    sender: chrome.runtime.MessageSender
   ): Promise<void> {
     try {
-      const response = await this.routeMessage(message);
+      const response = await this.routeMessage(message, sender);
       sendResponse(response);
     } catch (error: unknown) {
       const message_str = error instanceof Error ? error.message : String(error);
-      console.error('Message handling error:', error);
-      sendResponse({ success: false, error: message_str });
+      const code = error instanceof VaultLockedError ? error.code : undefined;
+      // A locked vault is a normal state that the caller handles, not an
+      // error for chrome://extensions to list against the extension.
+      if (!code) {
+        console.error('Message handling error:', error);
+      }
+      sendResponse({ success: false, error: message_str, ...(code && { code }) });
     }
   }
 
-  private async routeMessage(message: ExtensionMessage): Promise<unknown> {
+  private async routeMessage(
+    received: ExtensionMessage,
+    sender: chrome.runtime.MessageSender
+  ): Promise<unknown> {
+    await this.sessionRestored;
+    // The dialog page is an extension page that web pages embed, so it gets
+    // the dialog messages and nothing else an extension page could ask for.
+    if (isVaultDialogSender(sender, chrome.runtime.id)) {
+      return this.dialogs.handleDialogMessage(received as unknown as MessagePayload, sender);
+    }
+    const message = isExtensionPage(sender) ? received : await bindToWebPage(received, sender);
     const { type } = message;
+    if (type === DIALOG_MESSAGES.OPEN) {
+      return this.dialogs.open(message, sender);
+    }
+    if (type === DIALOG_MESSAGES.LAUNCH) {
+      return this.dialogs.launch(message);
+    }
+    if (type === DIALOG_MESSAGES.CANCEL) {
+      return this.dialogs.cancel(message);
+    }
 
     const lockedTypes = new Set([
       'CREATE_PASSKEY',
+      'DISCARD_REGISTRATION',
       'GET_PASSKEY',
       'RETRIEVE_PASSKEY',
       'LIST_PASSKEYS',
       'GET_PASSKEYS',
-      'LIST_PASSKEYS_FOR_RP',
       'DELETE_PASSKEY',
+      'SET_PASSKEY_BACKUP',
       'ENCRYPT_BACKUP',
       'LIST_TOTP_ENTRIES',
       'ADD_TOTP_ENTRY',
       'DELETE_TOTP_ENTRY',
       'GENERATE_TOTP_CODE',
+      'NEXT_HOTP_CODE',
       'IMPORT_VAULT',
       'EXPORT_VAULT',
       'CLEAR_VAULT',
@@ -481,6 +801,7 @@ class BackgroundService {
     const upgradeBlockedTypes = new Set([
       'CREATE_PASSKEY',
       'DELETE_PASSKEY',
+      'SET_PASSKEY_BACKUP',
       'ADD_TOTP_ENTRY',
       'DELETE_TOTP_ENTRY',
       'IMPORT_VAULT',
@@ -494,23 +815,33 @@ class BackgroundService {
       (await secureStorage.isSetup()) &&
       !secureStorage.isStorageUnlocked()
     ) {
-      throw new Error('Secure storage is locked. Please unlock with master password.');
+      throw new VaultLockedError();
     }
-    if (
-      upgradeBlockedTypes.has(type) &&
-      (await chrome.storage.local.get(UPGRADE_BACKUP_REQUIRED_KEY))[UPGRADE_BACKUP_REQUIRED_KEY]
-    ) {
+    if (upgradeBlockedTypes.has(type) && (await this.isUpgradeBackupRequired())) {
       throw new Error('Export an encrypted backup before changing this upgraded vault.');
+    }
+    // A web page signs only with the passkey the user picked in the vault's
+    // dialog, and creates one only when the user confirmed it there, for
+    // the request they approved.
+    if (message.requester && type === 'GET_PASSKEY') {
+      const selectedPasskeyId = await this.dialogs.consumeApproval(message, 'get');
+      message.payload = { ...message.payload, selectedPasskeyId };
+    }
+    if (message.requester && type === 'CREATE_PASSKEY') {
+      await this.dialogs.consumeApproval(message, 'create');
     }
 
     // Serialize read/modify/write operations. Lookups and relay waits stay independent.
     const mutations = new Set([
       'CREATE_PASSKEY',
+      'DISCARD_REGISTRATION',
       'GET_PASSKEY',
       'DELETE_PASSKEY',
+      'SET_PASSKEY_BACKUP',
       'ADD_TOTP_ENTRY',
       'DELETE_TOTP_ENTRY',
       'GENERATE_TOTP_CODE',
+      'NEXT_HOTP_CODE',
       'IMPORT_VAULT',
       'CLEAR_VAULT',
       'FACTORY_RESET',
@@ -530,7 +861,9 @@ class BackgroundService {
     const { type, payload } = message;
     switch (type) {
       case 'CREATE_PASSKEY':
-        return this.handleCreatePasskey(payload || {});
+        return this.handleCreatePasskey(payload || {}, message.requestId, message.requester);
+      case 'DISCARD_REGISTRATION':
+        return this.handleDiscardRegistration(message.requestId, message.requester);
       case 'GET_PASSKEY':
         return this.handleGetPasskey(payload || {});
       case 'RETRIEVE_PASSKEY':
@@ -538,8 +871,6 @@ class BackgroundService {
       case 'LIST_PASSKEYS':
       case 'GET_PASSKEYS':
         return this.handleListPasskeys();
-      case 'LIST_PASSKEYS_FOR_RP':
-        return this.handleListPasskeysForRp(payload || {});
       case 'VERIFY_RELATED_ORIGIN':
         return this.handleVerifyRelatedOrigin(payload || {});
       case 'NEEDS_SITE_ICON':
@@ -548,6 +879,8 @@ class BackgroundService {
         return this.handleSaveSiteIcon(payload || {});
       case 'DELETE_PASSKEY':
         return this.handleDeletePasskey(payload || {});
+      case 'SET_PASSKEY_BACKUP':
+        return this.handleSetPasskeyBackup(payload || {});
       case 'ENCRYPT_BACKUP':
         return this.handleEncryptBackup(payload as { data: string; password: string });
       case 'LIST_TOTP_ENTRIES':
@@ -558,6 +891,8 @@ class BackgroundService {
         return this.handleDeleteTotpEntry(payload || {});
       case 'GENERATE_TOTP_CODE':
         return this.handleGenerateTotpCode(payload || {});
+      case 'NEXT_HOTP_CODE':
+        return this.handleNextHotpCode(payload || {});
       case 'IMPORT_VAULT':
         return this.handleImportVault(payload || {});
       case 'EXPORT_VAULT':
@@ -647,6 +982,10 @@ class BackgroundService {
     chrome.runtime.onSuspend.addListener(() => {
       logger.info('Extension suspending');
     });
+    chrome.alarms?.onAlarm.addListener((alarm) => {
+      if (alarm.name !== AUTO_LOCK_ALARM) return;
+      void this.sessionRestored.then(() => secureStorage.lockIfIdle());
+    });
   }
 
   private async requireUpgradeBackupIfNeeded(previousVersion?: string): Promise<void> {
@@ -671,7 +1010,11 @@ class BackgroundService {
 
   // ==================== PASSKEY OPERATIONS ====================
 
-  private async handleCreatePasskey(payload: MessagePayload): Promise<unknown> {
+  private async handleCreatePasskey(
+    payload: MessagePayload,
+    requestId?: string,
+    requester?: string
+  ): Promise<unknown> {
     try {
       const options = payload.publicKey as Record<string, unknown> | undefined;
       const origin = payload.origin as string | undefined;
@@ -684,14 +1027,35 @@ class BackgroundService {
 
       logger.debug('Creating passkey for', rpId, 'user:', (user?.name as string) || 'unknown');
 
-      const existingPasskeys = await this.loadPasskeys();
-      const existingPasskey = existingPasskeys.find((p) => p.rpId === rpId);
-
-      if (existingPasskey) {
-        logger.debug('Passkey already exists for', rpId);
+      // The content script hands these to the browser; refuse here too rather
+      // than mint a key type the relying party did not offer.
+      if (!acceptsEs256(options?.pubKeyCredParams)) {
         return {
           success: false,
-          error: 'A passkey already exists for this site',
+          error: 'None of the requested algorithms is supported',
+          name: 'NotSupportedError',
+        };
+      }
+
+      // Refuse only a credential the RP says this account already has. A site
+      // can hold several accounts, and an account several passkeys.
+      const excluded = new Set(
+        ((options?.excludeCredentials as Array<{ id?: unknown }> | undefined) || [])
+          .map((credential) =>
+            typeof credential?.id === 'string' ? toBase64Url(credential.id) : ''
+          )
+          .filter(Boolean)
+      );
+      const existingPasskeys = await this.loadPasskeys();
+      const existingPasskey = existingPasskeys.find(
+        (p) => p.rpId === rpId && excluded.has(toBase64Url(p.credentialId || p.id))
+      );
+
+      if (existingPasskey) {
+        logger.debug('Passkey already registered with', rpId);
+        return {
+          success: false,
+          error: 'This passkey is already registered with this site',
           name: 'InvalidStateError',
           existingCredentialId: existingPasskey.id,
         };
@@ -719,23 +1083,32 @@ class BackgroundService {
       const prfKeyBytes = crypto.getRandomValues(new Uint8Array(32));
       const prfKeyBase64 = arrayBufferToBase64URL(prfKeyBytes.buffer);
 
-      const prfInput = (options?.extensions as Record<string, unknown> | undefined)?.prf;
-      const prfEvalInput = selectPrfEval(
-        prfInput as Parameters<typeof selectPrfEval>[0],
-        credentialIdBase64
-      );
+      const extensions = options?.extensions as Record<string, unknown> | undefined;
+      const prfEvalInput = selectPrfEval(usablePrfInput(extensions, 'create'), credentialIdBase64);
       const prfResults = prfEvalInput
         ? await computePrfResults(prfKeyBytes.buffer, prfEvalInput)
         : null;
       // SECURITY: the PRF/hmac-secret output is a client-only secret. It is
       // returned to the page via clientExtensionResults (below), but must NOT
       // be embedded in authenticatorData, which is forwarded to the RP server.
-      const clientExtensionResults = buildClientExtensionResults(prfResults);
+      const clientExtensionResults = buildClientExtensionResults(extensions, 'create', prfResults);
 
-      const clientData = { type: 'webauthn.create', challenge, origin };
-      const clientDataJSONBytes = new TextEncoder().encode(JSON.stringify(clientData));
+      const clientDataJSONBytes = new TextEncoder().encode(
+        serializeClientData({
+          type: 'webauthn.create',
+          challenge: challenge as string,
+          origin: origin as string,
+          ...callerFrame(payload),
+        })
+      );
 
       const flagSettings = await loadWebAuthnFlags();
+      // Fixed for the life of the credential: the site may store BE and
+      // reject any later sign-in that disagrees.
+      const backupFlags = normalizeBackupFlags(
+        flagSettings.backupEligible,
+        flagSettings.backupState || (await this.isSyncConfigured())
+      );
       const authenticatorData = await createAuthenticatorData(
         rpId,
         credentialId,
@@ -743,7 +1116,7 @@ class BackgroundService {
         true,
         0,
         null,
-        toAuthenticatorDataOptions(flagSettings)
+        toAuthenticatorDataOptions(flagSettings, backupFlags)
       );
 
       const attestationObject = createAttestationObjectNone(authenticatorData);
@@ -772,10 +1145,14 @@ class BackgroundService {
         createdAt: Date.now(),
         counter: 0,
         prfKey: prfKeyBase64,
+        ...withBackupFlags({}, backupFlags, 'created'),
       });
 
       await this.savePasskeys(passkeys);
       logger.debug('Created and stored passkey', credentialIdBase64);
+      if (requestId && requester) {
+        this.rememberRegistration(requestId, requester, credentialIdBase64);
+      }
 
       this.logWebAuthn('CREATE', 'info', `Created passkey for ${rpId}`, {
         rpId,
@@ -783,8 +1160,7 @@ class BackgroundService {
         user: (user?.name as string) || '',
       });
       this.logSync('PASSKEY_CREATED', { id: credentialIdBase64, rpId });
-      await this.incrementPendingChanges();
-      this.triggerSync();
+      await this.noteVaultChange();
 
       const rawIdBase64 = base64urlToBase64(credentialIdBase64);
       const clientDataJSONBase64 = arrayBufferToBase64(clientDataJSONBytes.buffer);
@@ -879,19 +1255,22 @@ class BackgroundService {
         ['sign']
       );
 
-      const clientData = { type: 'webauthn.get', challenge, origin };
-      const clientDataJSONBytes = new TextEncoder().encode(JSON.stringify(clientData));
-
-      const prfInput = (options?.extensions as Record<string, unknown> | undefined)?.prf;
-      const prfEvalInput = selectPrfEval(
-        prfInput as Parameters<typeof selectPrfEval>[0],
-        passkey.id
+      const clientDataJSONBytes = new TextEncoder().encode(
+        serializeClientData({
+          type: 'webauthn.get',
+          challenge: challenge as string,
+          origin: origin as string,
+          ...callerFrame(payload),
+        })
       );
+
+      const extensions = options?.extensions as Record<string, unknown> | undefined;
+      const prfEvalInput = selectPrfEval(usablePrfInput(extensions, 'get'), passkey.id);
       const prfKeyBuffer = await getOrCreatePrfKey(passkey);
       const prfResults = prfEvalInput ? await computePrfResults(prfKeyBuffer, prfEvalInput) : null;
       // SECURITY: keep the PRF secret out of the RP-bound authenticatorData;
       // it is returned only via clientExtensionResults.
-      const clientExtensionResults = buildClientExtensionResults(prfResults);
+      const clientExtensionResults = buildClientExtensionResults(extensions, 'get', prfResults);
 
       const flagSettings = await loadWebAuthnFlags();
       passkey.counter = (passkey.counter || 0) + 1;
@@ -900,6 +1279,7 @@ class BackgroundService {
       // detection. Sending zero is what platform passkey providers do; the
       // stored counter keeps moving either way so the UI still shows use.
       const reportedCounter = flagSettings.signCounter === 'zero' ? 0 : passkey.counter;
+      const backupFlags = backupFlagsOf(passkey, await this.fallbackBackupFlags());
       const authenticatorData = await createAuthenticatorData(
         rpId,
         null,
@@ -907,7 +1287,7 @@ class BackgroundService {
         false,
         reportedCounter,
         null,
-        toAuthenticatorDataOptions(flagSettings)
+        toAuthenticatorDataOptions(flagSettings, backupFlags)
       );
 
       const clientDataHash = await crypto.subtle.digest('SHA-256', clientDataJSONBytes.buffer);
@@ -948,6 +1328,8 @@ class BackgroundService {
         rpId,
         credentialId: passkey.id,
         user: passkey.user?.name || '',
+        backupEligible: backupFlags.backupEligible,
+        backupState: backupFlags.backupState,
       });
 
       return {
@@ -980,6 +1362,45 @@ class BackgroundService {
     }
   }
 
+  private rememberRegistration(requestId: string, requester: string, credentialId: string): void {
+    const now = Date.now();
+    for (const [id, entry] of this.recentRegistrations) {
+      if (now - entry.at > REGISTRATION_UNDO_MS) this.recentRegistrations.delete(id);
+    }
+    this.recentRegistrations.set(requestId, { requester, credentialId, at: now });
+  }
+
+  /**
+   * Take back a passkey made for a page that stopped waiting for it (it
+   * aborted, or its request timed out) before the credential reached it.
+   * The site never registered that passkey, so keeping it would leave the
+   * user a passkey that cannot sign in. Only the tab, frame and origin the
+   * passkey was made for can take it back, and only for a little while.
+   */
+  private async handleDiscardRegistration(
+    requestId: string | undefined,
+    requester: string | undefined
+  ): Promise<unknown> {
+    const entry = requestId ? this.recentRegistrations.get(requestId) : undefined;
+    if (!entry || entry.requester !== requester || Date.now() - entry.at > REGISTRATION_UNDO_MS) {
+      return { success: false, error: 'Nothing to discard' };
+    }
+    this.recentRegistrations.delete(requestId!);
+    const passkeys = await this.loadPasskeys();
+    const kept = passkeys.filter((p) => p.credentialId !== entry.credentialId);
+    if (kept.length === passkeys.length) {
+      return { success: false, error: 'Nothing to discard' };
+    }
+    // A sync may already have sent it to other devices.
+    await this.recordDeletions([
+      { kind: 'passkey', id: entry.credentialId, deletedAt: Date.now() },
+    ]);
+    await this.savePasskeys(kept);
+    logger.debug('Discarded a passkey the page stopped waiting for', entry.credentialId);
+    await this.noteVaultChange();
+    return { success: true };
+  }
+
   private async handleRetrievePasskey(payload: MessagePayload): Promise<unknown> {
     try {
       const publicKey = payload.publicKey as Record<string, string> | undefined;
@@ -1003,34 +1424,6 @@ class BackgroundService {
     try {
       const passkeys = await this.loadPasskeys();
       return { success: true, passkeys, count: passkeys.length };
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
-    }
-  }
-
-  private async handleListPasskeysForRp(payload: MessagePayload): Promise<unknown> {
-    try {
-      const rpId = payload.rpId as string | undefined;
-      if (!rpId) return { success: false, error: 'No rpId provided' };
-
-      const passkeys = await this.loadPasskeys();
-      const matchingPasskeys = passkeys.filter((p) => p.rpId === rpId);
-
-      logger.debug('Found', matchingPasskeys.length, 'passkeys for', rpId);
-      return {
-        success: true,
-        passkeys: matchingPasskeys.map((p) => ({
-          id: p.id,
-          credentialId: p.credentialId || p.id,
-          rpId: p.rpId,
-          origin: p.origin,
-          user: p.user,
-          createdAt: p.createdAt,
-        })),
-        count: matchingPasskeys.length,
-        rpId,
-      };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
@@ -1062,6 +1455,46 @@ class BackgroundService {
     return { success: saved };
   }
 
+  /**
+   * The user's answer to "is this a synced passkey?" for one credential. Sets
+   * both flags together, the way syncing managers report them, and marks the
+   * choice as the user's so later imports leave it alone.
+   */
+  private async handleSetPasskeyBackup(payload: MessagePayload): Promise<unknown> {
+    try {
+      const credentialId = payload.credentialId as string | undefined;
+      if (!credentialId || typeof payload.synced !== 'boolean') {
+        return { success: false, error: 'credentialId and synced are required' };
+      }
+      const synced = payload.synced;
+      const passkeys = await this.loadPasskeys();
+      const index = passkeys.findIndex(
+        (p) => p.id === credentialId || p.credentialId === credentialId
+      );
+      if (index < 0) return { success: false, error: 'Passkey not found' };
+
+      const current = passkeys[index];
+      const flags = normalizeBackupFlags(synced, synced);
+      passkeys[index] = {
+        ...withBackupFlags(current, flags, 'manual'),
+        updatedAt: Math.max(Date.now(), (current.updatedAt ?? current.createdAt) + 1),
+      };
+      await this.savePasskeys(passkeys);
+      this.logWebAuthn(
+        'BACKUP',
+        'info',
+        `Marked passkey for ${current.rpId} as ${synced ? 'synced' : 'device-bound'}`,
+        { rpId: current.rpId, credentialId: current.id }
+      );
+      await this.noteVaultChange();
+      const { backupEligible, backupState, backupSource, updatedAt } = passkeys[index];
+      return { success: true, passkey: { backupEligible, backupState, backupSource, updatedAt } };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  }
+
   private async handleDeletePasskey(payload: MessagePayload): Promise<unknown> {
     try {
       const credentialId = payload.credentialId as string;
@@ -1078,8 +1511,7 @@ class BackgroundService {
         );
         await this.savePasskeys(filtered);
         this.logSync('PASSKEY_DELETED', { credentialId });
-        await this.incrementPendingChanges();
-        this.triggerSync();
+        await this.noteVaultChange();
         return { success: true, message: 'Passkey deleted' };
       }
       return { success: false, error: 'Passkey not found' };
@@ -1103,15 +1535,19 @@ class BackgroundService {
   }
 
   private async handleImportVault(payload: MessagePayload): Promise<unknown> {
-    const incomingPasskeys = Array.isArray(payload.passkeys)
+    const rawPasskeys = Array.isArray(payload.passkeys)
       ? (payload.passkeys as StoredPasskey[])
       : [];
     const incomingTotp = Array.isArray(payload.totpEntries)
       ? (payload.totpEntries as StoredTotpEntry[])
       : [];
-    if (incomingPasskeys.some((entry) => !entry?.id || !entry.rpId || !entry.privateKey)) {
+    if (rawPasskeys.some((entry) => !entry?.id || !entry.rpId || !entry.privateKey)) {
       return { success: false, error: 'Backup contains an invalid passkey' };
     }
+    // A Fenko backup taken before issue #17 was fixed still holds Bitwarden IDs.
+    const repair = repairCredentialIds(rawPasskeys);
+    const incomingPasskeys = repair.passkeys;
+    if (repair.deletions.length > 0) await this.recordDeletions(repair.deletions);
     const deletions = await this.loadDeletions();
     for (const item of incomingPasskeys) {
       Object.assign(item, restoreRecord(item, deletions, 'passkey'));
@@ -1121,21 +1557,33 @@ class BackgroundService {
         Object.assign(item, restoreRecord(item, deletions, 'totp'));
       }
     }
-    const passkeys = await this.loadPasskeys();
+    const backupRepairs = Array.isArray(payload.backupRepairs)
+      ? (payload.backupRepairs as BackupRepair[])
+      : [];
+    const { records: passkeys, repaired } = applyBackupRepairs(
+      await this.loadPasskeys(),
+      backupRepairs
+    );
     const knownPasskeys = new Set(passkeys.map((entry) => entry.id));
     const newPasskeys = incomingPasskeys.filter((entry) => !knownPasskeys.has(entry.id));
-    if (newPasskeys.length > 0) await this.savePasskeys([...passkeys, ...newPasskeys]);
+    if (newPasskeys.length > 0 || repaired > 0) {
+      await this.savePasskeys([...passkeys, ...newPasskeys]);
+    }
 
     const totpEntries = await loadTotpEntries();
     const knownTotp = new Set(totpEntries.map((entry) => entry.id));
     const newTotp = incomingTotp.filter((entry) => entry?.id && !knownTotp.has(entry.id));
     if (newTotp.length > 0) await saveTotpEntries([...totpEntries, ...newTotp]);
 
-    if (newPasskeys.length > 0 || newTotp.length > 0) {
-      await this.incrementPendingChanges();
-      void this.triggerSync();
+    if (newPasskeys.length > 0 || newTotp.length > 0 || repaired > 0) {
+      await this.noteVaultChange();
     }
-    return { success: true, passkeys: newPasskeys.length, totpEntries: newTotp.length };
+    return {
+      success: true,
+      passkeys: newPasskeys.length,
+      totpEntries: newTotp.length,
+      backupRepaired: repaired,
+    };
   }
 
   private async handleExportVault(): Promise<unknown> {
@@ -1157,8 +1605,7 @@ class BackgroundService {
     await this.savePasskeys([]);
     await saveTotpEntries([]);
     await clearSiteIcons();
-    await this.incrementPendingChanges();
-    void this.triggerSync();
+    await this.noteVaultChange();
     return { success: true };
   }
 
@@ -1170,8 +1617,27 @@ class BackgroundService {
   }
 
   private async handleUpgradeBackupStatus(): Promise<unknown> {
+    return { success: true, required: await this.isUpgradeBackupRequired() };
+  }
+
+  /**
+   * The post-upgrade gate only protects entries that exist. Once the vault
+   * holds nothing to back up (emptied by a sync merge, say) the gate is moot,
+   * and keeping it would leave the vault read-only for good, because there is
+   * no backup to export that would clear it. While the vault is locked its
+   * contents are unknown, so the gate stays.
+   */
+  private async isUpgradeBackupRequired(): Promise<boolean> {
     const result = await chrome.storage.local.get(UPGRADE_BACKUP_REQUIRED_KEY);
-    return { success: true, required: result[UPGRADE_BACKUP_REQUIRED_KEY] === true };
+    if (result[UPGRADE_BACKUP_REQUIRED_KEY] !== true) return false;
+    try {
+      const [passkeys, totpEntries] = await Promise.all([this.loadPasskeys(), loadTotpEntries()]);
+      if (passkeys.length > 0 || totpEntries.length > 0) return true;
+    } catch {
+      return true;
+    }
+    await chrome.storage.local.remove(UPGRADE_BACKUP_REQUIRED_KEY);
+    return false;
   }
 
   private async handleCompleteUpgradeBackup(): Promise<unknown> {
@@ -1220,8 +1686,7 @@ class BackgroundService {
 
       await addTotpEntryStore(entry);
       this.logSync('TOTP_CREATED', { id: entry.id, issuer: entry.issuer });
-      await this.incrementPendingChanges();
-      this.triggerSync();
+      await this.noteVaultChange();
       return { success: true, entry };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1241,8 +1706,7 @@ class BackgroundService {
       const deleted = await deleteTotpEntryStore(id);
       if (!deleted) return { success: false, error: 'Entry not found' };
       this.logSync('TOTP_DELETED', { id });
-      await this.incrementPendingChanges();
-      this.triggerSync();
+      await this.noteVaultChange();
       return { success: true };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1294,6 +1758,29 @@ class BackgroundService {
     }
   }
 
+  // An HOTP code is single-use, so issuing one advances the stored counter.
+  // GENERATE_TOTP_CODE stays a pure read and never consumes a counter value.
+  private async handleNextHotpCode(payload: MessagePayload): Promise<unknown> {
+    try {
+      const id = payload.id as string;
+      if (!id) return { success: false, error: 'Missing id' };
+      const issued = await issueHotpCode(id);
+      if (!issued) return { success: false, error: 'Entry not found' };
+      this.logSync('HOTP_COUNTER_ADVANCED', { id, counter: issued.entry.counter });
+      await this.noteVaultChange();
+      return {
+        success: true,
+        code: issued.code,
+        counter: issued.counter,
+        entry: issued.entry,
+      };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Error issuing HOTP code:', error);
+      return { success: false, error: message };
+    }
+  }
+
   // ==================== SYNC OPERATIONS ====================
 
   private async createSyncChain(deviceName: string, wordCount: number): Promise<unknown> {
@@ -1324,20 +1811,13 @@ class BackgroundService {
       const chain: SyncChain = {
         id: chainId,
         createdAt: Date.now(),
-        seedHash: seedHashHex,
         devices: [newDevice],
       };
 
-      await chrome.storage.local.set({
-        [SYNC_CONFIG_KEY]: {
-          enabled: true,
-          chainId,
-          deviceId,
-          deviceName,
-          seedHash: seedHashHex,
-        },
-        [SYNC_DEVICES_KEY]: chain,
-      });
+      await this.saveSyncChain(
+        { enabled: true, chainId, deviceId, deviceName, seedHash: seedHashHex },
+        chain
+      );
 
       await syncService.initialize(
         chainId,
@@ -1387,7 +1867,6 @@ class BackgroundService {
       const chain: SyncChain = {
         id: chainId,
         createdAt: Date.now(),
-        seedHash: seedHashHex,
         devices: [newDevice],
       };
 
@@ -1399,10 +1878,7 @@ class BackgroundService {
         seedHash: seedHashHex,
       };
 
-      await chrome.storage.local.set({
-        [SYNC_CONFIG_KEY]: config,
-        [SYNC_DEVICES_KEY]: chain,
-      });
+      await this.saveSyncChain(config, chain);
 
       await syncService.initialize(
         chainId,
@@ -1422,19 +1898,52 @@ class BackgroundService {
     }
   }
 
+  /**
+   * Save a chain this device just created or joined. With a PIN set, the seed
+   * goes only into the encrypted store, which needs the vault unlocked, in the
+   * same storage write as the cleartext config that keeps every other field.
+   * Serialized with PIN setup and removal, which read both sync configs.
+   */
+  private saveSyncChain(config: SyncConfig, chain: SyncChain): Promise<void> {
+    return this.withVault(async () => {
+      if (!(await secureStorage.isSetup())) {
+        await chrome.storage.local.set({ [SYNC_CONFIG_KEY]: config, [SYNC_DEVICES_KEY]: chain });
+        return;
+      }
+      const publicConfig = { ...config };
+      delete publicConfig.seedHash;
+      await secureStorage.storeSyncConfig(
+        {
+          chainId: config.chainId,
+          deviceId: config.deviceId,
+          deviceName: config.deviceName,
+          seedHash: config.seedHash,
+          enabled: config.enabled,
+        },
+        { [SYNC_CONFIG_KEY]: publicConfig, [SYNC_DEVICES_KEY]: chain }
+      );
+    });
+  }
+
   private async leaveSyncChain(): Promise<unknown> {
     try {
       await syncService.disconnect();
 
-      await chrome.storage.local.set({
-        [SYNC_CONFIG_KEY]: {
-          enabled: false,
-          chainId: null,
-          deviceId: null,
-          deviceName: null,
-          seedHash: null,
-        },
-        [SYNC_DEVICES_KEY]: null,
+      // Serialized with PIN setup and removal, which read both sync configs.
+      await this.withVault(async () => {
+        await chrome.storage.local.set({
+          [SYNC_CONFIG_KEY]: {
+            enabled: false,
+            chainId: null,
+            deviceId: null,
+            deviceName: null,
+            seedHash: null,
+          },
+          [SYNC_DEVICES_KEY]: null,
+        });
+        // Removing the PIN would otherwise bring the left chain back from the
+        // encrypted copy.
+        await secureStorage.deleteSyncConfig();
       });
 
       this.logSync('SYNC_CHAIN_LEFT', {});
@@ -1510,14 +2019,10 @@ class BackgroundService {
       const config: SyncConfig = configResult[SYNC_CONFIG_KEY];
       const passkeys = await this.loadPasskeys();
 
-      const statusResult = await chrome.storage.local.get(SYNC_STATUS_KEY);
-      const persistedStatus = statusResult[SYNC_STATUS_KEY] || {};
-
-      this.syncStatus = {
-        ...this.syncStatus,
-        ...persistedStatus,
-        localPasskeyCount: passkeys.length,
-      };
+      // The in-memory status is loaded from storage at startup and is the only
+      // writer since; re-reading storage here could undo a concurrent update.
+      await this.syncStatusLoaded;
+      this.syncStatus = { ...this.syncStatus, localPasskeyCount: passkeys.length };
 
       const isEnabled = config?.enabled || false;
 
@@ -1544,16 +2049,54 @@ class BackgroundService {
     }
   }
 
-  private async updateSyncStatus(updates: Partial<SyncStatus>): Promise<void> {
-    this.syncStatus = { ...this.syncStatus, ...updates };
+  private async loadSyncStatus(): Promise<void> {
+    try {
+      const persisted = (await chrome.storage.local.get(SYNC_STATUS_KEY))[SYNC_STATUS_KEY];
+      if (persisted && typeof persisted === 'object') {
+        this.syncStatus = { ...this.syncStatus, ...persisted };
+      }
+    } catch (error) {
+      logger.error('Failed to load sync status:', error);
+    }
+  }
+
+  /**
+   * Every write goes through here once the persisted status is loaded. Pass a
+   * function to derive the update from the current status, so concurrent
+   * read-modify-write updates (pending change counts) are not lost.
+   */
+  private async updateSyncStatus(
+    updates: Partial<SyncStatus> | ((current: SyncStatus) => Partial<SyncStatus>)
+  ): Promise<void> {
+    await this.syncStatusLoaded;
+    const changes = typeof updates === 'function' ? updates(this.syncStatus) : updates;
+    this.syncStatus = { ...this.syncStatus, ...changes };
     await chrome.storage.local.set({ [SYNC_STATUS_KEY]: this.syncStatus });
-    this.logSync('SYNC_STATUS_UPDATE', updates);
+    this.logSync('SYNC_STATUS_UPDATE', changes);
+  }
+
+  /**
+   * Count a saved vault change for sync and push it out. This is
+   * bookkeeping: the change is already stored, so a failure here (a full
+   * storage quota, an unreachable relay) is logged instead of turning the
+   * caller's success into an error. A registration reported as failed after
+   * its passkey was saved leaves a passkey the site never received.
+   */
+  private async noteVaultChange(): Promise<void> {
+    try {
+      await this.incrementPendingChanges();
+    } catch (error) {
+      logger.error('Failed to count a pending sync change:', error);
+    }
+    void Promise.resolve(this.triggerSync()).catch((error) =>
+      logger.error('Failed to start a sync:', error)
+    );
   }
 
   private async incrementPendingChanges(): Promise<void> {
-    await this.updateSyncStatus({
-      pendingChanges: this.syncStatus.pendingChanges + 1,
-    });
+    await this.updateSyncStatus((current) => ({
+      pendingChanges: current.pendingChanges + 1,
+    }));
   }
 
   private logSync(action: string, details?: Record<string, unknown>): void {
@@ -1630,22 +2173,24 @@ class BackgroundService {
       pendingChanges: this.syncStatus.pendingChanges,
     });
 
-    await this.updateSyncStatus({
+    await this.updateSyncStatus((current) => ({
       lastSyncAttempt: Date.now(),
       connectionStatus: 'connecting',
-      pendingChanges: Math.max(1, this.syncStatus.pendingChanges),
-    });
+      pendingChanges: Math.max(1, current.pendingChanges),
+    }));
 
     try {
       const passkeys = await this.loadPasskeys();
 
       const syncStatus = syncService.getStatus();
       if (!syncStatus.connected) {
-        if (config.chainId && config.deviceId && config.seedHash) {
+        // A PIN-protected vault keeps the seed only in the encrypted store.
+        const seedHash = await this.resolveSyncSeedHash(config);
+        if (config.chainId && config.deviceId && seedHash) {
           await syncService.initialize(
             config.chainId,
             config.deviceId,
-            config.seedHash,
+            seedHash,
             config.deviceName || undefined,
             this.syncVaultAdapter()
           );
@@ -1657,6 +2202,17 @@ class BackgroundService {
         (await loadTotpEntries()) as SyncTotpEntry[]
       );
       await syncService.requestSync();
+
+      // Both calls return quietly when no relay is open, and initialize()
+      // gives up waiting after a grace period. Report what actually happened.
+      if (!syncService.getStatus().connected) {
+        await this.updateSyncStatus({
+          connectionStatus: 'disconnected',
+          localPasskeyCount: passkeys.length,
+        });
+        this.logSync('SYNC_NOT_CONNECTED', { passkeyCount: passkeys.length });
+        return;
+      }
 
       await this.updateSyncStatus({
         connectionStatus: 'connected',
@@ -1684,6 +2240,14 @@ class BackgroundService {
         return { success: false, error: 'PIN must be 4 to 12 digits' };
       }
 
+      // Runs serialized with the other vault jobs, so this cannot race a
+      // concurrent setup. On a configured vault initialize() would just unlock
+      // it, and the reconcile below would then overwrite the encrypted store
+      // with raw storage that the first setup already emptied.
+      if (await secureStorage.isSetup()) {
+        return { success: false, error: 'A PIN is already set' };
+      }
+
       const unlocked = await secureStorage.initialize(password);
       if (!unlocked) {
         return { success: false, error: 'Failed to initialize secure storage' };
@@ -1709,6 +2273,7 @@ class BackgroundService {
         delete publicConfig.seedHash;
         await chrome.storage.local.set({ [SYNC_CONFIG_KEY]: publicConfig });
       }
+      await this.stripCleartextChainSeed();
 
       return { success: true, message: 'Master password setup complete' };
     } catch (error: unknown) {
@@ -1729,12 +2294,15 @@ class BackgroundService {
         const ready = await secureStorage.initialize(password);
         if (ready) {
           await this.migrateLegacyRawStorage();
+          await this.repairStoredCredentialIds();
+          await this.stripCleartextChainSeed();
         }
         return ready;
       });
       if (!unlocked) {
         return { success: false, error: 'Invalid password or storage not initialized' };
       }
+      await this.stampLegacyBackupFlags();
       // The seed lives in the encrypted store, so sync could not have started
       // while locked. Now that the key is in memory, bring it up.
       await this.initializeSyncService();
@@ -1783,18 +2351,30 @@ class BackgroundService {
       if (!currentPassword) {
         return { success: false, error: 'Current PIN is required' };
       }
-      const passkeys = await secureStorage.getPasskeys();
-      const totpEntries = await secureStorage.getTotpEntries();
-      const config = await secureStorage.getSyncConfig();
-      const removed = await secureStorage.removeMasterPassword(currentPassword);
+      // The cleartext copy is written before the encrypted vault is removed,
+      // so an interrupted removal always leaves at least one of them.
+      const removed = await secureStorage.removeMasterPassword(currentPassword, async (vault) => {
+        // Raw sync_config holds the live chain membership. The encrypted copy
+        // only gives back the seed it kept out of cleartext, and only for
+        // that same chain: it can be older than a leave or a join.
+        const live = (await chrome.storage.local.get(SYNC_CONFIG_KEY))[SYNC_CONFIG_KEY] as
+          | SyncConfig
+          | undefined;
+        const seedHash = vault.syncConfig?.seedHash;
+        const restoreSeed =
+          !live?.seedHash &&
+          !!live?.chainId &&
+          !!seedHash &&
+          vault.syncConfig.chainId === live.chainId;
+        await chrome.storage.local.set({
+          [PASSKEY_STORAGE_KEY]: vault.passkeys,
+          totp_entries: vault.totpEntries,
+          ...(restoreSeed ? { [SYNC_CONFIG_KEY]: { ...live, seedHash } } : {}),
+        });
+      });
       if (!removed) {
         return { success: false, error: 'Failed to remove PIN — check your current PIN' };
       }
-      await chrome.storage.local.set({
-        [PASSKEY_STORAGE_KEY]: passkeys,
-        totp_entries: totpEntries,
-        ...(config ? { [SYNC_CONFIG_KEY]: config } : {}),
-      });
       return { success: true, message: 'Master PIN removed' };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1917,9 +2497,8 @@ class BackgroundService {
   }
   private async handleSetAutoLockTimeout(payload: { minutes: number }): Promise<unknown> {
     try {
-      const ms = payload.minutes === 0 ? 0 : payload.minutes * 60 * 1000;
-      secureStorage.setAutoLockTimeout(ms);
-      await chrome.storage.local.set({ auto_lock_timeout: payload.minutes });
+      secureStorage.setAutoLockTimeout(payload.minutes * 60 * 1000);
+      await chrome.storage.local.set({ [AUTO_LOCK_SETTING_KEY]: payload.minutes });
       logger.info(`Auto-lock timeout set to ${payload.minutes} minutes`);
       return { success: true, minutes: payload.minutes };
     } catch (error: unknown) {

@@ -1,5 +1,9 @@
 import { randomBytes } from '@noble/hashes/utils';
 
+// Not the BIP39 English list, despite the name: it has 2046 words, 11 that
+// BIP39 lacks and 13 of BIP39's missing, so positions differ from 'corner'
+// (388) on. Every recovery phrase already issued decodes through these
+// positions, so the list must not be corrected.
 const BIP39_WORDLIST = [
   'abandon',
   'ability',
@@ -2050,6 +2054,18 @@ const BIP39_WORDLIST = [
 ];
 
 export function bytesToMnemonic(bytes: Uint8Array, wordCount: number = 12): string {
+  const words = wordsFor(bytes, wordCount);
+  if (words.includes(undefined)) {
+    throw new RangeError('The word list has no word for part of these bytes');
+  }
+  return words.join(' ');
+}
+
+/**
+ * The word for each 11-bit group of the bytes and their checksum. The list is
+ * two words short of 2048, so the groups 2046 and 2047 have none (undefined).
+ */
+function wordsFor(bytes: Uint8Array, wordCount: number): Array<string | undefined> {
   const checksumBits = wordCount === 12 ? 4 : 8;
   const bits: number[] = [];
 
@@ -2075,8 +2091,7 @@ export function bytesToMnemonic(bytes: Uint8Array, wordCount: number = 12): stri
     indices.push(index);
   }
 
-  const words = indices.map((index: number) => BIP39_WORDLIST[index]);
-  return words.join(' ');
+  return indices.map((index: number) => BIP39_WORDLIST[index]);
 }
 
 export function mnemonicToBytes(mnemonic: string): Uint8Array {
@@ -2114,8 +2129,12 @@ export function mnemonicToBytes(mnemonic: string): Uint8Array {
 
 export async function generateMnemonic(wordCount: number = 12): Promise<string> {
   const entropySize = wordCount === 12 ? 16 : 32;
-  const entropy = randomBytes(entropySize);
-  return bytesToMnemonic(entropy, wordCount);
+  // About 1 draw in 85 (1 in 43 for 24 words) has a group with no word. Draw
+  // again: two added words would make phrases that older installs reject.
+  for (;;) {
+    const words = wordsFor(randomBytes(entropySize), wordCount);
+    if (!words.includes(undefined)) return words.join(' ');
+  }
 }
 
 export function validateMnemonic(mnemonic: string): boolean {

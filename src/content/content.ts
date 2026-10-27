@@ -8,15 +8,15 @@
 import { initI18n, t } from '../i18n';
 import { logger } from '../utils/logger';
 import { readPageIcon } from '../site-icons/page-capture';
-
-interface PasskeyOption {
-  id: string;
-  credentialId: string;
-  userName: string;
-  userDisplayName: string;
-  rpId: string;
-  createdAt: number;
-}
+import { describeFrame } from './frame';
+import { acceptsEs256 } from '../utils/algorithms';
+import { isRpIdValidForHost } from '../utils/rp-id';
+import { VaultDialogClient } from './vault-dialog-client';
+import {
+  showErrorNotification as _showErrorNotification,
+  showPasskeyCreatedNotification as _showPasskeyCreatedNotification,
+  showPasskeyUsedNotification as _showPasskeyUsedNotification,
+} from './page-notices';
 
 interface DomainRules {
   mode: 'disabled' | 'all' | 'allowlist' | 'blocklist';
@@ -24,33 +24,41 @@ interface DomainRules {
   passthroughOnNoPasskey?: boolean;
 }
 
-type PasskeySelectorResult =
-  | { action: 'use'; id: string }
-  | { action: 'cancel' }
-  | { action: 'passthrough' };
+/**
+ * What a request's RP ID resolved to: an RP ID the page may use, a request
+ * the vault must refuse outright (insecure or opaque origin), or one whose
+ * RP ID does not fit this page and is left to the browser.
+ */
+type RpIdResolution = { rpId: string } | { refused: true } | { foreign: true };
 
-interface WindowWithVault extends Window {
-  showPasskeySelector: (options: PasskeyOption[], rpId: string) => Promise<PasskeySelectorResult>;
-  showPasskeyCreateConfirm: (rpId: string, userName: string) => Promise<boolean>;
-  showPasskeyCreatedNotification: (userName: string, rpId: string) => void;
-  showPasskeyUsedNotification: (userName: string, rpId: string) => void;
-  showErrorNotification: (title: string, message: string) => void;
-}
-
-const vaultWindow = window as unknown as WindowWithVault;
-const _showPasskeySelector = vaultWindow.showPasskeySelector;
-const _showPasskeyCreateConfirm = vaultWindow.showPasskeyCreateConfirm;
-const _showPasskeyCreatedNotification = vaultWindow.showPasskeyCreatedNotification;
-const _showPasskeyUsedNotification = vaultWindow.showPasskeyUsedNotification;
-const _showErrorNotification = vaultWindow.showErrorNotification;
+/** How long a posted registration can still be taken back; the background allows as long. */
+const POSTED_REGISTRATION_MEMORY_MS = 10 * 60 * 1000;
 
 class ContentScript {
   private isInjected = false;
   private originalCreate?: typeof navigator.credentials.create;
   private originalGet?: typeof navigator.credentials.get;
+  /** Page requests still being handled, so the page can cancel them. */
+  private inFlight = new Map<string, AbortController>();
+  /**
+   * Registrations whose credential was posted to the page, by request, for
+   * a while. A cancel that arrives for one of them crossed the credential in
+   * flight: the page had already given up and dropped it.
+   */
+  private postedRegistrations = new Map<string, number>();
+
+  /** Settles once i18n and logging are ready; page requests wait for it. */
+  private ready: Promise<void>;
+  /** The vault's own dialogs, which the page can neither read nor click for the user. */
+  private dialogs = new VaultDialogClient((message) => this.sendMessage(message));
 
   constructor() {
-    this.initialize();
+    // Both happen before the first await, at document_start: the page can
+    // call navigator.credentials as soon as its first script runs, and a
+    // request posted before anyone listens is lost, leaving the page waiting.
+    this.injectScript();
+    this.setupPageCommunication();
+    this.ready = this.initialize();
   }
 
   /**
@@ -58,21 +66,16 @@ class ContentScript {
    */
   private async initialize(): Promise<void> {
     try {
-      await initI18n();
+      // Translations only: the page's own <html> lang and dir stay as they are.
+      await initI18n({ applyToDocument: false });
 
       // Initialize logger first
       await logger.init();
 
       logger.info('Content script initializing');
 
-      // Inject WebAuthn interception code
-      this.injectScript();
-
       // Set up communication with background script
       this.setupBackgroundCommunication();
-
-      // Set up page communication
-      this.setupPageCommunication();
 
       // Listen for activation events
       this.setupActivationListeners();
@@ -85,9 +88,21 @@ class ContentScript {
   }
 
   /**
-   * Inject WebAuthn API interception script
+   * Inject WebAuthn API interception script.
+   *
+   * Chrome runs it as a MAIN-world content script declared in the manifest,
+   * before any page script. Firefox's manifest still supports versions that
+   * cannot do that, so there it is added as a script element, which runs a
+   * little later: a page that calls WebAuthn first thing can reach the
+   * browser's own API before the vault is in place.
    */
   private injectScript(): void {
+    const declared = chrome.runtime
+      .getManifest?.()
+      ?.content_scripts?.some((script) => (script as { world?: string }).world === 'MAIN');
+    if (declared) {
+      return;
+    }
     try {
       const script = document.createElement('script');
       script.src = chrome.runtime.getURL('webauthn-inject.js');
@@ -123,18 +138,19 @@ class ContentScript {
    * `window.location.origin` is the authoritative caller origin. We overwrite
    * the payload origin with it and require the requested RP ID to be the
    * effective domain or a registrable suffix of it (the same rule the native
-   * WebAuthn client enforces). Returns null to reject a cross-origin request.
+   * WebAuthn client enforces).
    *
    * This does not change behaviour for legitimate pages: a real registration
    * already used the true origin, so the stored rpId still resolves.
    *
    * When the RP ID is not same-site with the page, we fall back to WebAuthn
-   * Related Origin Requests before rejecting: some RPs deliberately use a
-   * cross-site RP ID (e.g. Meta's accounts.meta.com on
-   * accountscenter.facebook.com) and authorize it via their
-   * /.well-known/webauthn file.
+   * Related Origin Requests: some RPs deliberately use a cross-site RP ID (e.g.
+   * Meta's accounts.meta.com on accountscenter.facebook.com) and authorize it
+   * via their /.well-known/webauthn file. An RP ID that still does not fit is
+   * left to the browser, which throws the SecurityError the site expects, or
+   * honours a related origin it could verify and we could not.
    */
-  private async resolveTrustedRpId(payload: Record<string, unknown>): Promise<string | null> {
+  private async resolveTrustedRpId(payload: Record<string, unknown>): Promise<RpIdResolution> {
     // WebAuthn is restricted to secure contexts.  The content script also
     // receives direct postMessage requests, so the hook's own secure-context
     // check is not enough here.
@@ -143,35 +159,70 @@ class ContentScript {
       !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)
     ) {
       logger.error('Rejected passkey request from insecure origin', location.origin);
-      return null;
+      return { refused: true };
     }
     const trueOrigin = window.location.origin;
     let trueHost: string;
     try {
       trueHost = new URL(trueOrigin).hostname;
     } catch {
-      return null;
+      // An opaque origin (a sandboxed frame) cannot use WebAuthn at all.
+      return { refused: true };
     }
-    // Bind the origin that will be written into clientDataJSON to the real one.
+    // Bind the origin that will be written into clientDataJSON to the real one,
+    // and say whether the call comes from a frame that is not same-origin with
+    // its ancestors (clientData crossOrigin/topOrigin).
     payload.origin = trueOrigin;
+    const frame = describeFrame();
+    payload.crossOrigin = !frame.sameOriginWithAncestors;
+    if (payload.crossOrigin && frame.topOrigin) {
+      payload.topOrigin = frame.topOrigin;
+    } else {
+      delete payload.topOrigin;
+    }
 
     const pk = payload.publicKey as Record<string, unknown> | undefined;
     const pkRp = (pk?.rp as Record<string, string>) || {};
-    const requested = (pk?.rpId as string) || pkRp.id || trueHost;
+    const requested = String(pk?.rpId ?? pkRp.id ?? trueHost);
 
-    const host = trueHost.toLowerCase();
-    const rpId = requested.toLowerCase();
-    if (host === rpId || host.endsWith('.' + rpId)) {
-      return requested;
+    if (isRpIdValidForHost(requested, trueHost)) {
+      return { rpId: requested };
     }
     // Not same-site — the RP may still authorize this origin via Related Origin
     // Requests. The background worker fetches the RP's /.well-known/webauthn
     // file (it has host permissions and isn't subject to the page's CSP).
     if (await this.isRelatedOriginAuthorized(requested, trueOrigin)) {
-      return requested;
+      return { rpId: requested };
     }
-    logger.error('Rejected passkey request: rpId', requested, 'not valid for origin', trueOrigin);
-    return null;
+    // Not an error: the browser decides, and throws SecurityError if it must.
+    logger.debug('RP ID', requested, 'not valid for', trueOrigin, '- leaving it to the browser');
+    return { foreign: true };
+  }
+
+  /**
+   * Whether this document may use WebAuthn under its Permissions Policy
+   * (WebAuthn Level 3 §5.9). The features are on by default for a page and
+   * its same-origin frames, but a cross-origin iframe only gets them when
+   * its embedder delegates them (allow="publickey-credentials-get"), and
+   * any page can switch them off with a Permissions-Policy header. Chrome
+   * refuses such calls with NotAllowedError; the vault must not open its
+   * dialog for them instead. When the browser cannot say (no policy API, or
+   * a feature it does not know), a cross-origin frame is left to the
+   * browser, which enforces its own rules.
+   */
+  private frameMayUse(
+    feature: 'publickey-credentials-get' | 'publickey-credentials-create',
+    crossOrigin: boolean
+  ): boolean {
+    const policy = (
+      document as Document & {
+        featurePolicy?: { features(): string[]; allowsFeature(name: string): boolean };
+      }
+    ).featurePolicy;
+    if (!policy?.features?.().includes(feature)) {
+      return !crossOrigin;
+    }
+    return policy.allowsFeature(feature);
   }
 
   private async isRelatedOriginAuthorized(rpId: string, origin: string): Promise<boolean> {
@@ -187,24 +238,71 @@ class ContentScript {
   }
 
   /**
-   * Handle messages from the page script
+   * Handle messages from the page script.
+   *
+   * The page cancels a request when it times out or the site aborts it.
+   * Cancelling closes the request's dialog and skips the background call, so
+   * a late click cannot create or sign with a passkey nobody is waiting for.
    */
   private async handlePageMessage(message: {
     type: string;
     payload: Record<string, unknown>;
     requestId: string;
   }): Promise<void> {
+    const { type, requestId } = message;
+    if (type === 'PASSKEY_CANCEL_REQUEST') {
+      this.inFlight.get(requestId)?.abort();
+      // The page shim only cancels a request it never got an answer to, so
+      // a credential already posted for it went nowhere.
+      if (this.postedRegistrations.delete(requestId)) {
+        this.discardRegistration(requestId);
+      }
+      return;
+    }
+
+    const controller = new AbortController();
+    this.inFlight.set(requestId, controller);
+    try {
+      await this.ready;
+      if (controller.signal.aborted) {
+        return;
+      }
+      await this.handlePageRequest(message, controller.signal);
+    } finally {
+      if (this.inFlight.get(requestId) === controller) {
+        this.inFlight.delete(requestId);
+      }
+    }
+  }
+
+  private async handlePageRequest(
+    message: { type: string; payload: Record<string, unknown>; requestId: string },
+    signal: AbortSignal
+  ): Promise<void> {
     const { type, payload, requestId } = message;
 
     if (type === 'PASSKEY_CREATE_REQUEST') {
       // Create a new passkey
       try {
         const pk = payload.publicKey as Record<string, unknown> | undefined;
-        const rpId = await this.resolveTrustedRpId(payload);
-        if (rpId === null) {
+        const resolved = await this.resolveTrustedRpId(payload);
+        if ('refused' in resolved) {
           this.postBlockedResponse('PASSKEY_CREATE_RESPONSE', requestId, t('pagePasskeyError'));
           return;
         }
+        if ('foreign' in resolved) {
+          this.postPassthroughResponse(
+            'PASSKEY_CREATE_RESPONSE',
+            requestId,
+            'RP ID not valid here'
+          );
+          return;
+        }
+        if (!this.frameMayUse('publickey-credentials-create', payload.crossOrigin === true)) {
+          this.postPassthroughResponse('PASSKEY_CREATE_RESPONSE', requestId, 'Not delegated');
+          return;
+        }
+        const rpId = resolved.rpId;
         const rules = await this.getDomainRules();
 
         if (!this.shouldInterceptDomain(rpId, rules)) {
@@ -216,12 +314,37 @@ class ContentScript {
           return;
         }
 
-        // SECURITY: require an explicit user gesture before creating a passkey,
-        // so a page cannot silently register an attacker-triggered credential.
-        const createUser = (pk?.user as Record<string, string>) || {};
-        const createUserName = createUser.displayName || createUser.name || t('commonUnknownUser');
-        const confirmed = await _showPasskeyCreateConfirm(rpId, createUserName);
-        if (!confirmed) {
+        // The vault only makes ES256 keys. When the site does not accept
+        // them, another authenticator may support what it asks for.
+        if (!acceptsEs256(pk?.pubKeyCredParams)) {
+          this.postPassthroughResponse(
+            'PASSKEY_CREATE_RESPONSE',
+            requestId,
+            'No requested algorithm is supported'
+          );
+          return;
+        }
+
+        // SECURITY: the user confirms every registration in the vault's own
+        // dialog, so a page cannot register a credential the user did not
+        // intend, silently or with a click it tricked them into. The
+        // background makes the passkey only for a request the dialog
+        // approved.
+        const dialog = await this.dialogs.run({
+          kind: 'create',
+          requestId,
+          rpId,
+          payload,
+          conditional: false,
+          signal,
+        });
+        if (signal.aborted) {
+          return;
+        }
+        if (dialog.status !== 'decided') {
+          throw new Error(t('pagePasskeyError'));
+        }
+        if (dialog.outcome !== 'approved') {
           window.postMessage(
             {
               source: 'PASSKEY_VAULT_CONTENT',
@@ -246,6 +369,16 @@ class ContentScript {
           timestamp: Date.now(),
         });
 
+        // The page stopped waiting while the passkey was being made, so the
+        // site will never register it. Take it back instead of leaving the
+        // user a passkey that cannot sign in.
+        if (signal.aborted) {
+          if (response.success) {
+            this.discardRegistration(requestId);
+          }
+          return;
+        }
+
         if (response.success && response.credential) {
           const pkUser = (pk?.user as Record<string, string>) || {};
           const userName = pkUser.displayName || pkUser.name || t('commonUnknownUser');
@@ -266,6 +399,7 @@ class ContentScript {
             },
             '*'
           );
+          this.rememberPostedRegistration(requestId);
         } else {
           // Show error if it's not a duplicate passkey error
           if (response.name !== 'InvalidStateError') {
@@ -298,15 +432,26 @@ class ContentScript {
         );
       }
     } else if (type === 'PASSKEY_GET_REQUEST') {
+      // Once the user has picked a vault passkey, a failure must not pop the
+      // browser's own passkey prompt up in its place.
+      let userChosePasskey = false;
       // Sign in with existing passkey - show selection UI
       try {
-        // First, get list of available passkeys for this site
         const pk = payload.publicKey as Record<string, unknown> | undefined;
-        const rpId = await this.resolveTrustedRpId(payload);
-        if (rpId === null) {
+        const resolved = await this.resolveTrustedRpId(payload);
+        if ('refused' in resolved) {
           this.postBlockedResponse('PASSKEY_GET_RESPONSE', requestId, t('pagePasskeyError'));
           return;
         }
+        if ('foreign' in resolved) {
+          this.postPassthroughResponse('PASSKEY_GET_RESPONSE', requestId, 'RP ID not valid here');
+          return;
+        }
+        if (!this.frameMayUse('publickey-credentials-get', payload.crossOrigin === true)) {
+          this.postPassthroughResponse('PASSKEY_GET_RESPONSE', requestId, 'Not delegated');
+          return;
+        }
+        const rpId = resolved.rpId;
         const rules = await this.getDomainRules();
 
         if (!this.shouldInterceptDomain(rpId, rules)) {
@@ -314,38 +459,44 @@ class ContentScript {
           return;
         }
 
-        const listResponse = await this.sendMessage({
-          type: 'LIST_PASSKEYS_FOR_RP',
-          payload: { rpId },
+        // The vault's dialog lists the site's passkeys. They go from the
+        // background to the dialog only: this script, in the page's
+        // process, learns whether there is one to offer, never which.
+        const dialog = await this.dialogs.run({
+          kind: 'get',
           requestId,
-          timestamp: Date.now(),
+          rpId,
+          payload,
+          conditional: payload.mediation === 'conditional',
+          signal,
         });
+        if (signal.aborted) {
+          return;
+        }
 
-        const passkeys = listResponse.passkeys as Record<string, unknown>[] | undefined;
-
-        // If the RP specified allowCredentials, the server only accepts those
-        // specific credential IDs (e.g. it knows the user is "alice" and lists
-        // alice's credentials). Suggesting a vault passkey not in that list
-        // would just fail at the server, so filter them out before deciding
-        // whether to show the picker.
-        const allowCredentials = (pk?.allowCredentials as Array<{ id: string }> | undefined) || [];
-        const allowedIds = allowCredentials
-          .map((c) => c?.id)
-          .filter((id): id is string => typeof id === 'string' && id.length > 0);
-        const matchingPasskeys =
-          allowedIds.length > 0 && passkeys
-            ? passkeys.filter((p) => {
-                const credId = (p.credentialId || p.id) as string;
-                return allowedIds.includes(credId);
-              })
-            : passkeys;
-
-        if (!listResponse.success || !matchingPasskeys || matchingPasskeys.length === 0) {
+        // A locked vault cannot tell whether it holds a passkey for this site,
+        // so it must not be reported as "no passkey". Say it is locked, then
+        // follow the user's fallback setting: blocking the native prompt on
+        // every locked sign-in would also lock out their security keys.
+        if (dialog.status === 'locked') {
+          _showErrorNotification(t('popupVaultLocked'), t('pageVaultLockedMsg'));
           if (rules.passthroughOnNoPasskey !== false) {
+            this.postPassthroughResponse('PASSKEY_GET_RESPONSE', requestId, 'Vault is locked');
+          } else {
+            this.postBlockedResponse('PASSKEY_GET_RESPONSE', requestId, t('pageVaultLockedMsg'));
+          }
+          return;
+        }
+
+        // The background offers only passkeys in allowCredentials, when the
+        // RP sends a list: the server accepts no others.
+        if (dialog.status === 'none') {
+          if (rules.passthroughOnNoPasskey !== false) {
+            const allowCredentials = (pk?.allowCredentials as unknown[] | undefined) || [];
             this.postPassthroughResponse(
               'PASSKEY_GET_RESPONSE',
               requestId,
-              allowedIds.length > 0
+              allowCredentials.length > 0
                 ? 'No vault passkey matches allowCredentials'
                 : 'No vault passkey for this site'
             );
@@ -356,23 +507,7 @@ class ContentScript {
           return;
         }
 
-        // Convert to PasskeyOption format for the selector
-        const passkeyOptions: PasskeyOption[] = matchingPasskeys.map((pk) => {
-          const user = pk.user as Record<string, string> | undefined;
-          return {
-            id: pk.id as string,
-            credentialId: (pk.credentialId || pk.id) as string,
-            userName: user?.name || '',
-            userDisplayName: user?.displayName || user?.name || t('commonUnknownUser'),
-            rpId: pk.rpId as string,
-            createdAt: pk.createdAt as number,
-          };
-        });
-
-        // Show passkey selector UI
-        const selectorResult = await _showPasskeySelector(passkeyOptions, rpId);
-
-        if (selectorResult.action === 'passthrough') {
+        if (dialog.outcome === 'passthrough') {
           this.postPassthroughResponse(
             'PASSKEY_GET_RESPONSE',
             requestId,
@@ -381,7 +516,18 @@ class ContentScript {
           return;
         }
 
-        if (selectorResult.action === 'cancel') {
+        if (dialog.outcome === 'cancel') {
+          // A conditional (autofill) request is meant to stay open for the
+          // life of the page, so dismissing the picker hands it to the
+          // browser's own autofill instead of failing it.
+          if (payload.mediation === 'conditional') {
+            this.postPassthroughResponse(
+              'PASSKEY_GET_RESPONSE',
+              requestId,
+              'Vault picker dismissed'
+            );
+            return;
+          }
           window.postMessage(
             {
               source: 'PASSKEY_VAULT_CONTENT',
@@ -399,25 +545,20 @@ class ContentScript {
           return;
         }
 
-        const selectedId = selectorResult.id;
+        userChosePasskey = true;
 
-        // Get the selected passkey and sign
+        // Sign with the passkey the user picked in the dialog. The background
+        // knows which one, and signs only for a request the dialog approved.
         const response = await this.sendMessage({
           type: 'GET_PASSKEY',
-          payload: {
-            ...payload,
-            selectedPasskeyId: selectedId,
-          },
+          payload,
           requestId,
           timestamp: Date.now(),
         });
 
         if (response.success && response.credential) {
-          // Show success notification
-          const selectedPasskey = passkeyOptions.find((pk) => pk.id === selectedId);
-          const userName =
-            selectedPasskey?.userDisplayName || selectedPasskey?.userName || t('commonUnknownUser');
-          _showPasskeyUsedNotification(userName, rpId);
+          // No account name here: this notice is in the page's DOM.
+          _showPasskeyUsedNotification(rpId);
           void this.captureSiteIcon(rpId);
 
           // Reconstruct a proper PublicKeyCredential object
@@ -457,7 +598,11 @@ class ContentScript {
             source: 'PASSKEY_VAULT_CONTENT',
             type: 'PASSKEY_GET_RESPONSE',
             requestId,
-            result: { success: false, error: msg },
+            result: {
+              success: false,
+              error: msg,
+              ...(userChosePasskey && { blockNativeFallback: true }),
+            },
           },
           '*'
         );
@@ -465,14 +610,28 @@ class ContentScript {
     }
   }
 
+  /** Ask the background to take back the passkey it made for this request. */
+  private discardRegistration(requestId: string): void {
+    this.sendMessage({ type: 'DISCARD_REGISTRATION', requestId }).catch(() => undefined);
+  }
+
+  private rememberPostedRegistration(requestId: string): void {
+    const now = Date.now();
+    for (const [id, postedAt] of this.postedRegistrations) {
+      if (now - postedAt > POSTED_REGISTRATION_MEMORY_MS) this.postedRegistrations.delete(id);
+    }
+    this.postedRegistrations.set(requestId, now);
+  }
+
   /**
    * Set up communication with background script
    */
   private setupBackgroundCommunication(): void {
     // Listen for messages from background script
+    // Nothing here answers, so the channel is not held open: a sender that
+    // waits for a reply would otherwise wait until the page unloads.
     chrome.runtime.onMessage.addListener((message) => {
       this.handleBackgroundMessage(message);
-      return true;
     });
   }
 

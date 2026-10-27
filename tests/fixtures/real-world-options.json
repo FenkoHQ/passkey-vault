@@ -1,0 +1,2599 @@
+[
+  {
+    "id": "simplewebauthn-v14-create-default",
+    "rp": "SimpleWebAuthn @simplewebauthn/server v14.0.3 (library default)",
+    "ceremony": "create",
+    "origin": "https://example.com",
+    "provenance": "library-default",
+    "source": "https://github.com/MasterKale/SimpleWebAuthn/blob/v14.0.3/packages/server/src/registration/generateRegistrationOptions.ts | https://github.com/MasterKale/SimpleWebAuthn/blob/v14.0.3/packages/server/src/helpers/generateChallenge.ts | https://github.com/MasterKale/SimpleWebAuthn/blob/v14.0.3/packages/server/src/helpers/generateUserID.ts",
+    "options": {
+      "challenge": "V1otLfLN7QOxhlM0QjtoFNJbAcA3wYSSTkv-_YW6qtw",
+      "rp": {
+        "name": "Example",
+        "id": "example.com"
+      },
+      "user": {
+        "id": "7l6bmyTJqDBjojXRK5xoi0j4NvFwAxLd1msx2QS8hco",
+        "name": "user@example.com",
+        "displayName": ""
+      },
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -8
+        },
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "timeout": 60000,
+      "attestation": "none",
+      "excludeCredentials": [],
+      "authenticatorSelection": {
+        "residentKey": "preferred",
+        "userVerification": "preferred",
+        "requireResidentKey": false
+      },
+      "extensions": {
+        "credProps": true
+      },
+      "hints": []
+    },
+    "notes": "generateRegistrationOptions() with only rpName/rpID/userName. Defaults read from v14.0.3 source: algs [-8,-7,-257] (EdDSA first), 32-byte random challenge and 32-byte random user.id, timeout 60000, attestation 'none', userDisplayName defaults to the EMPTY STRING, credProps:true always merged into extensions, hints always emitted (empty array), excludeCredentials always emitted. Because the default authenticatorSelection has residentKey 'preferred', the library also sets requireResidentKey:false. Rp/user strings are illustrative."
+  },
+  {
+    "id": "simplewebauthn-v14-create-pqc-runtime",
+    "rp": "SimpleWebAuthn @simplewebauthn/server v14.0.3 on a runtime with WebCrypto ML-DSA-44",
+    "ceremony": "create",
+    "origin": "https://example.com",
+    "provenance": "library-default",
+    "source": "https://github.com/MasterKale/SimpleWebAuthn/blob/v14.0.3/packages/server/src/registration/generateRegistrationOptions.ts | https://github.com/MasterKale/SimpleWebAuthn/blob/v14.0.3/packages/server/src/services/settingsService.ts | https://github.com/MasterKale/SimpleWebAuthn/blob/v14.0.3/packages/server/src/helpers/cose.ts",
+    "options": {
+      "challenge": "B1iizJVNDoW47zRk27QlMwjF1qp9OXgN1HWE7f6_49I",
+      "rp": {
+        "name": "Example",
+        "id": "example.com"
+      },
+      "user": {
+        "id": "QiI0GcOXzwrcesPIgnOLv0Jbah1Rt49p614kQRyhtQw",
+        "name": "user@example.com",
+        "displayName": ""
+      },
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -48
+        },
+        {
+          "type": "public-key",
+          "alg": -8
+        },
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "timeout": 60000,
+      "attestation": "none",
+      "excludeCredentials": [],
+      "authenticatorSelection": {
+        "residentKey": "preferred",
+        "userVerification": "preferred",
+        "requireResidentKey": false
+      },
+      "extensions": {
+        "credProps": true
+      },
+      "hints": []
+    },
+    "notes": "Same defaults as simplewebauthn-v14-create-default, but getDefaultSupportedAlgorithmIDs() prepends ML-DSA-44 (-48) when SettingsService.runtimeSupportsPQC() detects WebCrypto 'ML-DSA-44' support. The most preferred algorithm is a post-quantum one; an authenticator that only does ES256 must skip -48 and -8."
+  },
+  {
+    "id": "simplewebauthn-v14-get-default",
+    "rp": "SimpleWebAuthn @simplewebauthn/server v14.0.3 (library default)",
+    "ceremony": "get",
+    "origin": "https://example.com",
+    "provenance": "library-default",
+    "source": "https://github.com/MasterKale/SimpleWebAuthn/blob/v14.0.3/packages/server/src/authentication/generateAuthenticationOptions.ts | https://github.com/MasterKale/SimpleWebAuthn/blob/v14.0.3/packages/server/src/helpers/generateChallenge.ts",
+    "options": {
+      "rpId": "example.com",
+      "challenge": "AD-ZrUWjmPamROry0kWrupTPbWNOfd-GNLHS3cAdwJU",
+      "timeout": 60000,
+      "userVerification": "preferred"
+    },
+    "notes": "generateAuthenticationOptions({rpID}) only. allowCredentials and extensions are undefined and therefore absent after JSON serialization (discoverable flow); 32-byte challenge; timeout 60000; UV 'preferred'."
+  },
+  {
+    "id": "py-webauthn-v3-create-default",
+    "rp": "py_webauthn (Duo) v3.0.1 (library default)",
+    "ceremony": "create",
+    "origin": "https://example.com",
+    "provenance": "library-default",
+    "source": "https://github.com/duo-labs/py_webauthn/blob/v3.0.1/webauthn/registration/generate_registration_options.py | https://github.com/duo-labs/py_webauthn/blob/v3.0.1/webauthn/helpers/options_to_json_dict.py | https://github.com/duo-labs/py_webauthn/blob/v3.0.1/webauthn/helpers/generate_challenge.py | https://github.com/duo-labs/py_webauthn/blob/v3.0.1/webauthn/helpers/generate_user_handle.py | https://github.com/duo-labs/py_webauthn/blob/v3.0.1/webauthn/authentication/generate_authentication_options.py",
+    "options": {
+      "rp": {
+        "name": "Example",
+        "id": "example.com"
+      },
+      "user": {
+        "id": "E1BXygyPYX32ADUVIiHprrSWE-tSvjpSCeS-zr_lyn9S23l4OiqUoif6eUK6TDou0-2jSWP3EKAixZn3PnUizg",
+        "name": "user@example.com",
+        "displayName": "user@example.com"
+      },
+      "challenge": "mEE_qeWn85F8cFaa_D5n7AtiRdsHqcXJcPMtiBMZ6HbBAbOTeXsz3Ik5AILXkvcvOqSZ3h-h35JkRAjJoInFag",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -8
+        },
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "timeout": 60000,
+      "excludeCredentials": [],
+      "attestation": "none"
+    },
+    "notes": "generate_registration_options(rp_id, rp_name, user_name) serialized with options_to_json_dict(). 64-byte challenge AND 64-byte user handle (the maximum user.id size), displayName defaults to user_name, no authenticatorSelection, no extensions, hints omitted (None). The matching get default is {challenge: 64 bytes, timeout: 60000, rpId, allowCredentials: [], userVerification: 'preferred'} -- an explicit empty allowCredentials list rather than an absent one."
+  },
+  {
+    "id": "spring-security-7-1-create-default",
+    "rp": "Spring Security 7.1.2 WebAuthn (Webauthn4JRelyingPartyOperations, webauthn4j)",
+    "ceremony": "create",
+    "origin": "https://example.com",
+    "provenance": "library-default",
+    "source": "https://github.com/spring-projects/spring-security/blob/7.1.2/webauthn/src/main/java/org/springframework/security/web/webauthn/management/Webauthn4JRelyingPartyOperations.java | https://github.com/spring-projects/spring-security/blob/7.1.2/webauthn/src/main/java/org/springframework/security/web/webauthn/api/Bytes.java | https://github.com/spring-projects/spring-security/blob/7.1.2/webauthn/src/main/java/org/springframework/security/web/webauthn/jackson/DurationSerializer.java | https://github.com/spring-projects/spring-security/blob/7.1.2/webauthn/src/main/java/org/springframework/security/web/webauthn/jackson/AuthenticatorSelectionCriteriaMixin.java",
+    "options": {
+      "rp": {
+        "name": "Example",
+        "id": "example.com"
+      },
+      "user": {
+        "name": "user",
+        "id": "f1ypV7XcpAXucgl0pAPaokZFhCgp2279g8oRsZ9nBx8",
+        "displayName": "user"
+      },
+      "challenge": "Ge7nLnfvNCLmqjPITB0B86wXnve2Z71EQSav5rjP7HA",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -8
+        },
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "timeout": 300000,
+      "excludeCredentials": [],
+      "authenticatorSelection": {
+        "residentKey": "required",
+        "userVerification": "preferred"
+      },
+      "attestation": "none",
+      "extensions": {
+        "credProps": true
+      }
+    },
+    "notes": "Hard-coded in createPublicKeyCredentialCreationOptions(): EdDSA/ES256/RS256, residentKey 'required' (no requireResidentKey member is serialized), UV 'preferred', 5-minute timeout serialized as 300000 ms, Bytes.random() = 32 bytes for both challenge and new user ids, name and displayName are both the authenticated principal name. Get default: allowCredentials = the user's credentials, 32-byte challenge, rpId, timeout 300000, UV 'preferred'."
+  },
+  {
+    "id": "yubico-java-webauthn-server-2-10-create-default",
+    "rp": "Yubico java-webauthn-server 2.10.1 (RelyingParty.startRegistration default)",
+    "ceremony": "create",
+    "origin": "https://example.com",
+    "provenance": "library-default",
+    "source": "https://github.com/Yubico/java-webauthn-server/blob/2.10.1/webauthn-server-core/src/main/java/com/yubico/webauthn/RelyingParty.java | https://github.com/Yubico/java-webauthn-server/blob/2.10.1/webauthn-server-core/src/main/java/com/yubico/webauthn/data/COSEAlgorithmIdentifier.java | https://github.com/Yubico/java-webauthn-server/blob/2.10.1/webauthn-server-core/src/main/java/com/yubico/webauthn/data/PublicKeyCredentialCreationOptions.java | https://github.com/Yubico/java-webauthn-server/blob/2.10.1/yubico-util/src/main/java/com/yubico/internal/util/JacksonCodecs.java",
+    "options": {
+      "rp": {
+        "name": "Example",
+        "id": "example.com"
+      },
+      "user": {
+        "name": "user@example.com",
+        "displayName": "User",
+        "id": "Kr1RNghgy4kevINIFmmnrRt_E9TnK6FCT8Mnsnf5Co8"
+      },
+      "challenge": "eB8Xxt-XBqbCTfwCvuZNLzMec-Iy8DK0T3LkKdsmOHQ",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -8
+        },
+        {
+          "type": "public-key",
+          "alg": -35
+        },
+        {
+          "type": "public-key",
+          "alg": -36
+        },
+        {
+          "type": "public-key",
+          "alg": -53
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        },
+        {
+          "type": "public-key",
+          "alg": -258
+        },
+        {
+          "type": "public-key",
+          "alg": -259
+        },
+        {
+          "type": "public-key",
+          "alg": -48
+        },
+        {
+          "type": "public-key",
+          "alg": -49
+        },
+        {
+          "type": "public-key",
+          "alg": -50
+        }
+      ],
+      "hints": [],
+      "excludeCredentials": [],
+      "attestation": "none",
+      "extensions": {
+        "credProps": true
+      }
+    },
+    "notes": "preferredPubkeyParams default = ES256, EdDSA, ES384, ES512, Ed448 (-53, fully-specified), RS256, RS384, RS512, ML-DSA-44/65/87 (-48/-49/-50), then filterAvailableAlgorithms() drops any alg without a JCA KeyFactory: on Java 17/21 the ML-DSA entries disappear (8 algs); this entry assumes Java 24+. 32-byte challenge. timeout and authenticatorSelection are absent unless set (Jackson NON_ABSENT keeps empty lists, so hints:[] and excludeCredentials:[] are emitted). credProps is always merged in; appidExclude is added only when RelyingParty.appId is configured (U2F migration). toCredentialsCreateJson() wraps this in {\"publicKey\": ...}. user.id is application-supplied (32 bytes here)."
+  },
+  {
+    "id": "go-webauthn-0-18-create-default",
+    "rp": "go-webauthn v0.18.2 (WebAuthn.BeginRegistration default)",
+    "ceremony": "create",
+    "origin": "https://example.com",
+    "provenance": "library-default",
+    "source": "https://github.com/go-webauthn/webauthn/blob/v0.18.2/webauthn/registration.go | https://github.com/go-webauthn/webauthn/blob/v0.18.2/webauthn/registration_credential_parameters.go | https://github.com/go-webauthn/webauthn/blob/v0.18.2/webauthn/const.go | https://github.com/go-webauthn/webauthn/blob/v0.18.2/protocol/const.go | https://github.com/go-webauthn/webauthn/blob/v0.18.2/protocol/options.go | https://github.com/go-webauthn/webauthn/blob/v0.18.2/webauthn/types.go",
+    "options": {
+      "rp": {
+        "name": "Example",
+        "id": "example.com"
+      },
+      "user": {
+        "name": "user@example.com",
+        "displayName": "User",
+        "id": "ksdDj8FStundsKEN1b-rkK-RrLYQfwvsW81FMybmFbI"
+      },
+      "challenge": "-TkBAV3rFoKdrEHbgUIEG54asnaHVhyaoifFhN3k1dc",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -35
+        },
+        {
+          "type": "public-key",
+          "alg": -36
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        },
+        {
+          "type": "public-key",
+          "alg": -258
+        },
+        {
+          "type": "public-key",
+          "alg": -259
+        },
+        {
+          "type": "public-key",
+          "alg": -37
+        },
+        {
+          "type": "public-key",
+          "alg": -38
+        },
+        {
+          "type": "public-key",
+          "alg": -39
+        },
+        {
+          "type": "public-key",
+          "alg": -8
+        }
+      ],
+      "timeout": 300000
+    },
+    "notes": "CredentialParametersDefault() = ES256, ES384, ES512, RS256, RS384, RS512, PS256, PS384, PS512, EdDSA (EdDSA last, RSA-PSS included). 32-byte challenge; timeout 300000 (120000 when UV is 'discouraged'); attestation, authenticatorSelection, extensions, hints and an empty excludeCredentials are all omitted (omitempty/omitzero). Server JSON is wrapped as {\"publicKey\": {...}, \"mediation\"?}. user.id is User.WebAuthnID() (1-64 bytes; 32 here). Config.EncodeUserIDAsString=true makes the server emit user.id as the raw string instead of base64url. Alternative presets: CredentialParametersRecommendedL3 = [-8,-7,-257]; CredentialParametersPQCRecommendedL3 = [-48,-49,-50,-8,-7,-257]."
+  },
+  {
+    "id": "webauthn-rs-0-5-2-passkey-create",
+    "rp": "webauthn-rs 0.5.2 (Webauthn::start_passkey_registration)",
+    "ceremony": "create",
+    "origin": "https://example.com",
+    "provenance": "library-default",
+    "source": "https://github.com/kanidm/webauthn-rs/blob/v0.5.2/webauthn-rs/src/lib.rs | https://github.com/kanidm/webauthn-rs/blob/v0.5.2/webauthn-rs-core/src/core.rs | https://github.com/kanidm/webauthn-rs/blob/v0.5.2/webauthn-rs-core/src/constants.rs | https://github.com/kanidm/webauthn-rs/blob/v0.5.2/webauthn-rs-proto/src/cose.rs | https://github.com/kanidm/webauthn-rs/blob/v0.5.2/webauthn-rs-proto/src/extensions.rs",
+    "options": {
+      "rp": {
+        "name": "Example",
+        "id": "example.com"
+      },
+      "user": {
+        "id": "bxwrOp1OT1CKYXK4PJTQ5Q",
+        "name": "user@example.com",
+        "displayName": "User"
+      },
+      "challenge": "vm4J8bNxqkhGmUEmHN_Ky5aG-MmC_pvwixly-_lF8RY",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "timeout": 300000,
+      "attestation": "none",
+      "authenticatorSelection": {
+        "residentKey": "discouraged",
+        "requireResidentKey": false,
+        "userVerification": "required"
+      },
+      "extensions": {
+        "credentialProtectionPolicy": "userVerificationRequired",
+        "enforceCredentialProtectionPolicy": false,
+        "uvm": true,
+        "credProps": true
+      }
+    },
+    "notes": "Only ES256+RS256 (COSEAlgorithm::secure_algs(); no EdDSA). user.id is the caller's UUID as 16 raw bytes. Passkey registration paradoxically sends residentKey 'discouraged' with UV 'required'. Extensions include the credProtect inputs (credentialProtectionPolicy/enforceCredentialProtectionPolicy, flattened into extensions) and the legacy 'uvm' extension. Server JSON is wrapped as {\"publicKey\": ...}; excludeCredentials/hints are omitted when None."
+  },
+  {
+    "id": "webauthn-rs-0-5-2-discoverable-get-conditional",
+    "rp": "webauthn-rs 0.5.2 (Webauthn::start_discoverable_authentication)",
+    "ceremony": "get",
+    "origin": "https://example.com",
+    "provenance": "library-default",
+    "source": "https://github.com/kanidm/webauthn-rs/blob/v0.5.2/webauthn-rs/src/lib.rs | https://github.com/kanidm/webauthn-rs/blob/v0.5.2/webauthn-rs-core/src/core.rs | https://github.com/kanidm/webauthn-rs/blob/v0.5.2/webauthn-rs-proto/src/auth.rs",
+    "mediation": "conditional",
+    "options": {
+      "challenge": "fvKDea1tG_NK90EmVanHTAMLLnjYMB9Z5qeiUaikOnM",
+      "timeout": 300000,
+      "rpId": "example.com",
+      "allowCredentials": [],
+      "userVerification": "required",
+      "extensions": {
+        "uvm": true
+      }
+    },
+    "notes": "start_discoverable_authentication() forces RequestChallengeResponse.mediation = Conditional and sends an explicit empty allowCredentials with the 'uvm' extension. The mediation member travels next to publicKey in the server JSON ({\"publicKey\": ..., \"mediation\": \"conditional\"})."
+  },
+  {
+    "id": "webauthn-rs-0-5-1-securitykey-create-invalid-hint",
+    "rp": "webauthn-rs 0.5.1 start_securitykey_registration output (user report)",
+    "ceremony": "create",
+    "origin": "http://localhost:3000",
+    "provenance": "captured",
+    "source": "https://github.com/kanidm/webauthn-rs/issues/490 | https://github.com/kanidm/webauthn-rs/blob/v0.5.2/webauthn-rs-proto/src/options.rs",
+    "options": {
+      "rp": {
+        "name": "Acme",
+        "id": "localhost"
+      },
+      "user": {
+        "id": "-Hf8EiJFSJCSXz4mtlTchQ",
+        "name": "foo@example.com",
+        "displayName": "Chrome"
+      },
+      "challenge": "FlP_qkvpRuAXqREykLjJCYTzdIV93OSUf1nS02d-djM",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "timeout": 300000,
+      "authenticatorSelection": {
+        "authenticatorAttachment": "cross-platform",
+        "residentKey": "discouraged",
+        "requireResidentKey": false,
+        "userVerification": "preferred"
+      },
+      "hints": [
+        "securitykey"
+      ],
+      "attestation": "none",
+      "extensions": {
+        "credentialProtectionPolicy": "userVerificationRequired",
+        "enforceCredentialProtectionPolicy": false,
+        "uvm": true,
+        "credProps": true
+      }
+    },
+    "notes": "Verbatim JSON pasted in the issue (Apr 2025). hints contains the INVALID value 'securitykey' (0.5.1 serialized the enum without the hyphen; 0.5.2 uses kebab-case 'security-key'); unknown hint values must be ignored. Chrome rejected this request with NotSupportedError because credProtect 'userVerificationRequired' is combined with userVerification 'preferred'. localhost RP ID over http."
+  },
+  {
+    "id": "fido2-net-lib-4-3-create-default",
+    "rp": "fido2-net-lib 4.3.1 (Fido2.RequestNewCredential default)",
+    "ceremony": "create",
+    "origin": "https://example.com",
+    "provenance": "library-default",
+    "source": "https://github.com/passwordless-lib/fido2-net-lib/blob/4.3.1/Src/Fido2.Models/CredentialCreateOptions.cs | https://github.com/passwordless-lib/fido2-net-lib/blob/4.3.1/Src/Fido2.Models/Fido2Configuration.cs | https://github.com/passwordless-lib/fido2-net-lib/blob/4.3.1/Src/Fido2/RequestNewCredentialParams.cs | https://github.com/passwordless-lib/fido2-net-lib/blob/4.3.1/Src/Fido2/Fido2.cs",
+    "options": {
+      "rp": {
+        "id": "example.com",
+        "name": "Example"
+      },
+      "user": {
+        "name": "user@example.com",
+        "id": "ualHqKNkFiuV5optx9xTBmXhbIFGVD5OLeOhtyhYh70",
+        "displayName": "User"
+      },
+      "challenge": "btihLktAuAFTAokMVpFM1w",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -8
+        },
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        },
+        {
+          "type": "public-key",
+          "alg": -37
+        },
+        {
+          "type": "public-key",
+          "alg": -35
+        },
+        {
+          "type": "public-key",
+          "alg": -258
+        },
+        {
+          "type": "public-key",
+          "alg": -38
+        },
+        {
+          "type": "public-key",
+          "alg": -36
+        },
+        {
+          "type": "public-key",
+          "alg": -259
+        },
+        {
+          "type": "public-key",
+          "alg": -39
+        }
+      ],
+      "timeout": 60000,
+      "attestation": "none",
+      "attestationFormats": [],
+      "authenticatorSelection": {
+        "residentKey": "preferred",
+        "requireResidentKey": false,
+        "userVerification": "discouraged"
+      },
+      "hints": [],
+      "excludeCredentials": []
+    },
+    "notes": "PubKeyCredParam.Defaults = EdDSA, ES256, RS256, PS256, ES384, RS384, PS384, ES512, RS512, PS512; Fido2Configuration.ChallengeSize = 16 bytes (the spec minimum); Timeout 60000; AuthenticatorSelection.Default = residentKey 'preferred' + UV 'discouraged'; attestationFormats [] and hints [] always serialized; extensions omitted when null. user.id is caller-supplied (1-64 bytes enforced). Bitwarden (a fido2-net-lib user) sent [-7,-257,-37,-35,-258,-38,-36,-259,-39,-8] in 2024, i.e. EdDSA last."
+  },
+  {
+    "id": "keycloak-26-create-default-policy",
+    "rp": "Keycloak 26.8.1 (default WebAuthn 2FA policy, webauthnRegister.js)",
+    "ceremony": "create",
+    "origin": "https://keycloak.example.com",
+    "provenance": "library-default",
+    "source": "https://github.com/keycloak/keycloak/blob/26.8.1/themes/src/main/resources/theme/base/login/resources/js/webauthnRegister.js | https://github.com/keycloak/keycloak/blob/26.8.1/services/src/main/java/org/keycloak/authentication/requiredactions/WebAuthnRegister.java | https://github.com/keycloak/keycloak/blob/26.8.1/server-spi-private/src/main/java/org/keycloak/models/Constants.java | https://github.com/webauthn4j/webauthn4j/blob/master/webauthn4j-core/src/main/java/com/webauthn4j/data/client/challenge/DefaultChallenge.java",
+    "options": {
+      "challenge": "jS9qG1w-T3CpscLT5PUGFw",
+      "rp": {
+        "id": "keycloak.example.com",
+        "name": "keycloak"
+      },
+      "user": {
+        "id": "MmI0ZjhjMWUtM2Q1YS00ZTdiLTljMGQtMWUyZjNhNGI1YzZk",
+        "name": "jdoe",
+        "displayName": "jdoe"
+      },
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ]
+    },
+    "notes": "Default realm policy leaves everything 'not specified', so the page passes ONLY challenge, rp, user and pubKeyCredParams: no attestation, no authenticatorSelection, no timeout (createTimeout 0), no excludeCredentials (avoidSameAuthenticatorRegister=false). rp.name defaults to 'keycloak'; rp.id defaults to the request host. user.id is base64url(UTF-8 of the Keycloak user UUID string) = 36 ASCII bytes; displayName is the USERNAME. Challenge is webauthn4j DefaultChallenge(): 16 bytes from a random UUID (version/variant bits fixed). Keycloak < 22 (before PR keycloak/keycloak#20832, June 2023) passed alg values as STRINGS. The passwordless/passkey policy (WebAuthnPolicyPasswordlessDefaults) instead adds authenticatorSelection {residentKey:'required', requireResidentKey:true, userVerification:'required'}."
+  },
+  {
+    "id": "keycloak-26-passkeys-conditional-get",
+    "rp": "Keycloak 26.8.1 (passkeys conditional UI, passkeysConditionalAuth.js)",
+    "ceremony": "get",
+    "origin": "https://keycloak.example.com",
+    "provenance": "library-default",
+    "source": "https://github.com/keycloak/keycloak/blob/26.8.1/themes/src/main/resources/theme/base/login/resources/js/passkeysConditionalAuth.js | https://github.com/keycloak/keycloak/blob/26.8.1/themes/src/main/resources/theme/base/login/resources/js/webauthnAuthenticate.js | https://github.com/keycloak/keycloak/blob/26.8.1/server-spi-private/src/main/java/org/keycloak/models/WebAuthnPolicyPasswordlessDefaults.java",
+    "mediation": "conditional",
+    "options": {
+      "rpId": "keycloak.example.com",
+      "challenge": "DJ5LKn8xTY61ppPC0eD0eA",
+      "allowCredentials": [],
+      "userVerification": "required"
+    },
+    "notes": "doAuthenticate() builds {rpId, challenge} and adds allowCredentials ([] for the conditional flow) and userVerification (passwordless policy default 'required'); timeout omitted because createTimeout defaults to 0. mediation comes from the realm (default 'conditional'; 'optional'/'required' are also supported) and an AbortSignal is always passed. 16-byte UUID-derived challenge."
+  },
+  {
+    "id": "passwordless-id-2-4-register-default",
+    "rp": "@passwordless-id/webauthn 2.4.1 client.register() defaults",
+    "ceremony": "create",
+    "origin": "https://example.com",
+    "provenance": "library-default",
+    "source": "https://github.com/passwordless-id/webauthn/blob/2.4.1/src/client.ts | https://github.com/passwordless-id/webauthn/blob/2.4.1/src/utils.ts",
+    "options": {
+      "challenge": "fuTE-O4Nnt4WRoK9zM4vVze2JmNAL-SAxk06wq9fg4Q",
+      "rp": {
+        "id": "example.com",
+        "name": "example.com"
+      },
+      "user": {
+        "id": "NGMxZDllN2EtMmI2Zi00YTgzLTllMTAtNWQ3YzNiMmExZjA5",
+        "name": "user",
+        "displayName": "user"
+      },
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "authenticatorSelection": {
+        "residentKey": "preferred",
+        "requireResidentKey": false
+      },
+      "attestation": "direct"
+    },
+    "notes": "Browser-side library: register({challenge, user:'user'}). rp.id AND rp.name both default to window.location.hostname; user.id defaults to crypto.randomUUID() converted char-by-char (36 ASCII bytes; non-Latin-1 ids would be truncated by charCodeAt); displayName defaults to name. attestation defaults to 'direct' (option attestation=true). timeout, userVerification, hints and authenticatorAttachment are passed through as undefined (absent here) despite the JSDoc claiming 60000/'required' defaults."
+  },
+  {
+    "id": "python-fido2-2-2-create-default",
+    "rp": "Yubico python-fido2 2.2.1 (Fido2Server.register_begin default)",
+    "ceremony": "create",
+    "origin": "https://example.com",
+    "provenance": "library-default",
+    "source": "https://github.com/Yubico/python-fido2/blob/2.2.1/fido2/server.py | https://github.com/Yubico/python-fido2/blob/2.2.1/fido2/cose.py | https://github.com/Yubico/python-fido2/blob/2.2.1/fido2/webauthn.py",
+    "options": {
+      "rp": {
+        "id": "example.com",
+        "name": "Example"
+      },
+      "user": {
+        "id": "gtPE0zeaJgSNdDbw-j6RXQ",
+        "name": "user@example.com",
+        "displayName": "User"
+      },
+      "challenge": "KhrnQ8ZyIBXtW_Wx9r5IjzzII0KWxNeE4QGO9sLqw3s",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -8
+        },
+        {
+          "type": "public-key",
+          "alg": -35
+        },
+        {
+          "type": "public-key",
+          "alg": -36
+        },
+        {
+          "type": "public-key",
+          "alg": -37
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        },
+        {
+          "type": "public-key",
+          "alg": -47
+        }
+      ]
+    },
+    "notes": "CoseKey.supported_algorithms() = ES256, EdDSA, ES384, ES512, PS256, RS256, ES256K (-47, secp256k1); ML-DSA-44/65/87 are appended when the cryptography backend supports them. Fido2Server sets timeout=None and attestation=None, and authenticatorSelection/excludeCredentials are only emitted when passed, so the default is the minimal 4-member dictionary. 32-byte challenge; user entity is caller-supplied. Server output is {\"publicKey\": ...}. python-fido2 0.9.x (pinned by Sentry at the 2024 commit cited in sentry-create-cbor-zero-padded-userid) defaulted to [-7,-8,-37,-257]."
+  },
+  {
+    "id": "gitlab-passkey-create",
+    "rp": "GitLab (gitlab.com) passkey registration",
+    "ceremony": "create",
+    "origin": "https://gitlab.com",
+    "provenance": "documented",
+    "source": "https://github.com/gitlabhq/gitlabhq/blob/master/app/controllers/profiles/passkeys_controller.rb | https://github.com/gitlabhq/gitlabhq/blob/master/config/initializers/webauthn.rb | https://github.com/cedarcode/webauthn-ruby/blob/v3.5.0/lib/webauthn/relying_party.rb | https://github.com/cedarcode/webauthn-ruby/blob/v3.5.0/lib/webauthn/public_key_credential/options.rb | https://github.com/cedarcode/webauthn-ruby/blob/v3.5.0/lib/webauthn.rb",
+    "options": {
+      "challenge": "D2BVMhQ8f03hCmdTtzcxkGexZaReqCfd21jpYpU-9Bo",
+      "timeout": 300000,
+      "extensions": {
+        "credProps": true
+      },
+      "rp": {
+        "name": "GitLab"
+      },
+      "user": {
+        "id": "Xw8dlhuts0dtv6hdwl7RnGzOZJITSMbhcTwlHk1-yk8iXrDqRIoA0IXgY5KU9ANe5dt7trS6u6G_2VRZnvISjA",
+        "name": "jdoe",
+        "displayName": "Jane Doe"
+      },
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -37
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "authenticatorSelection": {
+        "userVerification": "required",
+        "residentKey": "required"
+      },
+      "excludeCredentials": []
+    },
+    "notes": "Derived from GitLab's open-source controller (webauthn-ruby 3.x): rp has NO id (config.rp_id is not set), so the browser uses the page's effective domain. Algs = webauthn-ruby default ['ES256','PS256','RS256'] -> [-7,-37,-257] (the same list Shopify, Stripe and Sony send). user.id = webauthn_xid = 64 random bytes; 32-byte challenge; timeout 300000 (gem default). GitLab sets config.encoding = :base64, so challenge/user.id travel as STANDARD base64 with padding and GitLab's JS converts them (re-encoded to base64url here). Requires residentKey but sets no requireResidentKey. 2FA (non-passkey) registration uses {userVerification:'discouraged', residentKey:'preferred'}."
+  },
+  {
+    "id": "gitlab-2fa-get-appid",
+    "rp": "GitLab (gitlab.com) WebAuthn second factor",
+    "ceremony": "get",
+    "origin": "https://gitlab.com",
+    "provenance": "documented",
+    "source": "https://github.com/gitlabhq/gitlabhq/blob/master/app/controllers/concerns/authenticates_with_two_factor.rb | https://github.com/gitlabhq/gitlabhq/blob/master/config/initializers/webauthn.rb | https://github.com/cedarcode/webauthn-ruby/blob/v3.5.0/lib/webauthn/public_key_credential/request_options.rb",
+    "options": {
+      "challenge": "peN77lS3swRr47AbK8vFOCh201q5R7TTZIj_WxN6dxM",
+      "timeout": 300000,
+      "extensions": {
+        "appid": "https://gitlab.com"
+      },
+      "allowCredentials": [
+        {
+          "type": "public-key",
+          "id": "zBawARwl_22xP7IIIvVGeoNnX1WfAbSe5OiKigGXCyDJELjxwo6F8Dzmza7grHDkMar1Ywo2ktfzx_Cnv4CgNQ"
+        },
+        {
+          "type": "public-key",
+          "id": "sFw62iRTezcNY8sqncIs2xlAbc08Wf0AEXmTWqO67A3NYgW_uhXe09fwhiwA3Nw3zj1OJ_0zR2Mwl55e_pm4jw"
+        }
+      ],
+      "userVerification": "discouraged"
+    },
+    "notes": "options_for_get(allow: ids, user_verification: 'discouraged'). config.legacy_u2f_appid = the GitLab base URL, so EVERY get carries extensions.appid (an origin URL, not a JSON facets file) -- including passkey sign-in, which uses allowCredentials [] + userVerification 'required'. rpId is ABSENT (relying_party.id is nil). Credential ids have no transports. Ids/challenge are placeholders (64-byte ids assumed); wire encoding is standard base64 (config.encoding = :base64)."
+  },
+  {
+    "id": "google-create-myaccount-appidexclude",
+    "rp": "Google (Google Account passkey enrollment)",
+    "ceremony": "create",
+    "origin": "https://myaccount.google.com",
+    "provenance": "captured",
+    "source": "https://github.com/keepassxreboot/keepassxc-browser/issues/3094 | https://github.com/CloakHQ/CloakBrowser/issues/505 | https://www.corbado.com/blog/webauthn-server-options-overview",
+    "options": {
+      "attestation": "direct",
+      "authenticatorSelection": {
+        "authenticatorAttachment": "platform",
+        "residentKey": "preferred",
+        "userVerification": "preferred"
+      },
+      "challenge": "4UHI6WDfbcIEgfnjV-QBN6eENy7RgJ39VwO7Qaqr1JUDT1JGqPfvL078XZ8vx99eWtUfx7HzekjHq6Jn-rrX_QrtWfjaq7c6siN4GjMcmNfGmm06BzV2IdQJKevbPs3BSmtCixpUEmWUE_VnawroppvtXc3lVgaSPVw6Yw",
+      "extensions": {
+        "appidExclude": "https://www.gstatic.com/securitykey/origins.json",
+        "googleLegacyAppidSupport": false
+      },
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "rp": {
+        "id": "google.com",
+        "name": "Google"
+      },
+      "excludeCredentials": [
+        {
+          "id": "lpC_xD94v8eL8cjW9QCU8w",
+          "type": "public-key"
+        }
+      ],
+      "user": {
+        "displayName": "Example User",
+        "id": "pByWYrHBAtj9EPHklAOjr5OPCucImCkT4bal2pWz2OU",
+        "name": "user@gmail.com"
+      }
+    },
+    "notes": "KeePassXC-Browser debug log, Oct 2026 (values REDACTED in the source). Non-standard Chromium-only extension input googleLegacyAppidSupport (false here; CloakBrowser #505 says the older post-sign-in enrollment flow sent googleLegacyAppidSupport:true without appidExclude). appidExclude points at the gstatic origins.json U2F facet list, which Chromium special-cases for Google domains. rp.id google.com is a parent domain of the page host. Corbado (2024) saw the same alg list/attestation and excludeCredentials carrying all five transports [usb,nfc,ble,hybrid,internal]; this 2026 capture has no transports. Placeholders: challenge length assumed 124 bytes (same as the captured Google get challenge), user.id 32 bytes (Corbado's elided Google user.id begins with ASCII 'GOO'), exclude id 16 bytes, user strings. timeout omitted: the log showed 30000, which KeePassXC substitutes when the RP sends none."
+  },
+  {
+    "id": "google-get-signin-prf",
+    "rp": "Google (accounts.google.com sign-in)",
+    "ceremony": "get",
+    "origin": "https://accounts.google.com",
+    "provenance": "captured",
+    "source": "https://github.com/socsys/fidentikit/blob/master/webauthn_param_analysis_tres | https://github.com/socsys/fidentikit/blob/master/passkey-worker/modules/browser/js/webauthn-instrumentation.js | https://arxiv.org/html/2602.15135v2",
+    "options": {
+      "challenge": "AP2JV8cnsv8_AuZs-hLewcJMejeIyXRs6YTTTqyBRh-XIT1VkReKT3XMbw-yzJ_7KA5RxSG8i9pPRgK0WnYPk9F4Q5gOd_odeN5OV5liswSuR3CCZMVOHeYFZrwdoo7duUwyRukzz8G-wTyMHyJrNlfypjQiJlYHN9gQDw",
+      "timeout": 600000,
+      "rpId": "google.com",
+      "extensions": {
+        "prf": {
+          "eval": {
+            "first": "R29vZ2xlU2lnbkluUHJmSW5wdXQ"
+          }
+        }
+      }
+    },
+    "notes": "Captured by the Fidentikit crawler (Oct 2025, two identical-shape captures) by instrumenting navigator.credentials.get. 124-byte structured challenge (both captures start 00 FD 89 57). PRF eval.first is the 20-byte ASCII string 'GoogleSignInPrfInput' (not 32 bytes). No allowCredentials and no userVerification (discoverable). timeout 600000. The crawler did not record mediation or the page URL; the origin is inferred (the trigger was a Gmail help-page 'create a passkey' link, and the census paper reports google.com calls get({mediation:'conditional'}) on page load)."
+  },
+  {
+    "id": "google-get-cable-transport",
+    "rp": "Google (accounts.google.com passkey challenge page)",
+    "ceremony": "get",
+    "origin": "https://accounts.google.com",
+    "provenance": "captured",
+    "source": "https://github.com/keepassxreboot/keepassxc-browser/issues/3094 | https://github.com/keepassxreboot/keepassxc-browser/blob/1.10.4.1/keepassxc-browser/content/passkeys-utils.js",
+    "options": {
+      "challenge": "x-5bMTA5QDDSkPiOPZeG3TAhkKbMAxC1ocHXD2lOaew-AvHxrmKUsPxbNfHbGBQ-nAtB92B6xSMHy1XndFlmUU38gafFOEf505s20aarmHS1ltI3kgc67v9WEv82Sbtfm-WwaSRsmTrRuoMBDN_xtQPA_fgnI9oK-xhXkQ",
+      "rpId": "google.com",
+      "userVerification": "preferred",
+      "allowCredentials": [
+        {
+          "id": "gPYGTvOf7tYgxm63Z1ALjg",
+          "transports": [
+            "cable",
+            "internal"
+          ],
+          "type": "public-key"
+        }
+      ]
+    },
+    "notes": "KeePassXC-Browser log, Oct 2026, page https://accounts.google.com/v3/signin/challenge/pk/presend. The log showed transports ['cable','internal','internal']; KeePassXC-Browser appends 'internal' to every allowCredentials entry, so Google sent ['cable','internal'] -- 'cable' is the pre-standard name of 'hybrid' and is not in the AuthenticatorTransport enum. The extension also adds enterpriseAttestationPossible:false and rewrites a missing timeout to 30000; both were dropped here. Placeholders: challenge (124 bytes assumed), credential id (16 bytes assumed)."
+  },
+  {
+    "id": "microsoft-msa-create-related-origin",
+    "rp": "Microsoft account (consumer MSA) passkey registration",
+    "ceremony": "create",
+    "origin": "https://account.live.com",
+    "provenance": "captured",
+    "source": "https://www.corbado.com/blog/webauthn-server-options-overview | https://login.microsoft.com/.well-known/webauthn | https://github.com/keepassxreboot/keepassxc/issues/10374 | https://github.com/passwordless-lib/fido2-net-lib/issues/190",
+    "options": {
+      "rp": {
+        "id": "login.microsoft.com",
+        "name": "Microsoft"
+      },
+      "user": {
+        "displayName": "user",
+        "id": "TUY6lUNKtnQVxDYqxtQVdJkyINzp3iFwaf7xL_IlBXpvXk65y5S3iK6rdrpCOtxMIrWG",
+        "name": "user@corbado.com"
+      },
+      "challenge": "HAxSZru3q6qp8qYdnduxbYLZkgbhKElmJWM62-Q9pa0",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "authenticatorSelection": {
+        "residentKey": "required",
+        "userVerification": "required"
+      },
+      "attestation": "direct",
+      "extensions": {
+        "credentialProtectionPolicy": "userVerificationOptional",
+        "enforceCredentialProtectionPolicy": false,
+        "hmacCreateSecret": true
+      }
+    },
+    "notes": "Corbado's captured table (2024). rp.id login.microsoft.com is cross-site from the account.live.com page and is authorized via Related Origin Requests: https://login.microsoft.com/.well-known/webauthn lists login.live.com, login.microsoftonline.com and account.live.com (fetched 2026-10-27). Extensions are the Windows-style credProtect inputs plus hmacCreateSecret (also quoted as Microsoft's set in fido2-net-lib#190, 2020). Corbado reports no timeout/excludeCredentials. user.id visibly starts with ASCII 'MF:' (base64 'TUY6'); the rest is synthetic (48 random bytes assumed, matching the 51-byte 'OF:' id in Microsoft's Graph docs). Challenge length unknown (32 assumed). Origin inferred from the KeePassXC thread (account.live.com/proofs/manage/additional)."
+  },
+  {
+    "id": "microsoft-msa-get-related-origin",
+    "rp": "Microsoft account sign-in",
+    "ceremony": "get",
+    "origin": "https://login.live.com",
+    "provenance": "captured",
+    "source": "https://www.corbado.com/blog/webauthn-server-options-overview | https://login.microsoft.com/.well-known/webauthn",
+    "options": {
+      "challenge": "YlivTZGhEIivRJHOhBsO4UFqs2oAtLuAjWGV16RRoe4",
+      "rpId": "login.microsoft.com",
+      "userVerification": "required"
+    },
+    "notes": "Corbado table (2024): rpId login.microsoft.com, UV required, no allowCredentials, no timeout. The page origin login.live.com is a different site, so the client must fetch https://login.microsoft.com/.well-known/webauthn (Related Origin Requests). Challenge is a 32-byte placeholder."
+  },
+  {
+    "id": "microsoft-graph-beta-create-entra",
+    "rp": "Microsoft Entra ID (Graph beta fido2AuthenticationMethod creationOptions)",
+    "ceremony": "create",
+    "origin": "https://login.microsoftonline.com",
+    "provenance": "documented",
+    "source": "https://github.com/microsoftgraph/microsoft-graph-docs-contrib/blob/main/api-reference/beta/api/fido2authenticationmethod-creationoptions.md | https://learn.microsoft.com/en-us/graph/api/fido2authenticationmethod-creationoptions?view=graph-rest-beta",
+    "options": {
+      "challenge": "ZXlKaGJHY2lPaUpTVTBFdFQwRkZVQzB5TlRZaUxDSmxibU1pT2lKQk1qVTJSME5OSWl3aWVEVmpJanBiSWsxSlNVUmhSRU5EUVd4Q3o1R3h6WDJlNW9PRlZGdG1PbnRTX2JOWG1jQklqcHNDREkxbmVXMnZHT2VIYm5Dcm83bW5BQ1M0VW5JVzVWS2xyVm9MOVUySFdwb2w2dUlCQUF6UmxoblppbHNJM0FEVFgxZ0l5eFZ2OVdyT0ZpZmdIT1hibUlWSDZ1Zm9BWTJsdDNFQ3c5ZkJhSmppZEszNFZnVUVrVk1KMUNMemNXSGp2eFRSWlJ2N2dwU20tUFBiSzdiWGRIU0I3aU5BTUhBVzFjM2NEUUdxa3hBLXVDZ0ZmTHRiSjRKOXRhUkNCS2Fnazh3TC04M2haX3RobE4wbFBFWjFScERpY2k1OEhmeGRNc1dyTTFzejBMa0pYT3A5OG9VNmpDSmFGM3BacnFmbVcxTjRzUFNzMm9BRVhXUXVqd3pQbFR3Q1Vid2t3S2swX0NCT3pGTGttTjRweFM2cm15dGxPOVpRN1VrZTg2YnJGR0REeUlNTmtSd1FLUlp6djFHbVFGd25obTczTmhzWG5vWkI5Z0FxaDNlb3VDWFJVOUQ2SExfRFd4RnRtcXNQZVFPYnRtc0Jod2ZUbnRnSmhkS2ZSSERYYUZLb09mVlowR2t6anJ2dTJOMkI0Qk9JZUtuMHdWYWJyUXNiWjlmNFJrT29XMEg2SDhOdDBEdHVuNnltOFlSUDFzR3lLN0ZoY2cyaDNQVU1EUUxLZkVvV205YjRkRnBuZkp4MnVxcDBsZTZIbmFnRnpDX1ZOMnJOVjZ6bkdJRVByWldwSUo5eERNRE9ZZDdYTkV2NEFTODVfZzZZQ1p3MkpMWEtRenNTTlBtVF9tejZvcTh3YU10VGNPcEY2eWs1cURGWncyY21uQldYYUNhTHNxei0tZmlKMnhlLXN5XzJkczlFRXpHTDFMSDlIOEhXX2o0VzVtM1ZscklrSHhDRnJGX0dGMmh5N2taNmg3aTNiQ2tOTXJIOGwwWGVsMXZ0V2JJVWctU3VETVlMSlFGZGNDX0ZJazFPQVNfNUZRb1BUd0l3OFdWaENEN01hNk9zdXV3WjVmMXJ3aGVZbm5Rem1BTGhscEJvTjh1VzJvbURHdXZzTmxFOEtEU0poMlZCWnFNS0Q1TGQzdkxnT1NoYmg2MkYwQWZmaG11NmtzTUU0bF9PU1BWS0dBMVhyWXhhZTFqaVh0NEpaRGFNcnlLNFQtLWdKVlVOZktMUnRrYXlESlQwVTFqQWRsUjY5VXV2cDNmUWtoV09aeERJUG5Jby1VaW1ocHZXVVRkWjE0Sm1YaTNnMldjRm1yd3lwR3Q5STVqWHpidlFsM2lWN2g4Y2ZXMmJYVU45dkNXa0NHNjZPLWlqMnFxZW9LWFJZblJfNExkR0lWOG4yQUVfNnRjTWI4emF3LXF1UE9WTlhCV29PREJnWEl2bGtpY3RhdURxT181V3dseVlXVmFJeXRMU2FiVWJOTUJ4MWNrMlZqc2hEamhUanlzWnZFM2tuNHFUcnQxVGU0VGFNUGZYMElqUElnTTFscnZwTHhiMlp6eXlHRHBmYUk4WW5pMWgzYWM2WVQ5bFVyVEtyQk1lelRSRDZ6NjczWW9vclkzbHdnam5Xd1FKdklOTVlKLUhRblpzWlBLZ3pVR0RCU0xYXzQwSEhzc1QxTFhWcHJZRTFvWXBwejdydVJ3TUJpakY5QndLdk5pWXEyemE3SUR6OTA0ekduR1I2UUd4dmVmcV9mcVh5MGdGWjFaUmk3UzhWLUNVUGZ3bWJjcy1WRmlnY1NRMGVIczFkRGRkbGR0U0JyQ0JGeFF6d2gyaGdnTWdkTjdBRGtVU3ZQZjdHNTM4bzBxa29LdnVPdzVFazRVZHg3SDZOQmJ2Q3FTWU5ZQ2RpNnJpODRJWndxWi16VTJKaldBSDJpTDY4X2t2N1liV0lhczhxZHltRHNoSFZYM0dsQWNWZXVFYTRFQnZNQThOSjZuTDZtODR4ZGhkZUpQSmdyVWZERXdxZ2IzQ0NIUHJ0eHh3VC1FRjI1Qlc2Y3JJTGVmd3NqckFUdnluOFBOLWhWV0YydndGQ1RFdEdpY2RNX3NONkF4V1RaMlhtRGlldTNDeHBJSUJrR0lNb1VtMDVFU2NsWW5nVmtNM3ZDODR3b3pwUjdFQzRvY2pLcmJKT3lDaVhUT2xvUnN2UG52YjJkM3R3Ulk0SW5sOGhyZmVmRUNDSHpIMnRKVG9oMmduaVlld0N2a3F2ZVR5YUZpel9rN3lSVUpUcW5ZTy1jYnhicnprM0g5VnpMU1dydEJBaWhpUkxhRDRpb0I4Q2dXMTB6NmJ6bTdPeVJ3THE5RUt3X2hWcEJnQXhHTWFXMDdvejFFblhUN1FVNUthaE1aRWRlYjJOb25fNmN0VGZaQlk4RDdTT3lIZ2NWZE5xbmdDbmJjRU9fbW9ITU5ZN015d1kwNFlTS1dKejBtdTVoek1Fa3lDbzhvWjhGOFExaEdnTERrMEZxU2E0cjh0LXlqRFdyWjdwd0NYWHhaRnphM3YtbzU2ZWd3YXkwMEUtS1lFNWRqSGhHaUl5MVRxaGZidnlHM1pFN0ZPT2pQUy1rZGk",
+      "timeout": 0,
+      "attestation": "direct",
+      "rp": {
+        "id": "login.microsoft.com",
+        "name": "Microsoft"
+      },
+      "user": {
+        "id": "T0Y6Ehqp2EfQP0iExdt54DFwdWuaH7qIZbZGpOc92RGnvbXyRPvU-8AOp9r1T7Cebfc3",
+        "displayName": "Kim User",
+        "name": "kimuser@contoso.com"
+      },
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "excludeCredentials": [
+        {
+          "id": "0S64X8KwFmCeJjHzK1oE_39T-JYhfYbhFurwOxMMjtvRWc_sLYq8AMJVuva823XQ",
+          "type": "public-key",
+          "transports": []
+        },
+        {
+          "id": "pgIfj2fnom8rJdb4_h1gKqDkq-gxHFksI-m2aR5T-PNNycBfENAM4ksEBvoXky6d",
+          "type": "public-key",
+          "transports": []
+        },
+        {
+          "id": "u5wuw6SGH0VhAz7OXCLRkCuxhm4UrCB7hcLccyMU6calP1hWexfKe5PJNM69neAM",
+          "type": "public-key",
+          "transports": []
+        },
+        {
+          "id": "6rc0zTSz2YRlaKlCjqxsNDjDe8qY8TSL95Z4WhxEaaP4XfvfSnAGMk49RSwm_uAO",
+          "type": "public-key",
+          "transports": []
+        }
+      ],
+      "authenticatorSelection": {
+        "authenticatorAttachment": "cross-platform",
+        "requireResidentKey": true,
+        "userVerification": "required"
+      },
+      "extensions": {
+        "hmacCreateSecret": true,
+        "enforceCredentialProtectionPolicy": true,
+        "credentialProtectionPolicy": "userVerificationOptional"
+      }
+    },
+    "notes": "Microsoft's documented example response (beta). Distinctive: timeout 0; excludeCredentials ids published as STANDARD base64 with '/' and '+' (48-byte ids, converted to base64url here) and EMPTY transports arrays; requireResidentKey without residentKey; enforceCredentialProtectionPolicy true with a policy of userVerificationOptional; user.id is 51 bytes starting with ASCII 'OF:'. The challenge is the base64 of a JWE compact string (header {alg:RSA-OAEP-256, enc:A256GCM, x5c:[...]}) and is truncated with '...' in the doc: the first 76 bytes here are the documented prefix and the rest is synthetic base64url-alphabet filler to a total of 2000 bytes (true length unknown, kilobytes expected). Graph options are consumed by a provisioning client; origin chosen from login.microsoft.com's related-origins list."
+  },
+  {
+    "id": "microsoft-graph-v1-create-odata-annotations",
+    "rp": "Microsoft Entra ID (Graph v1.0 creationOptions example)",
+    "ceremony": "create",
+    "origin": "https://login.microsoftonline.com",
+    "provenance": "documented",
+    "source": "https://github.com/microsoftgraph/microsoft-graph-docs-contrib/blob/main/api-reference/v1.0/api/fido2authenticationmethod-creationoptions.md",
+    "options": {
+      "@odata.type": "#microsoft.graph.webauthnPublicKeyCredentialCreationOptions",
+      "rp": {
+        "@odata.type": "#microsoft.graph.webauthnPublicKeyCredentialRpEntity",
+        "id": "login.microsoftonline.com",
+        "name": "Microsoft"
+      },
+      "user": {
+        "@odata.type": "#microsoft.graph.webauthnPublicKeyCredentialUserEntity",
+        "id": "ZGF2aWRAY29udG9zby5jb20",
+        "displayName": "David Smith",
+        "name": "david@contoso.com"
+      },
+      "challenge": "QTU1MzNDNzAtNkM3Ni00NTRDLUJDQ0YtRTREMDZCNTBFRTRE",
+      "pubKeyCredParams": [
+        {
+          "@odata.type": "#microsoft.graph.webauthnPublicKeyCredentialParameters",
+          "type": "public-key",
+          "alg": -7
+        }
+      ],
+      "timeout": 60000,
+      "excludeCredentials": [],
+      "authenticatorSelection": {
+        "@odata.type": "#microsoft.graph.webauthnAuthenticatorSelectionCriteria",
+        "authenticatorAttachment": "platform",
+        "requireResidentKey": true,
+        "userVerification": "required"
+      },
+      "attestation": "direct",
+      "extensions": {
+        "@odata.type": "#microsoft.graph.webauthnAuthenticationExtensionsClientInputs"
+      }
+    },
+    "notes": "Verbatim 'publicKey' object from Microsoft's v1.0 documentation example (synthetic values). A client that forwards it unchanged passes unknown '@odata.type' members at every level, including an extensions object whose ONLY member is '@odata.type'. user.id is the UTF-8 email 'david@contoso.com'; the challenge is the 36-byte ASCII GUID 'A5533C70-6C76-454C-BCCF-E4D06B50EE4D'; ES256 is the only algorithm."
+  },
+  {
+    "id": "microsoft-entra-create-attachment-none",
+    "rp": "Microsoft Entra ID (login.microsoftonline.com) security-key registration",
+    "ceremony": "create",
+    "origin": "https://login.microsoftonline.com",
+    "provenance": "captured",
+    "source": "https://github.com/keepassxreboot/keepassxc/issues/10374#issuecomment-2851514173 | https://github.com/microsoftgraph/microsoft-graph-docs-contrib/blob/main/api-reference/beta/api/fido2authenticationmethod-creationoptions.md",
+    "options": {
+      "challenge": "99zvz2bYos2ntpF2SYrQPRzIB5QxMeQtaEsfdZtYblU",
+      "rp": {
+        "id": "login.microsoft.com",
+        "name": "Microsoft"
+      },
+      "user": {
+        "id": "T0Y6LIsJPLM64Pp8Mh-v1Klba7LqQNa8FhC8cMKMEw8VufOMBTsuKxo4NPhBZv3wFrQ8",
+        "displayName": "Example User",
+        "name": "user@contoso.com"
+      },
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "authenticatorSelection": {
+        "authenticatorAttachment": "none",
+        "requireResidentKey": true,
+        "userVerification": "required"
+      },
+      "attestation": "direct",
+      "extensions": {
+        "hmacCreateSecret": true,
+        "enforceCredentialProtectionPolicy": true,
+        "credentialProtectionPolicy": "userVerificationOptional"
+      }
+    },
+    "notes": "Only authenticatorSelection is sourced (KeePassXC user log, May 2025, Azure portal sign-in): authenticatorAttachment is the NON-STANDARD value 'none', which clients must ignore as an unknown value (KeePassXC rejected it). Every other member is INFERRED from Microsoft's documented Entra options (microsoft-graph-beta-create-entra) and filled with placeholders."
+  },
+  {
+    "id": "github-create-passkey",
+    "rp": "GitHub passkey registration",
+    "ceremony": "create",
+    "origin": "https://github.com",
+    "provenance": "captured",
+    "source": "https://www.corbado.com/blog/webauthn-server-options-overview | https://github.com/github/webauthn-json",
+    "options": {
+      "rp": {
+        "id": "github.com",
+        "name": "GitHub"
+      },
+      "user": {
+        "displayName": "user",
+        "id": "v4lagvKCxI6R_axTzkskMdHxqa6GFDOOM8mqYOlB-ck",
+        "name": "user"
+      },
+      "challenge": "o4Rr7t8Jar691jjO-fBI4yRNSJT0D6O8uY6A8yjE3fc",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "excludeCredentials": [
+        {
+          "id": "uBMlzNJ4EbOGvR3GkKzLPA",
+          "transports": [
+            "internal"
+          ],
+          "type": "public-key"
+        }
+      ],
+      "authenticatorSelection": {
+        "residentKey": "required",
+        "userVerification": "preferred"
+      },
+      "attestation": "none",
+      "extensions": {
+        "appidExclude": "https://github.com/u2f/trusted_facets",
+        "credProps": true
+      }
+    },
+    "notes": "Corbado's captured table (2024). appidExclude names GitHub's U2F trusted-facets URL so legacy U2F keys registered with the old FIDO U2F API are excluded; Corbado printed the key as 'appIdExclude', normalized here to the spec name 'appidExclude' (the same table did that for Google, whose raw capture says 'appidExclude'). name/displayName are the GitHub login (Corbado shows its placeholder 'user'). GitHub's frontend converts JSON with @github/webauthn-json, whose schema copies only known members (older versions drop hints/attestationFormats). Placeholders: user.id (elided 'ooqg...OWeyA', binary; 32 bytes assumed), challenge, exclude id."
+  },
+  {
+    "id": "github-get-2fa-appid",
+    "rp": "GitHub security-key second factor (Chromium on Android via microG)",
+    "ceremony": "get",
+    "origin": "https://github.com",
+    "provenance": "captured",
+    "source": "https://github.com/microg/GmsCore/issues/1817",
+    "options": {
+      "challenge": "UXIfhqmkzHD4j2MdySC3zepKbSBRW-gcnscqBog9TA0",
+      "timeout": 30000,
+      "rpId": "github.com",
+      "allowCredentials": [
+        {
+          "type": "public-key",
+          "id": "AUzBJY1waQsH7p1X5bWU_ZJE-gqUZLeow-_opoBE9RzWPTrrACRgOBxvJY6DldMCb1cfDZp2SI3Ng3Y5sTrtMWVg3AEAAA",
+          "transports": [
+            "usb",
+            "ble",
+            "nfc",
+            "usb",
+            "internal"
+          ]
+        }
+      ],
+      "userVerification": "discouraged",
+      "extensions": {
+        "appid": "https://github.com/u2f/trusted_facets"
+      }
+    },
+    "notes": "microG logcat (Nov 2022) of the request Chromium handed to the FIDO2 API: challenge and 70-byte credential id verbatim, timeoutSeconds=30.0, appid extension (log truncated at 'https://github.com/u2f/trusted_fa'; completed from GitHub's facet URL). The transports list contains a DUPLICATE 'usb' as logged; Chromium may have merged transports, so the RP's exact list is uncertain."
+  },
+  {
+    "id": "amazon-create-es256-only",
+    "rp": "Amazon passkey registration",
+    "ceremony": "create",
+    "origin": "https://www.amazon.com",
+    "provenance": "captured",
+    "source": "https://www.corbado.com/blog/webauthn-server-options-overview | https://github.com/bitwarden/clients/issues/16437 | https://github.com/bitwarden/clients/issues/12846",
+    "options": {
+      "rp": {
+        "id": "amazon.com",
+        "name": "Amazon"
+      },
+      "user": {
+        "displayName": "user",
+        "id": "OTI5OTk2NzQzMzc3OTg2NjYyNTc",
+        "name": "user@corbado.com"
+      },
+      "challenge": "vexbUyUlgBWQRx_1kYULVpK1kBvuNHrk9muute7P_uw",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        }
+      ],
+      "authenticatorSelection": {
+        "residentKey": "required",
+        "userVerification": "preferred"
+      },
+      "attestation": "direct"
+    },
+    "notes": "Corbado table (2024): a SINGLE algorithm (ES256), which Chromium warns about (missing RS256 default). rp.id is the parent domain of www.amazon.com. Amazon get (same source): rpId amazon.com, allowCredentials with transports [hybrid, internal], UV preferred. Since Sept 2025 Amazon uses Related Origin Requests (amazon.de/.well-known/webauthn lets amazon.com use the amazon.de RP ID, bitwarden/clients#16437, #12846). user.id decodes to ASCII digits ('929...'); only the first 3 digits are sourced, length 20 assumed. Challenge is a placeholder."
+  },
+  {
+    "id": "paypal-get-all-transports",
+    "rp": "PayPal passkey sign-in",
+    "ceremony": "get",
+    "origin": "https://www.paypal.com",
+    "provenance": "captured",
+    "source": "https://www.corbado.com/blog/webauthn-server-options-overview",
+    "options": {
+      "challenge": "2Dxkdwk2AreEM9wF0k_EyxroymefWxPLTT6XMbrAs-M",
+      "rpId": "paypal.com",
+      "allowCredentials": [
+        {
+          "id": "A8ayxmVeVMfSdJgPG0uNpg",
+          "transports": [
+            "usb",
+            "nfc",
+            "ble",
+            "hybrid",
+            "internal"
+          ],
+          "type": "public-key"
+        }
+      ],
+      "userVerification": "required"
+    },
+    "notes": "Corbado table (2024): identifier-first flow with allowCredentials listing all five transports, UV required, no timeout. rpId paypal.com is the parent domain of www.paypal.com. Credential id (16 bytes) and challenge are placeholders (not shown in the source)."
+  },
+  {
+    "id": "ebay-create-alg-minus-one",
+    "rp": "eBay (ebay.de) passkey registration",
+    "ceremony": "create",
+    "origin": "https://www.ebay.de",
+    "provenance": "captured",
+    "source": "https://www.corbado.com/blog/webauthn-server-options-overview",
+    "options": {
+      "rp": {
+        "id": "ebay.de",
+        "name": "ebay.de"
+      },
+      "user": {
+        "displayName": "user@corbado.com",
+        "id": "dm9yeXl5eXl5eXl5eXl5eQ",
+        "name": "user@corbado.com"
+      },
+      "challenge": "N32PAO_T7QkYIh8_hKE3pJU0aZaV6WGgd_Pr19czBWg",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -35
+        },
+        {
+          "type": "public-key",
+          "alg": -36
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        },
+        {
+          "type": "public-key",
+          "alg": -258
+        },
+        {
+          "type": "public-key",
+          "alg": -259
+        },
+        {
+          "type": "public-key",
+          "alg": -37
+        },
+        {
+          "type": "public-key",
+          "alg": -38
+        },
+        {
+          "type": "public-key",
+          "alg": -39
+        },
+        {
+          "type": "public-key",
+          "alg": -1
+        }
+      ],
+      "authenticatorSelection": {
+        "residentKey": "discouraged",
+        "userVerification": "required"
+      },
+      "attestation": "direct"
+    },
+    "notes": "Corbado table (2024): ten entries ending with alg -1, which is not a registered signature algorithm (possibly a transcription error for -8, kept as published); residentKey 'discouraged' with UV 'required'; direct attestation. eBay get: rpId ebay.de, UV required, no allowCredentials. user.id visibly starts with ASCII 'vor'; remainder synthetic lowercase ASCII (16 bytes assumed). Challenge placeholder."
+  },
+  {
+    "id": "shopify-create",
+    "rp": "Shopify (accounts.shopify.com) passkey registration",
+    "ceremony": "create",
+    "origin": "https://accounts.shopify.com",
+    "provenance": "captured",
+    "source": "https://www.corbado.com/blog/webauthn-server-options-overview | https://accounts.shopify.com/.well-known/webauthn | https://shopify.com/.well-known/webauthn | https://github.com/keepassxreboot/keepassxc/issues/10374",
+    "options": {
+      "rp": {
+        "id": "accounts.shopify.com",
+        "name": "Shopify"
+      },
+      "user": {
+        "displayName": "user@corbado.com",
+        "id": "Mzc3MDQwMjEwMA",
+        "name": "user@corbado.com"
+      },
+      "challenge": "P0ZJAlur8ccJ4UyF8-7lvAU3jHQh6_EmkE1JKQcvzOY",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -37
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "authenticatorSelection": {
+        "residentKey": "required",
+        "userVerification": "preferred"
+      },
+      "attestation": "none"
+    },
+    "notes": "Corbado table (2024). The alg list equals webauthn-ruby's default (ES256, PS256, RS256). Related origins (fetched 2026-10-27): accounts.shopify.com/.well-known/webauthn lists https://admin.shopify.com, and shopify.com/.well-known/webauthn lists https://shop.app, https://shop.com, https://shop-staging.com -- shop.app pages request rpId shopify.com (KeePassXC 'Origin and RP ID do not match' reports, 2026). user.id decodes to ASCII digits starting '377' (10 digits assumed). Challenge placeholder."
+  },
+  {
+    "id": "adobe-create",
+    "rp": "Adobe passkey registration",
+    "ceremony": "create",
+    "origin": "https://account.adobe.com",
+    "provenance": "captured",
+    "source": "https://www.corbado.com/blog/webauthn-server-options-overview",
+    "options": {
+      "rp": {
+        "id": "adobe.com",
+        "name": "adobe.com"
+      },
+      "user": {
+        "displayName": "user@corbado.com",
+        "id": "V_8xWk5IYmdg_a1U7iaxLfndqlPgcWOE_WjtuFKt-mo",
+        "name": "user@corbado.com"
+      },
+      "challenge": "eSDPQHDbJb3kF-pAJlXlJntebanX1FOzCCvRXIB-quU",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -35
+        },
+        {
+          "type": "public-key",
+          "alg": -36
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "authenticatorSelection": {
+        "residentKey": "preferred",
+        "userVerification": "preferred"
+      },
+      "attestation": "direct",
+      "extensions": {
+        "credProps": true
+      }
+    },
+    "notes": "Corbado table (2024): ES256/ES384/ES512/RS256, residentKey preferred + credProps, direct attestation, rp.name is the domain. Adobe get: rpId adobe.com, UV preferred, no allowCredentials. Origin inferred (page not stated); user.id/challenge placeholders."
+  },
+  {
+    "id": "binance-create-rs1-first",
+    "rp": "Binance passkey registration",
+    "ceremony": "create",
+    "origin": "https://accounts.binance.com",
+    "provenance": "captured",
+    "source": "https://www.corbado.com/blog/binance-passkeys | https://www.corbado.com/blog/webauthn-server-options-overview",
+    "options": {
+      "attestation": "direct",
+      "authenticatorSelection": {
+        "residentKey": "discouraged",
+        "userVerification": "preferred"
+      },
+      "challenge": "T6l0KbewCabrlI9gS4U_stfq9la7PvopTtPhmYwelzhwqxWDQiWfz89lZ4eVwR2U_btxHuZVsVBhjSRJT9jCXg",
+      "excludeCredentials": [
+        {
+          "id": "DUak294rRW6tJDaspoKrJg",
+          "transports": [
+            "usb",
+            "nfc",
+            "ble",
+            "hybrid",
+            "internal"
+          ],
+          "type": "public-key"
+        }
+      ],
+      "extensions": {
+        "credProps": true
+      },
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -65535
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        },
+        {
+          "type": "public-key",
+          "alg": -258
+        },
+        {
+          "type": "public-key",
+          "alg": -259
+        },
+        {
+          "type": "public-key",
+          "alg": -37
+        },
+        {
+          "type": "public-key",
+          "alg": -38
+        },
+        {
+          "type": "public-key",
+          "alg": -39
+        },
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -35
+        },
+        {
+          "type": "public-key",
+          "alg": -36
+        },
+        {
+          "type": "public-key",
+          "alg": -8
+        },
+        {
+          "type": "public-key",
+          "alg": -43
+        }
+      ],
+      "rp": {
+        "id": "binance.com",
+        "name": "Binance"
+      },
+      "user": {
+        "displayName": "Chrome V122.0.0.0 (Windows)",
+        "id": "MTxwMjAxMTY",
+        "name": "user@corbado.com"
+      }
+    },
+    "notes": "Corbado's published JSON (Mar 2024). Twelve algorithms with RS1 (-65535, SHA-1) FIRST and ES256 only eighth; the list ends with -43, which is the COSE id of the SHA-384 hash, not a signature algorithm. displayName is a transformed user agent. 64-byte challenge, 16-byte exclude id and user.id are as published (user.id decodes to the 8-byte ASCII '1<p20116', apparently edited; Binance user handles are ASCII digits per Corbado's overview table). user.name replaced with Corbado's placeholder address. Origin inferred."
+  },
+  {
+    "id": "binance-get-mixed-transports",
+    "rp": "Binance passkey sign-in",
+    "ceremony": "get",
+    "origin": "https://accounts.binance.com",
+    "provenance": "captured",
+    "source": "https://www.corbado.com/blog/binance-passkeys",
+    "options": {
+      "allowCredentials": [
+        {
+          "id": "AX3lhlvxFhV75SnTpo-ccNHYvmqxxxXnL1hia1IJBZjLqlluJCZ5RsuuQGIggYZPsrVASOjmw_o8A5dBe-cPy_A",
+          "transports": [
+            "hybrid",
+            "internal"
+          ],
+          "type": "public-key"
+        },
+        {
+          "id": "SOxbg4nGoq7stZPi0AJZ4UwyywxutZ4imqWV2RiRbqoCJNwHOa_p5XHSY3WT4NmgFHFn88oSDjo5_D4J2J7CY1I",
+          "transports": [
+            "usb",
+            "nfc"
+          ],
+          "type": "public-key"
+        },
+        {
+          "id": "8wPr2AMta1bO8UoTRjndohW3mg0",
+          "transports": [
+            "hybrid",
+            "internal"
+          ],
+          "type": "public-key"
+        },
+        {
+          "id": "zDUXuuu4rNqjsdfeFE7tqu6_y-MKwY",
+          "transports": [
+            "hybrid",
+            "internal"
+          ],
+          "type": "public-key"
+        },
+        {
+          "id": "JxdfK313A9NLNc3j-8RLkFYSxhs",
+          "transports": [
+            "hybrid",
+            "internal"
+          ],
+          "type": "public-key"
+        }
+      ],
+      "challenge": "SVW1--hiFYwLyFiT97htnRecSdYVJg_zqnEL3w6vnsnz4-KE0c9Z-ytKGdT5e2hVb6kwTsODvc5M8S9pnbL9-Fw",
+      "rpId": "binance.com",
+      "userVerification": "preferred"
+    },
+    "notes": "Corbado's published JSON (Mar 2024): five allowCredentials mixing platform passkeys ([hybrid, internal]) and a security key ([usb, nfc]) with ids of 65, 64+, 22 and 20 bytes; 65-byte challenge. Three published ids were not decodable base64url (lengths 89, 29 and 29 chars, evidently edited) and were replaced with random ids of 65, 20 and 20 bytes; the other two ids and the challenge are verbatim. No timeout."
+  },
+  {
+    "id": "coinbase-create-rs1-last",
+    "rp": "Coinbase passkey registration",
+    "ceremony": "create",
+    "origin": "https://www.coinbase.com",
+    "provenance": "captured",
+    "source": "https://www.corbado.com/blog/webauthn-server-options-overview",
+    "options": {
+      "rp": {
+        "id": "coinbase.com",
+        "name": "Coinbase"
+      },
+      "user": {
+        "displayName": "user",
+        "id": "MDVmYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmI",
+        "name": "user@corbado.com"
+      },
+      "challenge": "czVHniUWiJYJOi2pt_aCcBD0MfwkTAAHuIrwIQZgGk8",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        },
+        {
+          "type": "public-key",
+          "alg": -65535
+        }
+      ],
+      "authenticatorSelection": {
+        "residentKey": "preferred",
+        "userVerification": "preferred"
+      },
+      "attestation": "direct",
+      "extensions": {
+        "credProps": true
+      }
+    },
+    "notes": "Corbado table (2024): RS1 (-65535) offered as the last fallback. user.id decodes to ASCII hex ('05f...d88'); middle synthetic, 32 hex chars assumed. Challenge placeholder; origin inferred."
+  },
+  {
+    "id": "coinbase-get-security-key-transports",
+    "rp": "Coinbase sign-in with a credential registered as a security key",
+    "ceremony": "get",
+    "origin": "https://www.coinbase.com",
+    "provenance": "captured",
+    "source": "https://github.com/keepassxreboot/keepassxc/issues/10374#issuecomment-1988153329 | https://github.com/keepassxreboot/keepassxc-browser/blob/f36985f45492f74201067ab7aa6096e7723c13d7/keepassxc-browser/content/passkeys-utils.js",
+    "options": {
+      "challenge": "LHYEpgQW01LOjvDracmx_wFiTJEvbbHzLGOzhQXd2JM",
+      "rpId": "coinbase.com",
+      "userVerification": "discouraged",
+      "allowCredentials": [
+        {
+          "id": "PCSy39x4ki_2idF5nvlCRjl_oCjhuJBmw6TOW9w8JbY",
+          "transports": [
+            "usb",
+            "nfc"
+          ],
+          "type": "public-key"
+        }
+      ]
+    },
+    "notes": "KeePassXC-Browser log (Mar 2024, values '***'). Coinbase stored a software passkey as a security key and then requested it with transports [usb, nfc] only and UV 'discouraged'; a provider that filters on transports will not offer it. Dropped the extension-added enterpriseAttestationPossible:false and its substituted 30000 timeout. Challenge and id are placeholders (32 bytes assumed)."
+  },
+  {
+    "id": "nintendo-create-no-rs256",
+    "rp": "Nintendo Account passkey registration",
+    "ceremony": "create",
+    "origin": "https://accounts.nintendo.com",
+    "provenance": "captured",
+    "source": "https://www.corbado.com/blog/webauthn-server-options-overview",
+    "options": {
+      "rp": {
+        "id": "accounts.nintendo.com",
+        "name": "Nintendo Account"
+      },
+      "user": {
+        "displayName": "user",
+        "id": "OTE4MjQ4NTEyNTUzMzk1Ng",
+        "name": "user@corbado.com"
+      },
+      "challenge": "5E9uPUi2JE8Vfr42awgQQ0Jydoi7FgS_607mtEfHXwM",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -35
+        },
+        {
+          "type": "public-key",
+          "alg": -36
+        },
+        {
+          "type": "public-key",
+          "alg": -8
+        }
+      ],
+      "authenticatorSelection": {
+        "authenticatorAttachment": "platform",
+        "residentKey": "required",
+        "userVerification": "required"
+      },
+      "attestation": "none"
+    },
+    "notes": "Corbado table (2024): ES256, ES384, ES512, EdDSA and NO RS256; platform attachment; resident key and UV required. Nintendo get: rpId accounts.nintendo.com, UV required. user.id decodes to ASCII digits ('918...'); 16 digits assumed. Challenge placeholder."
+  },
+  {
+    "id": "sony-playstation-create-string-algs",
+    "rp": "Sony / PlayStation (my.account.sony.com) passkey registration",
+    "ceremony": "create",
+    "origin": "https://my.account.sony.com",
+    "provenance": "captured",
+    "source": "https://github.com/bitwarden/clients/issues/8049#issuecomment-1986221096 | https://www.corbado.com/blog/playstation-passkeys-ps4-ps5",
+    "options": {
+      "attestation": "none",
+      "authenticatorSelection": {
+        "residentKey": "preferred",
+        "userVerification": "preferred"
+      },
+      "challenge": "AORsLdkGi-LPDC-1KreePOYxcunWO8mkoEmhSuP5KQ",
+      "excludeCredentials": [],
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": "-7"
+        },
+        {
+          "type": "public-key",
+          "alg": "-37"
+        },
+        {
+          "type": "public-key",
+          "alg": "-257"
+        }
+      ],
+      "rp": {
+        "id": "my.account.sony.com",
+        "name": "Sony"
+      },
+      "user": {
+        "displayName": " user@corbado.com",
+        "id": "lelPbtrG1kYRPJVJwnhRzJdJTJNzk7VL68MG4fOw9QI",
+        "name": "user@corbado.com"
+      }
+    },
+    "notes": "Composite of two captures of the same RP 9 days apart. Bitwarden#8049 (Mar 2024): Sony's 'credential_options' carried alg values as STRINGS ('-7','-37','-257') and they reached navigator.credentials.create() unchanged (Bitwarden's `alg === -7` filter found nothing). WebIDL converts them to longs, so browsers succeed while extensions that compare numbers fail. All other members are Corbado's published JSON (Feb 2024), which shows numeric algs: displayName has a LEADING SPACE, the challenge is 42 chars = 31 bytes (verbatim), 32-byte user.id. Email replaced with a placeholder."
+  },
+  {
+    "id": "stripe-dashboard-create",
+    "rp": "Stripe Dashboard passkey registration",
+    "ceremony": "create",
+    "origin": "https://dashboard.stripe.com",
+    "provenance": "captured",
+    "source": "https://www.corbado.com/blog/webauthn-server-options-overview",
+    "options": {
+      "rp": {
+        "id": "stripe.com",
+        "name": "Stripe Dashboard"
+      },
+      "user": {
+        "displayName": "user@corbado.com",
+        "id": "dXNyX2JiYmJiYmJiYmJiYmJi",
+        "name": "user@corbado.com"
+      },
+      "challenge": "to9VvcMDGZ5imc2VLXo1ukWjvfMGhEY_6n0ZtK8kZyA",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -37
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "authenticatorSelection": {
+        "residentKey": "required",
+        "userVerification": "required"
+      },
+      "attestation": "none"
+    },
+    "notes": "Corbado table (2024): webauthn-ruby's default alg list (ES256, PS256, RS256); resident key and UV required. Stripe get: rpId stripe.com, UV required. user.id decodes to ASCII starting 'usr' (Stripe-style object id); 'usr_' + 14 synthetic chars assumed. Origin inferred; challenge placeholder. Stripe/Adyen Secure Payment Confirmation option payloads could not be sourced (see spc-w3c-register-payment-extension)."
+  },
+  {
+    "id": "uber-create-phone-number-name",
+    "rp": "Uber passkey registration",
+    "ceremony": "create",
+    "origin": "https://auth.uber.com",
+    "provenance": "captured",
+    "source": "https://www.corbado.com/blog/webauthn-server-options-overview",
+    "options": {
+      "rp": {
+        "id": "uber.com",
+        "name": "Uber Inc."
+      },
+      "user": {
+        "displayName": "0176 xxxxxxxx",
+        "id": "AsJJ1gwzLKAozhVT3pu0rw",
+        "name": "0176 xxxxxxxx"
+      },
+      "challenge": "3DSTJWDGZn5PS77gw3ptI4NK_xrTTCooWDH91ehlJmk",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -35
+        },
+        {
+          "type": "public-key",
+          "alg": -36
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        },
+        {
+          "type": "public-key",
+          "alg": -258
+        },
+        {
+          "type": "public-key",
+          "alg": -259
+        },
+        {
+          "type": "public-key",
+          "alg": -37
+        },
+        {
+          "type": "public-key",
+          "alg": -38
+        },
+        {
+          "type": "public-key",
+          "alg": -39
+        },
+        {
+          "type": "public-key",
+          "alg": -8
+        }
+      ],
+      "authenticatorSelection": {
+        "authenticatorAttachment": "platform",
+        "residentKey": "preferred",
+        "userVerification": "required"
+      },
+      "attestation": "none"
+    },
+    "notes": "Corbado table (2024): user.name/displayName are a (masked, as published) PHONE NUMBER with a space; the 10-alg list matches go-webauthn's default order; platform attachment. Corbado showed user.id as hex '02c2...b4af'; the middle 12 bytes are synthetic (16-byte id assumed). Origin inferred; challenge placeholder."
+  },
+  {
+    "id": "apple-get-largeblob-read",
+    "rp": "Apple Account (apple.com) passkey sign-in",
+    "ceremony": "get",
+    "origin": "https://idmsa.apple.com",
+    "provenance": "captured",
+    "source": "https://www.corbado.com/blog/webauthn-server-options-overview | https://github.com/nab138/iloader/issues/728",
+    "options": {
+      "challenge": "upzbNKS0TgCDntOkvsNQrnIUVWl_Ol7gAF24Nn6mSt4",
+      "rpId": "apple.com",
+      "allowCredentials": [
+        {
+          "id": "QVbUFRZmiAZxElbC0CKP7zL_RGE",
+          "transports": [
+            "hybrid",
+            "internal"
+          ],
+          "type": "public-key"
+        }
+      ],
+      "userVerification": "preferred",
+      "extensions": {
+        "largeBlob": {
+          "read": true
+        }
+      }
+    },
+    "notes": "Corbado table (2024): Apple requests largeBlob {read:true} at sign-in, with a 20-byte credential id (verbatim; iCloud Keychain ids are 20 bytes). rpId apple.com is a parent domain of the auth host. Apple's own server payload for security-key 2FA (fsaChallenge) carries 32-byte challenges and 48-byte key handles in STANDARD base64 plus 'requirePrf'/'passkeyAutofill' flags (nab138/iloader#728). Origin inferred; challenge placeholder."
+  },
+  {
+    "id": "wikipedia-create-es256-only",
+    "rp": "Wikipedia (MediaWiki WebAuthn) security key registration",
+    "ceremony": "create",
+    "origin": "https://en.wikipedia.org",
+    "provenance": "captured",
+    "source": "https://github.com/keepassxreboot/keepassxc/issues/10374#issuecomment-1991616248",
+    "options": {
+      "attestation": "none",
+      "authenticatorSelection": {
+        "requireResidentKey": false,
+        "userVerification": "preferred"
+      },
+      "challenge": "FtS-PwFf1WGzo_r2Zk4Hd6JzZ8Ly6nLBzgQSuy_EjIs",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        }
+      ],
+      "rp": {
+        "name": "Wikipedia",
+        "id": "en.wikipedia.org"
+      },
+      "timeout": 60000,
+      "excludeCredentials": [],
+      "user": {
+        "displayName": "Example",
+        "id": "uPOCbOggOJgIzciocLrUjxtqPnrGtqVR1uk-YzKgOmA",
+        "name": "Example"
+      }
+    },
+    "notes": "KeePassXC-Browser debug output (Mar 2024): ES256 only, requireResidentKey:false without residentKey, and a per-language RP ID (en.wikipedia.org, so the credential does not work on de.wikipedia.org). timeout 60000 is within the range KeePassXC passes through unchanged, so it is the RP's value. Challenge, user.id (32 bytes assumed) and user strings were '[removed]' in the source."
+  },
+  {
+    "id": "bitwarden-vault-create-prf-empty",
+    "rp": "Bitwarden web vault (log in with passkey enrollment, 2024)",
+    "ceremony": "create",
+    "origin": "https://vault.bitwarden.com",
+    "provenance": "captured",
+    "source": "https://github.com/keepassxreboot/keepassxc/issues/10374#issuecomment-1994413004",
+    "options": {
+      "attestation": "none",
+      "authenticatorSelection": {
+        "requireResidentKey": true,
+        "userVerification": "required"
+      },
+      "challenge": "4ypkLckJbf7FxtQioFCiTQ",
+      "extensions": {
+        "prf": {}
+      },
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        },
+        {
+          "type": "public-key",
+          "alg": -37
+        },
+        {
+          "type": "public-key",
+          "alg": -35
+        },
+        {
+          "type": "public-key",
+          "alg": -258
+        },
+        {
+          "type": "public-key",
+          "alg": -38
+        },
+        {
+          "type": "public-key",
+          "alg": -36
+        },
+        {
+          "type": "public-key",
+          "alg": -259
+        },
+        {
+          "type": "public-key",
+          "alg": -39
+        },
+        {
+          "type": "public-key",
+          "alg": -8
+        }
+      ],
+      "rp": {
+        "id": "vault.bitwarden.com",
+        "name": "Bitwarden"
+      },
+      "timeout": 60000,
+      "excludeCredentials": [],
+      "user": {
+        "id": "XlB4_TkB6n-AB6Cn9Czpcg",
+        "name": "user@example.com",
+        "displayName": "User"
+      }
+    },
+    "notes": "KeePassXC-Browser debug output (Mar 2024): extensions {prf: {}} -- an EMPTY prf input (only asks whether PRF is supported; Windows Hello rejects empty PRF per Mozilla FXA-13991); fido2-net-lib 3.x alg order with EdDSA last; requireResidentKey:true with no residentKey member. Current Bitwarden clients instead send prf.eval.first = SHA-256('passwordless-login') at creation (webauthn-login-admin.service.ts). Placeholders: challenge (16 bytes, fido2-net-lib default size), user.id (16 bytes assumed: account GUID), user strings."
+  },
+  {
+    "id": "bitwarden-2fa-get-appid-uvm-extra-members",
+    "rp": "Bitwarden WebAuthn two-step login (vault.bitwarden.com connector)",
+    "ceremony": "get",
+    "origin": "https://vault.bitwarden.com",
+    "provenance": "captured",
+    "source": "https://github.com/bitwarden/clients/issues/13819",
+    "options": {
+      "challenge": "rXiPTZw6oTsn8KjGZ3PIFQ",
+      "timeout": 60000,
+      "rpId": "vault.bitwarden.com",
+      "allowCredentials": [
+        {
+          "type": "public-key",
+          "id": "hxJcfn9RlcehrgWrWx5sqT8tPpiWkrDyGKGr5fEBnx-Es4cnVwtqsm9R2tSl-N_9b3MpaWwGGBcVCFERSLP3EQ"
+        },
+        {
+          "type": "public-key",
+          "id": "_kGO6YUjlRERnecYjNQ81yKcBA43UvrmgxrDy-1dyOxaghJbQM1Ukv0qfVwWBc34olDQF2HoZ5s-RAETRJewQw"
+        },
+        {
+          "type": "public-key",
+          "id": "_H75LW-KtzT3_hDN7Ps3FCqLZVucNXhgvBfTZpgD9swz8Q5s05L-gNJNdesftNQVw2kIdlzlZuwh2xITM0kICQ"
+        }
+      ],
+      "userVerification": "discouraged",
+      "extensions": {
+        "appid": "https://vault.bitwarden.com/app-id.json",
+        "uvm": true
+      },
+      "status": "ok",
+      "errorMessage": ""
+    },
+    "notes": "Payload decoded from the mobile app's connector URL (Mar 2025). The fido2-net-lib 3.x response object leaks non-WebAuthn members 'status' and 'errorMessage' into the options; extensions combine the U2F appid (a JSON app-id URL) with the deprecated uvm extension; allowCredentials have no transports. The connector JSON was carried as standard base64 inside a URL query, where '+' broke decoding. Placeholders: challenge (16 bytes), the three REDACTED credential ids (64 bytes assumed)."
+  },
+  {
+    "id": "bitwarden-prf-unlock-get-zero-challenge",
+    "rp": "Bitwarden (unlock vault with passkey PRF)",
+    "ceremony": "get",
+    "origin": "https://vault.bitwarden.com",
+    "provenance": "documented",
+    "source": "https://github.com/bitwarden/clients/blob/main/libs/key-management-ui/src/lock/services/default-webauthn-prf-unlock.service.ts | https://github.com/bitwarden/clients/blob/main/libs/common/src/auth/services/webauthn-login/webauthn-login-prf-key.service.ts",
+    "options": {
+      "challenge": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "allowCredentials": [
+        {
+          "type": "public-key",
+          "id": "5b_tCtUpU3k0oRsaPE2T2g",
+          "transports": [
+            "internal",
+            "hybrid"
+          ]
+        }
+      ],
+      "rpId": "vault.bitwarden.com",
+      "userVerification": "preferred",
+      "extensions": {
+        "prf": {
+          "eval": {
+            "first": "l7AG39jbWXuJLJpQNDtSSLpsMoBZ74Es7DR84Nd0OQs"
+          }
+        }
+      }
+    },
+    "notes": "From Bitwarden client source (main, 2026): local PRF unlock uses challenge = new Uint8Array(32) -- ALL ZERO bytes, no server involved -- and prf.eval.first = SHA-256(UTF-8 'passwordless-login'), the same salt used for 'log in with passkey' gets/creates. rpId comes from server config; credential id/transports are placeholders."
+  },
+  {
+    "id": "agekey-create-mldsa-first",
+    "rp": "AgeKey (auth.agekey.org) age-verification passkey",
+    "ceremony": "create",
+    "origin": "https://auth.agekey.org",
+    "provenance": "captured",
+    "source": "https://github.com/keepassxreboot/keepassxc-browser/issues/2877",
+    "options": {
+      "rp": {
+        "name": "AgeKey Authenticator",
+        "id": "auth.agekey.org"
+      },
+      "user": {
+        "id": "_4vkU4Ps3gqEaCQjPG1Gs3ksBcKkCJqu8l7ibY1you7cPbFB6S8Vyq4rZpNXcV5MhcP1YowyCNnTTZN3qDnW5Q",
+        "name": "AgeKey  - 2026-02-20",
+        "displayName": "AgeKey  - 2026-02-20"
+      },
+      "challenge": "9voXCNhaGLvMjlwLBq68mRc-dU4h3VtBtK8gzStdMt7fWOJw37K3_3rWjh8zy18fC8LIN417a6ow-9kjhuhQ_A",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -50
+        },
+        {
+          "type": "public-key",
+          "alg": -49
+        },
+        {
+          "type": "public-key",
+          "alg": -48
+        },
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -8
+        },
+        {
+          "type": "public-key",
+          "alg": -36
+        },
+        {
+          "type": "public-key",
+          "alg": -37
+        },
+        {
+          "type": "public-key",
+          "alg": -38
+        },
+        {
+          "type": "public-key",
+          "alg": -39
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        },
+        {
+          "type": "public-key",
+          "alg": -258
+        },
+        {
+          "type": "public-key",
+          "alg": -259
+        }
+      ],
+      "timeout": 60000,
+      "excludeCredentials": [],
+      "authenticatorSelection": {
+        "authenticatorAttachment": "platform",
+        "residentKey": "preferred",
+        "requireResidentKey": false,
+        "userVerification": "required"
+      },
+      "attestation": "none"
+    },
+    "notes": "Unredacted server response pasted in the issue (Feb 2026). A production RP that prefers ML-DSA-87, -65, -44 (-50, -49, -48) ahead of ES256, and omits ES384 (-35). 64-byte user.id and 64-byte challenge. user.name and displayName are a date label with a DOUBLE space, not an account name. The JSON is not wrapped in publicKey."
+  },
+  {
+    "id": "passkeys-io-hanko-create",
+    "rp": "passkeys.io (Hanko demo, Hanko backend + go-webauthn)",
+    "ceremony": "create",
+    "origin": "https://www.passkeys.io",
+    "provenance": "captured",
+    "source": "https://github.com/keepassxreboot/keepassxc-browser/issues/2877#issuecomment-3934173347 | https://github.com/teamhanko/hanko/blob/backend/v3.1.0/backend/flow_api/services/webauthn.go | https://github.com/teamhanko/hanko/blob/backend/v3.1.0/backend/config/config_default.go",
+    "options": {
+      "attestation": "direct",
+      "authenticatorSelection": {
+        "requireResidentKey": true,
+        "residentKey": "required",
+        "userVerification": "preferred"
+      },
+      "challenge": "jySqb1W48xYhy0X6WcbYU4EYiVUMgj6jPRdBhEe-wNc",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -35
+        },
+        {
+          "type": "public-key",
+          "alg": -36
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        },
+        {
+          "type": "public-key",
+          "alg": -258
+        },
+        {
+          "type": "public-key",
+          "alg": -259
+        },
+        {
+          "type": "public-key",
+          "alg": -37
+        },
+        {
+          "type": "public-key",
+          "alg": -38
+        },
+        {
+          "type": "public-key",
+          "alg": -39
+        },
+        {
+          "type": "public-key",
+          "alg": -8
+        }
+      ],
+      "rp": {
+        "id": "www.passkeys.io",
+        "name": "passkeys.io"
+      },
+      "timeout": 600000,
+      "user": {
+        "displayName": "user@example.com",
+        "id": "oAFY3PJVQyetfFzdMnQdlQ",
+        "name": "user@example.com"
+      }
+    },
+    "notes": "Network response pasted in the issue (Feb 2026), nested at payload.creation_options.publicKey of a Hanko flow API response. Matches Hanko backend defaults: go-webauthn 10-alg list, timeout 600000 (10 min), attestation 'direct', requireResidentKey true, user.id = 16-byte account UUID. rp.id includes the www. label. Email replaced with a placeholder; challenge and user.id verbatim."
+  },
+  {
+    "id": "duo-universal-prompt-get-appid",
+    "rp": "Cisco Duo Universal Prompt (security key / passkey 2FA)",
+    "ceremony": "get",
+    "origin": "https://api-12caca12.duosecurity.com",
+    "provenance": "captured",
+    "source": "https://github.com/keepassxreboot/keepassxc-browser/issues/2033#issuecomment-3784793450",
+    "options": {
+      "challenge": "-KmXjn_0N4hCdptD8o8kPHyvbKoMxqTawSeapf-dwkA",
+      "extensions": {
+        "appid": "https://api-12caca12.duosecurity.com"
+      },
+      "rpId": "duosecurity.com",
+      "userVerification": "discouraged"
+    },
+    "notes": "KeePassXC-Browser debug log (Jan 2026). rpId duosecurity.com is a parent domain of the per-customer API host, while the appid is that host's ORIGIN (no JSON facets path). The log was cut before allowCredentials, so it is omitted; KeePassXC's substituted timeout (30000) was dropped. Challenge is a placeholder."
+  },
+  {
+    "id": "okta-oie-security-key-enroll-u2fparams",
+    "rp": "Okta Identity Engine (Okta Sign-In Widget) security key enrollment",
+    "ceremony": "create",
+    "origin": "https://example.okta.com",
+    "provenance": "captured",
+    "source": "https://bugzilla.mozilla.org/show_bug.cgi?id=1864504 | https://github.com/okta/okta-signin-widget/blob/okta-signin-widget-7.51.0/src/v2/view-builder/views/webauthn/EnrollWebauthnView.js",
+    "options": {
+      "rp": {
+        "name": "Example Org"
+      },
+      "user": {
+        "displayName": "Example User",
+        "name": "user@example.com",
+        "id": "1pmNek3M--UgORMt0BkftoVlSzw"
+      },
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "challenge": "MZd5l-hP6ODNFqNGPkoWDEeNUmrlMiHs23LiZe1u1Tc",
+      "attestation": "direct",
+      "authenticatorSelection": {
+        "userVerification": "preferred",
+        "requireResidentKey": false
+      },
+      "u2fParams": {
+        "appid": "https://example.okta.com"
+      },
+      "excludeCredentials": [
+        {
+          "type": "public-key",
+          "id": "kEW-V8Dw1lQpgc1yhNl4v2P1B9rrEeWDAh2um5oaIGNYudkVHrQd9PTQ7Gnjtfh8SiIPosh_kdZPNiVMTzSHCQ"
+        },
+        {
+          "type": "public-key",
+          "id": "zfheJv5MiuTpketQ9Wv9F1WVB6fXpu5K2mEPIsQoI7GdTjFvVtlIaqO2kbnVlAA52wKE49EcWj9A79tvX_Thdg"
+        }
+      ]
+    },
+    "notes": "activationData captured with the debugger (Nov 2023, values '[REDACTED]'). The widget passes _.extend({}, activationData, {challenge, user, excludeCredentials}) straight to create(), so the publicKey dictionary carries the NON-STANDARD member u2fParams {appid} and an rp WITHOUT id (defaults to the org host). excludeCredentials is rebuilt client-side from enrolled authenticators (and forced to [] when requireResidentKey is true). Placeholders: org host/appid, rp.name, user fields, challenge (32 bytes), user.id (20 bytes) and exclude ids (64 bytes)."
+  },
+  {
+    "id": "auth0-native-passkey-signup",
+    "rp": "Auth0 (database connection passkey signup challenge)",
+    "ceremony": "create",
+    "origin": "https://login.example.com",
+    "provenance": "documented",
+    "source": "https://auth0.com/docs/authenticate/database-connections/passkeys/passkey-apis",
+    "options": {
+      "challenge": "qlRYUyMT6RBICjsurceXT2SjPWfVcHOtv4BN3e7Y0Kk",
+      "timeout": 60000,
+      "rp": {
+        "id": "login.example.com",
+        "name": "login.example.com"
+      },
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -8
+        },
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "authenticatorSelection": {
+        "residentKey": "required",
+        "userVerification": "preferred"
+      },
+      "user": {
+        "id": "ng6fLfA4oVXhGlg4ZgkUju7Xq7nph0bbLJqOuP7_5YY",
+        "name": "user@example.com",
+        "displayName": "user@example.com"
+      }
+    },
+    "notes": "Auth0's documented authn_params_public_key for POST /passkey/register: EdDSA first, rp.id AND rp.name are both the custom domain, no attestation member, timeout 60000. The login challenge is just {challenge, timeout 60000, rpId, userVerification:'preferred'}. Challenge/user.id are placeholders (doc shows GENERATED_* strings)."
+  },
+  {
+    "id": "sentry-create-cbor-zero-padded-userid",
+    "rp": "Sentry (sentry.io) U2F/WebAuthn security key enrollment",
+    "ceremony": "create",
+    "origin": "https://sentry.io",
+    "provenance": "documented",
+    "source": "https://github.com/getsentry/sentry/blob/0eeffccced2d4ee97de5e7237a8f710848dc2694/src/sentry/auth/authenticators/u2f.py | https://github.com/getsentry/sentry/blob/0eeffccced2d4ee97de5e7237a8f710848dc2694/static/app/components/u2f/u2finterface.tsx | https://github.com/Yubico/python-fido2/blob/0.9.2/fido2/server.py | https://github.com/bitwarden/clients/issues/8756",
+    "options": {
+      "rp": {
+        "id": "sentry.io",
+        "name": "Sentry"
+      },
+      "user": {
+        "id": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACr76Q",
+        "name": "jdoe",
+        "displayName": "jdoe"
+      },
+      "challenge": "PDlCbABf8swmJAG3L1GDJQnsKUABXaraWttMUqzzr8A",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -8
+        },
+        {
+          "type": "public-key",
+          "alg": -37
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "authenticatorSelection": {
+        "userVerification": "discouraged"
+      }
+    },
+    "notes": "Derived from Sentry's source (python-fido2 0.9.2): user.id = user.id.to_bytes(64, 'big'), a 64-byte big-endian integer that is almost entirely ZERO bytes (example integer is synthetic); name and displayName are the username; no timeout/attestation. The server CBOR-encodes {publicKey: ...} and the page decodes it with cbor-web, so every buffer is a Uint8Array VIEW (non-zero byteOffset) into one larger ArrayBuffer: Bitwarden read the whole backing buffer and reported user.id lengths of 589 (Sentry) and 465 (Gandi) bytes. Authentication uses U2FFido2Server, which adds extensions.appid (Sentry's /auth/2fa/u2fappid.json URL)."
+  },
+  {
+    "id": "corbado-prf-demo-create-tiny-userid",
+    "rp": "Corbado WebAuthn PRF demo",
+    "ceremony": "create",
+    "origin": "https://webauthn-passkeys-prf-demo.explore.corbado.com",
+    "provenance": "captured",
+    "source": "https://github.com/bitwarden/clients/issues/19858",
+    "options": {
+      "challenge": "3h2VaIL36FkGCtNDv2rdN-RlIQiFoisycQyRE6S5qpw",
+      "rp": {
+        "name": "WebAuthn PRF Demo",
+        "id": "webauthn-passkeys-prf-demo.explore.corbado.com"
+      },
+      "user": {
+        "id": "AQIDBA",
+        "name": "created-with-prf@corbado.com",
+        "displayName": "created-with-prf@corbado.com"
+      },
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "timeout": 60000,
+      "attestation": "direct",
+      "authenticatorSelection": {
+        "residentKey": "required",
+        "userVerification": "required"
+      },
+      "extensions": {
+        "prf": {
+          "eval": {
+            "first": "Q29yYmFkbw"
+          }
+        }
+      }
+    },
+    "notes": "Registration options logged by the demo and pasted in the issue (2026). user.id is the 4-byte [1,2,3,4]; prf.eval.first at CREATE time is the 7-byte UTF-8 'Corbado' (salts need not be 32 bytes). residentKey 'required' without requireResidentKey. Values verbatim (challenge given as hex in the log)."
+  },
+  {
+    "id": "fido2-net-lib-demo-create-one-byte-userid",
+    "rp": "fido2-net-lib demo (fido2.andersaberg.com)",
+    "ceremony": "create",
+    "origin": "https://fido2.andersaberg.com",
+    "provenance": "captured",
+    "source": "https://github.com/belaviyo/keepass-macpass-helper/issues/91 | https://github.com/passwordless-lib/fido2-net-lib/blob/b141b59bc9328564144da839f9b00e16186be731/Demo/wwwroot/js/mfa.register.js",
+    "options": {
+      "attestation": "none",
+      "attestationFormats": [],
+      "authenticatorSelection": {
+        "residentKey": "discouraged",
+        "requireResidentKey": false,
+        "userVerification": "preferred"
+      },
+      "challenge": "rrT4rRaiDM3YPysbnolyJQ",
+      "excludeCredentials": [],
+      "extensions": {
+        "exts": true,
+        "credProps": true
+      },
+      "hints": [],
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -8
+        },
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        },
+        {
+          "type": "public-key",
+          "alg": -37
+        },
+        {
+          "type": "public-key",
+          "alg": -35
+        },
+        {
+          "type": "public-key",
+          "alg": -258
+        },
+        {
+          "type": "public-key",
+          "alg": -38
+        },
+        {
+          "type": "public-key",
+          "alg": -36
+        },
+        {
+          "type": "public-key",
+          "alg": -259
+        },
+        {
+          "type": "public-key",
+          "alg": -39
+        }
+      ],
+      "rp": {
+        "id": "fido2.andersaberg.com",
+        "name": "FIDO2 Test"
+      },
+      "timeout": 60000,
+      "user": {
+        "name": "1",
+        "id": "MQ",
+        "displayName": "1"
+      }
+    },
+    "notes": "Server JSON logged by the demo page (Aug 2026). user.id is base64url of the username '1' = a ONE-BYTE user handle; 16-byte challenge; legacy 'exts' extension input. The page runs PublicKeyCredential.parseCreationOptionsFromJSON(), and the logged result (Edge 149) had DROPPED exts and attestationFormats and ADDED enforceCredentialProtectionPolicy:false (IDL default) -- an intercepting extension sees that shape. The 10-alg order is not visible in the log; fido2-net-lib 4.x default order is assumed."
+  },
+  {
+    "id": "legacy-identity-server-string-alg-null-id",
+    "rp": "Internal identity server (reporter-redacted; old Keycloak-style alg serialization)",
+    "ceremony": "create",
+    "origin": "https://internal.identity.server.com",
+    "provenance": "captured",
+    "source": "https://github.com/keepassxreboot/keepassxc/issues/10374#issuecomment-2027151203 | https://github.com/keycloak/keycloak/pull/20832",
+    "options": {
+      "attestation": "none",
+      "authenticatorSelection": {
+        "userVerification": "required"
+      },
+      "challenge": "VN-GiND4p9XQ1juyVTIri97x72WUeVA1WVEBBYBUxmo",
+      "pubKeyCredParams": [
+        {
+          "alg": "-7",
+          "type": "public-key",
+          "id": null
+        },
+        {
+          "alg": "-257",
+          "type": "public-key",
+          "id": null
+        }
+      ],
+      "rp": {
+        "id": "internal.identity.server.com",
+        "name": "unique server id"
+      },
+      "excludeCredentials": [],
+      "user": {
+        "displayName": "user name",
+        "id": "khBq0zEqKettgMFh_IPYIA",
+        "name": "user email id"
+      }
+    },
+    "notes": "KeePassXC-Browser log (Mar 2024): alg values are STRINGS and each PublicKeyCredentialParameters carries an unknown 'id': null member; KeePassXC failed with 'No supported algorithms were provided' until it coerced with Number(). Keycloak before PR #20832 (June 2023) emitted string algs the same way. rp/user strings are the reporter's redactions; challenge/user.id placeholders; KeePassXC's substituted timeout (30000) dropped."
+  },
+  {
+    "id": "meta-facebook-create-related-origin",
+    "rp": "Meta / Facebook Accounts Center passkey creation",
+    "ceremony": "create",
+    "origin": "https://accountscenter.facebook.com",
+    "provenance": "captured",
+    "source": "https://github.com/bitwarden/clients/issues/17955 | https://accounts.meta.com/.well-known/webauthn | https://github.com/keepassxreboot/keepassxc-browser/issues/2808 | https://github.com/keepassxreboot/keepassxc-browser/issues/2742#issuecomment-3660146294",
+    "options": {
+      "challenge": "mYTvdD_-uq9i4aushdEQLfLwbC7w3OhyAQ8tyk8rooA",
+      "rp": {
+        "id": "accounts.meta.com",
+        "name": "Meta"
+      },
+      "user": {
+        "id": "q9TZE38Vtp3k-6splQAmigivZUWRq2DADUi923aETEk",
+        "name": "user@example.com",
+        "displayName": "Example User"
+      },
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        }
+      ]
+    },
+    "notes": "SOURCED: rp.id accounts.meta.com requested from https://accountscenter.facebook.com (Bitwarden log, Dec 2025), authorized via https://accounts.meta.com/.well-known/webauthn, which listed 10 origins in Dec 2025 and 130 origins across 4 labels (messenger, facebook, instagram, meta) on 2026-10-27 -- KeePassXC-Browser rejected lists over 60 entries. In Firefox Meta instead creates the credential inside a cross-origin iframe (accounts.meta.com/passkey/iframe/register/, allow='publickey-credentials-create *'). INFERRED: everything else. Chrome logged 'pubKeyCredParams is missing at least one of the default algorithm identifiers: ES256 and RS256' on this page, so an ES256-only list is assumed; rp.name, user and challenge are placeholders."
+  },
+  {
+    "id": "spc-w3c-register-payment-extension",
+    "rp": "Secure Payment Confirmation registration (W3C spec example, 'Fancy Bank')",
+    "ceremony": "create",
+    "origin": "https://fancybank.example",
+    "provenance": "documented",
+    "source": "https://github.com/w3c/secure-payment-confirmation/blob/main/spec.bs | https://w3c.github.io/secure-payment-confirmation/",
+    "options": {
+      "challenge": "FR9plEzo3dkUFebw1snNNNkyo18CxJkbC4Hty-4sJ7E",
+      "rp": {
+        "name": "Fancy Bank"
+      },
+      "user": {
+        "id": "MIIBkzCCATigAwIBAjCCAZMwggE4oAMCAQIwggGTMII",
+        "name": "jane.doe@email.example",
+        "displayName": "Jane Doe"
+      },
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ],
+      "authenticatorSelection": {
+        "userVerification": "required",
+        "residentKey": "required",
+        "authenticatorAttachment": "platform"
+      },
+      "timeout": 360000,
+      "extensions": {
+        "payment": {
+          "isPayment": true,
+          "browserBoundPubKeyCredParams": [
+            {
+              "type": "public-key",
+              "alg": -257
+            },
+            {
+              "type": "public-key",
+              "alg": -7
+            }
+          ]
+        }
+      }
+    },
+    "notes": "Spec example: the payment extension (isPayment) marks an SPC credential and permits creation inside a cross-origin iframe; browserBoundPubKeyCredParams is a nested alg list in the opposite order. rp has no id. The challenge's first 3 bytes [21,31,105] are from the spec, the other 29 are synthetic; user.id is the spec's 32-byte base64 constant. Real Stripe/Adyen SPC payloads could not be sourced."
+  },
+  {
+    "id": "webauthn-l3-prf-evalbycredential-test-vector",
+    "rp": "WebAuthn Level 3 spec PRF test vectors",
+    "ceremony": "get",
+    "origin": "https://example.com",
+    "provenance": "documented",
+    "source": "https://github.com/w3c/webauthn/blob/main/index.bs | https://w3c.github.io/webauthn/#test-vectors-extensions-prf-webauthn",
+    "options": {
+      "challenge": "N6Plhjo6-rH12GocPMUKO6Ms_s-bvCAs_PuMpzNyuG4",
+      "rpId": "example.com",
+      "allowCredentials": [
+        {
+          "type": "public-key",
+          "id": "e02eZ9lPp0UdkF4vGRO4-NxlhWBkL1FCmsmb1tTfRyE"
+        }
+      ],
+      "extensions": {
+        "prf": {
+          "eval": {
+            "first": "AQIDBA",
+            "second": "BQYHCA"
+          },
+          "evalByCredential": {
+            "e02eZ9lPp0UdkF4vGRO4-NxlhWBkL1FCmsmb1tTfRyE": {
+              "first": "CQoLDA"
+            }
+          }
+        }
+      }
+    },
+    "notes": "No production RP using evalByCredential was found (Mozilla accounts, Teleport and BitGo client code accept it but their servers send eval only). The prf input is the spec test vector: eval with first+second (4-byte salts) plus evalByCredential keyed by base64url credential id; the spec requires every key to match an allowCredentials id (SyntaxError otherwise) and evalByCredential needs a non-empty allowCredentials. challenge/rpId/allowCredentials wrapper is synthetic."
+  },
+  {
+    "id": "eddsa-only-developer-test-site",
+    "rp": "webauthn.philomathiclife.com (developer conformance site; not public)",
+    "ceremony": "create",
+    "origin": "https://webauthn.philomathiclife.com",
+    "provenance": "documented",
+    "source": "https://github.com/bitwarden/ios/issues/1758",
+    "mediation": "required",
+    "options": {
+      "rp": {
+        "name": "webauthn.philomathiclife.com",
+        "id": "webauthn.philomathiclife.com"
+      },
+      "user": {
+        "name": "john@example.com",
+        "id": "AAAAAAAAAAAAAAAAAAAAAA",
+        "displayName": "John"
+      },
+      "challenge": "AAAAAAAAAAAAAAAAAAAAAA",
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -8
+        }
+      ],
+      "timeout": 300000,
+      "excludeCredentials": [],
+      "authenticatorSelection": {
+        "authenticatorAttachment": "platform",
+        "residentKey": "required",
+        "requireResidentKey": true,
+        "userVerification": "required"
+      },
+      "hints": [
+        "client-device"
+      ],
+      "attestation": "none",
+      "attestationFormats": [
+        "none"
+      ],
+      "extensions": {}
+    },
+    "notes": "Options a developer used against Bitwarden iOS (Jul 2025): EdDSA-ONLY pubKeyCredParams (no -7/-257). Bitwarden and Apple Passwords still created ES256 keys, which the RP then rejects; the spec requires NotSupportedError when no listed alg is supported. Also: mediation 'required', hints, attestationFormats, empty extensions object. user.id and challenge are new Uint8Array(16) (all zeros) as written in the report. No production site without ES256 was found; Nintendo (no RS256), Amazon/Wikipedia (ES256 only) and AgeKey (ML-DSA first) are the closest real ones."
+  },
+  {
+    "id": "empty-pubkeycredparams-webauthn-json-test-page",
+    "rp": "garron.net WebAuthn user-journey test page (@github/webauthn-json author's site)",
+    "ceremony": "create",
+    "origin": "https://garron.net",
+    "provenance": "documented",
+    "source": "https://bugzilla.mozilla.org/show_bug.cgi?id=1759624 | https://garron.net/test/webauthn-user-journeys/pubKeyCredParams/empty-list/ | https://garron.net/test/webauthn-user-journeys/main.js",
+    "options": {
+      "challenge": "I_M4ve1ojdAQF5vwlu6hXXeltAlicjsn5ZGVuLElTEY",
+      "rp": {
+        "name": "Localhost, Inc."
+      },
+      "user": {
+        "id": "nOQpb9-IcYKK8Py2hzvwA3IWhJ7OQyCQ9ZHNTlUsgSg",
+        "name": "test_user",
+        "displayName": "Test User"
+      },
+      "pubKeyCredParams": [],
+      "excludeCredentials": [],
+      "authenticatorSelection": {
+        "userVerification": "discouraged"
+      }
+    },
+    "notes": "Live test page (fetched 2026-10-27) used to file Firefox bug 1759624 (2022): an EMPTY pubKeyCredParams list, which per spec means 'use ES256 and RS256' (Firefox on Windows wrongly failed). rp has no id. The page builds options with @github/webauthn-json's schema converter (32-byte random challenge and user.id), the same library github.com uses."
+  },
+  {
+    "id": "string-challenge-developer-report",
+    "rp": "Developer test integration (Firefox bug report; RP name 'test.com')",
+    "ceremony": "create",
+    "origin": "https://test.com",
+    "provenance": "documented",
+    "source": "https://bugzilla.mozilla.org/show_bug.cgi?id=1897751",
+    "options": {
+      "challenge": "testchanllengevalue",
+      "rp": {
+        "name": "test.com"
+      },
+      "user": {
+        "id": "12345-543212-12345-54321",
+        "name": "NAME",
+        "displayName": "NAME"
+      },
+      "attestation": "direct",
+      "timeout": 20000,
+      "authenticatorSelection": {
+        "authenticatorAttachment": "platform",
+        "requireResidentKey": false,
+        "userVerification": "required"
+      },
+      "pubKeyCredParams": [
+        {
+          "type": "public-key",
+          "alg": -7
+        },
+        {
+          "type": "public-key",
+          "alg": -257
+        }
+      ]
+    },
+    "notes": "Weak evidence, kept because no production capture of a string challenge was found: the options a developer pasted (May 2024) show challenge and user.id as plain STRINGS that are not base64url of anything meaningful ('testchanllengevalue' happens to be valid base64url text; '12345-543212-12345-54321' contains only base64url characters but is 24 chars). Treat as a negative/robustness fixture: a real create() would need BufferSources and throws TypeError for strings, while a JSON-driven harness would silently base64url-decode these strings -- to reproduce the bug, pass them as raw JS strings to an intercepted create(). Also shows rp without id and a 20 s timeout."
+  }
+]

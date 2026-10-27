@@ -75,6 +75,9 @@ function main() {
     'options.html',
     'options.js',
     'options.css',
+    'vault-dialog.html',
+    'vault-dialog.js',
+    'vault-dialog.css',
     '_locales/en/messages.json',
     'icons/icon16.png',
     'icons/icon48.png',
@@ -142,6 +145,25 @@ function main() {
       manifest.background?.scripts?.includes('background.js'),
       'Firefox background script mismatch'
     );
+  }
+
+  // Web pages may load only what they must. On Chrome, the ceremony dialog,
+  // which the content script frames, served from a per-session URL so a
+  // page cannot frame it by itself. On Firefox, which opens the dialog in a
+  // window of its own, only the page shim.
+  const webAccessible = (manifest.web_accessible_resources || []).flatMap(
+    (entry) => entry.resources || []
+  );
+  const expectedWebAccessible =
+    target === 'chrome' ? ['vault-dialog.html'] : ['webauthn-inject.js'];
+  assert(
+    JSON.stringify(webAccessible) === JSON.stringify(expectedWebAccessible),
+    `Unexpected web_accessible_resources: ${JSON.stringify(webAccessible)}`
+  );
+  if (target === 'chrome') {
+    for (const entry of manifest.web_accessible_resources) {
+      assert(entry.use_dynamic_url === true, 'The vault dialog must use a dynamic URL');
+    }
   }
 
   for (const size of [16, 48, 128]) {

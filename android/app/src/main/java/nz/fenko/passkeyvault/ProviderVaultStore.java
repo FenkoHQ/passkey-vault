@@ -4,10 +4,12 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -19,6 +21,9 @@ final class ProviderVaultStore {
     private static final String SYNC_CONFIG = "sync_config";
     private static final String SYNC_DEVICES = "sync_devices";
     private static final String CUSTOM_RELAYS = "custom_relays";
+    private static final Pattern BITWARDEN_GUID =
+            Pattern.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+    private static final String BITWARDEN_B64_PREFIX = "b64.";
 
     private ProviderVaultStore() {}
 
@@ -121,6 +126,19 @@ final class ProviderVaultStore {
         }
     }
 
+    /**
+     * A copy written by a build that predates per-credential backup flags must
+     * not erase them: keep the other copy's flags when the winner has none.
+     * Mirrors carryBackupFields() in src/sync/backup-flags.ts.
+     */
+    private static void carryBackupFields(JSONObject winner, JSONObject other) throws JSONException {
+        if (other == null || winner.opt("backupEligible") instanceof Boolean) { return; }
+        if (!(other.opt("backupEligible") instanceof Boolean)) { return; }
+        winner.put("backupEligible", other.getBoolean("backupEligible"));
+        winner.put("backupState", other.optBoolean("backupState", false));
+        if (other.has("backupSource")) { winner.put("backupSource", other.get("backupSource")); }
+    }
+
     private static String mergeEntries(String local, String incoming, JSONArray deletions, String kind) {
         Map<String, JSONObject> records = new LinkedHashMap<>();
         try {
@@ -136,6 +154,7 @@ final class ProviderVaultStore {
                     double currentVersion = current == null ? -1 : current.optDouble("updatedAt", current.optDouble("createdAt"));
                     JSONObject winner = current == null || version > currentVersion ||
                             (version == currentVersion && recordOrder(item).compareTo(recordOrder(current)) > 0) ? item : current;
+                    carryBackupFields(winner, winner == item ? current : item);
                     winner.put("counter", counter);
                     records.put(id, winner);
                 }
@@ -247,6 +266,28 @@ final class ProviderVaultStore {
         } catch (JSONException ignored) {
             return true;
         }
+    }
+
+    /**
+     * The credential ID a relying party knows for a stored ID. Bitwarden exports
+     * write 16-byte IDs as GUIDs and other lengths as "b64." + base64url; the web
+     * app re-keys such records when it next runs, so until then read them here.
+     * Mirrors decodeBitwardenCredentialId in src/sync/credential-ids.ts.
+     */
+    static String credentialIdFromStored(String stored) {
+        String value = stored.trim();
+        if (value.startsWith(BITWARDEN_B64_PREFIX)) {
+            String encoded = value.substring(BITWARDEN_B64_PREFIX.length())
+                    .replace('+', '-').replace('/', '_').replaceAll("=+$", "");
+            return encoded.length() == 0 ? stored : encoded;
+        }
+        if (!BITWARDEN_GUID.matcher(value).matches()) return stored;
+        String hex = value.replace("-", "");
+        byte[] bytes = new byte[hex.length() / 2];
+        for (int i = 0; i < bytes.length; i++) {
+            bytes[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+        }
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     }
 
     static String userIdFromCreateRequest(String requestJson) {
@@ -382,6 +423,11 @@ final class ProviderVaultStore {
         String publicKey;
         long createdAt;
         long counter;
+        // Per-credential WebAuthn backup flags (see src/sync/backup-flags.ts).
+        // Null on a record from before they existed: sign as this app always has.
+        Boolean backupEligible;
+        Boolean backupState;
+        String backupSource;
         JSONObject source;
 
         static PasskeyRecord fromJson(JSONObject json) {
@@ -395,7 +441,7 @@ final class ProviderVaultStore {
             JSONObject user = json.optJSONObject("user");
             PasskeyRecord record = new PasskeyRecord();
             record.id = json.optString("id", credentialId);
-            record.credentialId = credentialId;
+            record.credentialId = credentialIdFromStored(credentialId);
             record.rpId = rpId;
             record.origin = json.optString("origin", "https://" + rpId);
             record.userId = user == null ? null : user.optString("id", null);
@@ -405,6 +451,11 @@ final class ProviderVaultStore {
             record.publicKey = json.optString("publicKey", "");
             record.createdAt = json.optLong("createdAt", System.currentTimeMillis());
             record.counter = json.optLong("counter", 0);
+            if (json.opt("backupEligible") instanceof Boolean) {
+                record.backupEligible = json.optBoolean("backupEligible");
+                record.backupState = record.backupEligible && json.optBoolean("backupState", false);
+                record.backupSource = json.optString("backupSource", null);
+            }
             record.source = new JSONObject();
             try {
                 record.source = new JSONObject(json.toString());
@@ -432,6 +483,11 @@ final class ProviderVaultStore {
                 json.put("publicKey", publicKey);
                 json.put("createdAt", createdAt);
                 json.put("counter", counter);
+                if (backupEligible != null) {
+                    json.put("backupEligible", backupEligible.booleanValue());
+                    json.put("backupState", backupEligible.booleanValue() && Boolean.TRUE.equals(backupState));
+                    if (backupSource != null) json.put("backupSource", backupSource);
+                }
             } catch (JSONException ignored) {
             }
             return json;
