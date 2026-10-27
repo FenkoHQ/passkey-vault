@@ -76,6 +76,20 @@ describe('a dialog in a window', () => {
     expect(error?.name).toBe('AbortError');
     expect(vault.chrome.windows.every((window) => !window.open)).toBe(true);
   });
+
+  it('opens the window unplaced when the browser refuses its position', async () => {
+    const registration = await register();
+    // Chrome refuses bounds less than half on a visible screen, as when the
+    // requesting window sits mostly off-screen.
+    vault.chrome.refuseWindowPlacement = true;
+
+    await authenticate(registration);
+
+    expect(vault.dialogs.map((dialog) => [dialog.mode, dialog.kind])).toEqual([
+      ['window', 'create'],
+      ['window', 'get'],
+    ]);
+  });
 });
 
 describe('an autofill sign-in with the dialog in a window', () => {

@@ -532,12 +532,10 @@ export class DialogBroker {
     let placed: Pick<DialogWindow, 'windowId' | 'tabId' | 'asTab'> | undefined;
     try {
       if (chrome.windows?.create) {
-        const created = await chrome.windows.create({
+        const created = await this.createWindow(
           url,
-          type: 'popup',
-          focused: true,
-          ...(await this.windowBounds(target.tabId, target.kind)),
-        });
+          await this.windowBounds(target.tabId, target.kind)
+        );
         placed = { windowId: created?.id, tabId: created?.tabs?.[0]?.id };
       } else {
         const tab = await chrome.tabs.create({ url, active: true });
@@ -563,6 +561,27 @@ export class DialogBroker {
       return;
     }
     if (!kept.ok) void this.notify(kept.session, 'cancel');
+  }
+
+  /**
+   * Open the dialog window at `bounds`, or at the browser's own position
+   * when it refuses them. Chrome rejects bounds less than half on a visible
+   * screen ("Bounds must be at least 50% within visible screen space"),
+   * which a requesting window parked mostly off-screen or spanning
+   * monitors produces; without the retry that cancelled the ceremony.
+   */
+  private async createWindow(
+    url: string,
+    bounds: { width: number; height: number; left?: number; top?: number }
+  ): Promise<chrome.windows.Window | undefined> {
+    const options = { url, type: 'popup' as const, focused: true };
+    try {
+      return await chrome.windows.create({ ...options, ...bounds });
+    } catch (error) {
+      if (bounds.left === undefined && bounds.top === undefined) throw error;
+      console.warn('The browser refused the dialog window position; opening it unplaced', error);
+      return chrome.windows.create({ ...options, width: bounds.width, height: bounds.height });
+    }
   }
 
   /** Centre the dialog over the requesting tab's window, where the browser says where that is. */

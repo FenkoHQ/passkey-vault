@@ -266,6 +266,7 @@ export function setupVault(
       vault.dialogMode = 'frame';
       vault.launchers.length = 0;
       chrome.windows.length = 0;
+      chrome.refuseWindowPlacement = false;
       vault.user = defaultUser();
       native.reset();
       startWorker();

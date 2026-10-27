@@ -148,6 +148,8 @@ export class FakeChrome {
   contentTab = 7;
   /** Popup windows the extension opened, and the one tab each holds. */
   readonly windows: Array<{ id: number; tabId: number; url: string; open: boolean }> = [];
+  /** Refuse windows.create calls that place the window, as Chrome does off-screen. */
+  refuseWindowPlacement = false;
   /** Called when the extension opens a window, as the page in it loads. */
   onWindowOpened: (opened: { id: number; tabId: number; url: string }) => void = () => undefined;
   private nextWindowId = 500;
@@ -337,7 +339,13 @@ export class FakeChrome {
         },
       },
       windows: {
-        create: async (options: { url: string }) => {
+        create: async (options: { url: string; left?: number; top?: number }) => {
+          if (
+            self.refuseWindowPlacement &&
+            (options.left !== undefined || options.top !== undefined)
+          ) {
+            throw new Error('Bounds must be at least 50% within visible screen space.');
+          }
           // A relative URL is the extension's own, as in Chrome.
           const url = new URL(options.url, `${EXTENSION_ORIGIN}/`).href;
           const opened = { id: self.nextWindowId++, tabId: self.nextWindowId++, url };
