@@ -541,23 +541,6 @@ function showToast(
 }
 
 /**
- * Passkey data for selection
- */
-interface PasskeyOption {
-  id: string;
-  credentialId: string;
-  userName: string;
-  userDisplayName: string;
-  rpId: string;
-  createdAt: number;
-}
-
-type PasskeySelectorResult =
-  | { action: 'use'; id: string }
-  | { action: 'cancel' }
-  | { action: 'passthrough' };
-
-/**
  * Settles the dialog on screen as cancelled. Only one dialog shows at a time,
  * and a dialog that is replaced must still answer its caller and drop its
  * listeners, or that request would hang until the page gives up on it.
@@ -568,148 +551,6 @@ function replaceActiveDialog(): void {
   dismissActiveDialog?.();
   // A dialog that already settled may still be animating out.
   document.querySelector('.pkv-notification-container')?.remove();
-}
-
-/**
- * Show passkey selection modal
- * Returns one of: use selected passkey, cancel entirely, or pass through
- * to the next handler / native WebAuthn UI.
- */
-function showPasskeySelector(
-  passkeys: PasskeyOption[],
-  rpId: string,
-  signal?: AbortSignal
-): Promise<PasskeySelectorResult> {
-  return new Promise((resolve) => {
-    if (signal?.aborted) {
-      resolve({ action: 'cancel' });
-      return;
-    }
-    injectStyles();
-    replaceActiveDialog();
-
-    let selectedId = passkeys.length > 0 ? passkeys[0].id : null;
-
-    const container = document.createElement('div');
-    container.className = 'pkv-notification-container';
-
-    const passkeyListHtml =
-      passkeys.length > 0
-        ? `<div class="pkv-passkey-list">
-           ${passkeys
-             .map(
-               (pk, index) => `
-             <div class="pkv-passkey-item ${index === 0 ? 'pkv-selected' : ''}" data-id="${escapeHtml(pk.id)}">
-               <div class="pkv-passkey-avatar">
-                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                   <rect x="3" y="11" width="18" height="11" rx="2"></rect>
-                   <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-                 </svg>
-               </div>
-               <div class="pkv-passkey-info">
-                 <div class="pkv-passkey-name">${escapeHtml(pk.userDisplayName || pk.userName || t('commonUnknownUser'))}</div>
-                 <div class="pkv-passkey-detail">${escapeHtml(pk.userName || pk.id.substring(0, 16) + '...')}</div>
-               </div>
-               <div class="pkv-passkey-check">
-                 <span class="pkv-passkey-check-icon">&#10003;</span>
-               </div>
-             </div>
-           `
-             )
-             .join('')}
-        </div>`
-        : `<div class="pkv-empty-state">
-          <div class="pkv-empty-icon">&#128275;</div>
-          <div class="pkv-empty-text">${escapeHtml(t('pageNoPasskeysSite'))}</div>
-        </div>`;
-
-    container.innerHTML = `
-       <div class="pkv-card">
-         <div class="pkv-card-header">
-           <div class="pkv-card-header-content">
-              <div>
-                <span class="pkv-card-title">${escapeHtml(t('pageChoosePasskey'))}</span>
-                <div class="pkv-card-subtitle">${escapeHtml(t('pageSignInTo', { rp: rpId }))}</div>
-              </div>
-           </div>
-         </div>
-         <div class="pkv-card-body">
-           ${passkeyListHtml}
-         </div>
-         <div class="pkv-card-footer">
-           <button class="pkv-btn pkv-btn-secondary" id="pkv-cancel">${escapeHtml(t('commonCancel'))}</button>
-           <button class="pkv-btn pkv-btn-secondary" id="pkv-passthrough">${escapeHtml(t('pageUseOtherPasskey'))}</button>
-           <button class="pkv-btn pkv-btn-primary" id="pkv-continue" ${passkeys.length === 0 ? 'disabled' : ''}>
-             ${escapeHtml(t('pageContinue'))}
-           </button>
-         </div>
-       </div>
-     `;
-
-    document.body.appendChild(container);
-
-    // Handle passkey selection
-    const items = container.querySelectorAll('.pkv-passkey-item');
-    items.forEach((item) => {
-      item.addEventListener('click', (event) => {
-        if (!event.isTrusted) return;
-        items.forEach((i) => i.classList.remove('pkv-selected'));
-        item.classList.add('pkv-selected');
-        selectedId = item.getAttribute('data-id');
-      });
-    });
-
-    // Cleanup function
-    let settled = false;
-    const cleanup = (result: PasskeySelectorResult, animate = true) => {
-      if (settled) return;
-      settled = true;
-      if (dismissActiveDialog === dismiss) dismissActiveDialog = null;
-      signal?.removeEventListener('abort', dismiss);
-      document.removeEventListener('keydown', handleEscape);
-      if (!animate) {
-        container.remove();
-        resolve(result);
-        return;
-      }
-      container.style.animation = 'pkv-slideOutRight 0.2s ease-in forwards';
-      setTimeout(() => {
-        container.remove();
-        resolve(result);
-      }, 200);
-    };
-    const dismiss = () => cleanup({ action: 'cancel' }, false);
-    dismissActiveDialog = dismiss;
-    signal?.addEventListener('abort', dismiss);
-
-    // Handle cancel
-    const cancelBtn = container.querySelector('#pkv-cancel');
-    cancelBtn?.addEventListener('click', (event) => {
-      if (event.isTrusted) cleanup({ action: 'cancel' });
-    });
-
-    // Handle passthrough — let the next hook / native WebAuthn handle this
-    const passthroughBtn = container.querySelector('#pkv-passthrough');
-    passthroughBtn?.addEventListener('click', (event) => {
-      if (event.isTrusted) cleanup({ action: 'passthrough' });
-    });
-
-    // Handle continue
-    const continueBtn = container.querySelector('#pkv-continue');
-    continueBtn?.addEventListener('click', (event) => {
-      if (!event.isTrusted) return;
-      if (!selectedId) return;
-      cleanup({ action: 'use', id: selectedId });
-    });
-
-    // Handle escape key
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.isTrusted && e.key === 'Escape') {
-        cleanup({ action: 'cancel' });
-      }
-    };
-    document.addEventListener('keydown', handleEscape);
-  });
 }
 
 /**
@@ -802,11 +643,11 @@ function showPasskeyCreatedNotification(userName: string, rpId: string): void {
 }
 
 /**
- * Show passkey used notification
+ * Show passkey used notification. It names the site, not the account: the
+ * toast is in the page's DOM, where the page can read it.
  */
-function showPasskeyUsedNotification(userName: string, rpId: string): void {
-  void rpId;
-  showToast(t('pageSignedIn'), t('pageSignedInMsg', { user: userName }), 'success', 3000);
+function showPasskeyUsedNotification(rpId: string): void {
+  showToast(t('pageSignedIn'), t('pageSignedInSiteMsg', { rp: rpId }), 'success', 3000);
 }
 
 function showErrorNotification(title: string, message: string): void {
@@ -826,7 +667,6 @@ function escapeHtml(str: string): string {
 }
 
 const w = window as unknown as Record<string, unknown>;
-w.showPasskeySelector = showPasskeySelector;
 w.showPasskeyCreateConfirm = showPasskeyCreateConfirm;
 w.showPasskeyCreatedNotification = showPasskeyCreatedNotification;
 w.showPasskeyUsedNotification = showPasskeyUsedNotification;

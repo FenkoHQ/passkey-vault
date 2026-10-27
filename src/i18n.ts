@@ -532,6 +532,7 @@ const en: TranslationMap = {
   pagePasskeyCreatedMsg: 'Saved passkey for {user} on {rp}',
   pageSignedIn: 'Signed In',
   pageSignedInMsg: 'Used passkey for {user}',
+  pageSignedInSiteMsg: 'Signed in to {rp} with Fenko Vault',
   pagePasskeyError: 'Passkey Error',
   pageSignInFailed: 'Sign In Failed',
   pageChoosePasskey: 'Choose a Passkey',

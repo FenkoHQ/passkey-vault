@@ -79,6 +79,20 @@ const decide = (token: string, decision: Record<string, unknown>, sender = DIALO
 const results = () =>
   vault.chrome.sentToTabs.filter((sent) => sent.message.type === 'PASSKEY_DIALOG_RESULT');
 
+/** A real P-256 key, so a sign-in the vault allows also succeeds. */
+async function privateKey(): Promise<string> {
+  const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+    'sign',
+    'verify',
+  ]);
+  const pkcs8 = new Uint8Array(await crypto.subtle.exportKey('pkcs8', pair.privateKey));
+  return btoa(String.fromCharCode(...pkcs8));
+}
+
+beforeAll(async () => {
+  for (const passkey of PASSKEYS) passkey.privateKey = await privateKey();
+});
+
 beforeEach(async () => {
   await vault.reset({ passkeys: PASSKEYS });
   vault.goto('https://bank.example/login');
@@ -123,6 +137,74 @@ describe('opening a dialog', () => {
   });
 });
 
+describe('a web page', () => {
+  it('can no longer list a site’s passkeys', async () => {
+    const response: any = await vault.send(
+      { type: 'LIST_PASSKEYS_FOR_RP', payload: { rpId: 'bank.example' } },
+      PAGE
+    );
+
+    expect(response.success).toBe(false);
+    expect(JSON.stringify(response)).not.toContain('alice');
+  });
+
+  it('cannot sign without the dialog’s approval, even for its own site', async () => {
+    const response: any = await vault.send(
+      {
+        type: 'GET_PASSKEY',
+        requestId: 'req-1',
+        payload: { selectedPasskeyId: 'cred-alice', publicKey: getPayload().publicKey },
+      },
+      PAGE
+    );
+
+    expect(response.success).toBe(false);
+    expect(response.credential).toBeUndefined();
+  });
+
+  it('signs once with the passkey the user picked, whatever it asks for', async () => {
+    const { token } = await open('req-1');
+    await attach(token);
+    await decide(token, { action: 'use', id: 'cred-bob' });
+    const signIn = {
+      type: 'GET_PASSKEY',
+      requestId: 'req-1',
+      payload: { selectedPasskeyId: 'cred-alice', publicKey: getPayload().publicKey },
+    };
+
+    const first: any = await vault.send(signIn, PAGE);
+    const second: any = await vault.send(signIn, PAGE);
+
+    expect(first.success).toBe(true);
+    expect(first.credential.id).toBe('cred-bob');
+    expect(second.success).toBe(false);
+  });
+
+  it.each<[string, Record<string, unknown>, MessageSender]>([
+    ['another request', { requestId: 'req-2' }, PAGE],
+    ['another challenge', { publicKey: { rpId: 'bank.example', challenge: 'BBBB' } }, PAGE],
+    ['another frame', {}, { ...PAGE, frameId: 3 }],
+    ['another tab', {}, { ...PAGE, tab: { id: 8, url: 'https://bank.example/login' } }],
+  ])('cannot use an approval for %s', async (_label, change, sender) => {
+    const { token } = await open('req-1');
+    await attach(token);
+    await decide(token, { action: 'use', id: 'cred-alice' });
+    const { publicKey, requestId, ...rest } = {
+      publicKey: getPayload().publicKey,
+      requestId: 'req-1',
+      ...change,
+    } as Record<string, unknown>;
+
+    const response: any = await vault.send(
+      { type: 'GET_PASSKEY', requestId, payload: { publicKey, ...rest } },
+      sender
+    );
+
+    expect(response.success).toBe(false);
+    expect(response.credential).toBeUndefined();
+  });
+});
+
 describe('the dialog page', () => {
   it('gets the passkeys with the token, from a frame in the same tab', async () => {
     const { token } = await open();
@@ -138,7 +220,7 @@ describe('the dialog page', () => {
         { id: 'cred-bob', userName: 'bob@bank.example', userDisplayName: 'Bob' },
       ],
     });
-    expect(JSON.stringify(response)).not.toContain('PRIVATE');
+    expect(JSON.stringify(response)).not.toContain(PASSKEYS[0].privateKey);
   });
 
   it.each<[string, MessageSender]>([
@@ -185,7 +267,7 @@ describe('the dialog page', () => {
     const response: any = await vault.send({ type: 'EXPORT_VAULT' }, DIALOG);
 
     expect(response.success).not.toBe(true);
-    expect(JSON.stringify(response)).not.toContain('PRIVATE');
+    expect(JSON.stringify(response)).not.toContain(PASSKEYS[0].privateKey);
   });
 });
 

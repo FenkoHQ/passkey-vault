@@ -1,19 +1,29 @@
 /**
  * The content script sits between the page shim and the background worker.
  * These tests drive it the way the shim does (window.postMessage) with the
- * background and the in-page dialogs mocked, and read back what it posts to
- * the page.
+ * background, the vault dialog's frame and the in-page notices mocked, and
+ * read back what it posts to the page.
  */
 
 // A module, not a global script: other test files declare the same top-level
 // names, and TypeScript would reject the clash when both compile in one worker.
 export {};
 
+import { trustedKey } from './helpers/trusted-input';
+
 const PAGE_SOURCE = 'PASSKEY_VAULT_PAGE';
 const CONTENT_SOURCE = 'PASSKEY_VAULT_CONTENT';
 
+jest.mock('../src/content/vault-dialog-frame', () => ({
+  extensionOrigin: () => 'chrome-extension://test',
+  mountDialogFrame: jest.fn(),
+}));
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { mountDialogFrame } = require('../src/content/vault-dialog-frame') as {
+  mountDialogFrame: jest.Mock;
+};
+
 const ui = {
-  showPasskeySelector: jest.fn(),
   showPasskeyCreateConfirm: jest.fn(),
   showPasskeyCreatedNotification: jest.fn(),
   showPasskeyUsedNotification: jest.fn(),
@@ -63,26 +73,51 @@ function getRequest() {
   });
 }
 
+/** The content script's chrome.runtime.onMessage listeners. */
+let backgroundListeners: Array<(...args: unknown[]) => void> = [];
+
 beforeAll(async () => {
   require('../src/content/content');
+  backgroundListeners = chromeMock.runtime.onMessage.addListener.mock.calls.map(
+    ([listener]: [(...args: unknown[]) => void]) => listener
+  );
   // initialize() awaits i18n and logger set-up before it listens to the page.
   await flush();
 });
 
+/** Tell the content script how a dialog ended, as the background does. */
+function dialogResult(dialogId: string, outcome: string): void {
+  for (const listener of backgroundListeners) {
+    listener(
+      { type: 'PASSKEY_DIALOG_RESULT', dialogId, outcome },
+      { id: chromeMock.runtime.id },
+      () => undefined
+    );
+  }
+}
+
+let frame: { gone: Promise<void>; unmount: jest.Mock; remove: () => void };
+
 beforeEach(() => {
   jest.clearAllMocks();
   domainRules = {};
+  mountDialogFrame.mockImplementation(() => {
+    let remove!: () => void;
+    const gone = new Promise<void>((resolve) => (remove = resolve));
+    frame = { gone, unmount: jest.fn(), remove };
+    return frame;
+  });
 });
 
 describe('content script: sign-in with a locked vault', () => {
-  const lockedList = {
+  const locked = {
     success: false,
     error: 'Secure storage is locked. Please unlock with master password.',
     code: 'VAULT_LOCKED',
   };
 
   beforeEach(() => {
-    background = (message) => (message.type === 'LIST_PASSKEYS_FOR_RP' ? lockedList : {});
+    background = (message) => (message.type === 'PASSKEY_DIALOG_OPEN' ? locked : {});
   });
 
   it('says the vault is locked instead of "no passkey", then falls back to native', async () => {
@@ -94,7 +129,7 @@ describe('content script: sign-in with a locked vault', () => {
       'Vault Locked',
       expect.stringContaining('Unlock Fenko Vault')
     );
-    expect(ui.showPasskeySelector).not.toHaveBeenCalled();
+    expect(mountDialogFrame).not.toHaveBeenCalled();
   });
 
   it('blocks with the locked message when native fallback is turned off', async () => {
@@ -110,7 +145,7 @@ describe('content script: sign-in with a locked vault', () => {
 
   it('still treats an unlocked, empty vault as having no passkey', async () => {
     background = (message) =>
-      message.type === 'LIST_PASSKEYS_FOR_RP' ? { success: true, passkeys: [] } : {};
+      message.type === 'PASSKEY_DIALOG_OPEN' ? { success: true, status: 'none' } : {};
 
     const result = await getRequest();
 
@@ -162,8 +197,8 @@ describe('content script: page cancels an in-flight request', () => {
     posted = [];
     window.addEventListener('message', record);
     background = (message) =>
-      message.type === 'LIST_PASSKEYS_FOR_RP'
-        ? { success: true, passkeys: [{ id: 'cred-1', rpId: 'localhost', user: {} }] }
+      message.type === 'PASSKEY_DIALOG_OPEN'
+        ? { success: true, status: 'open', dialogId: 'dialog-1', token: 'token-1' }
         : { success: true, credential: { id: 'cred-1', response: {} } };
   });
 
@@ -193,20 +228,121 @@ describe('content script: page cancels an in-flight request', () => {
     expect(posted).toEqual([]);
   });
 
-  it('closes the selector and never signs', async () => {
-    const dialog = heldDialog<{ action: string; id?: string }>(ui.showPasskeySelector);
+  it('closes the picker, and a decision that arrives late never signs', async () => {
     const requestId = post('PASSKEY_GET_REQUEST', {
       publicKey: { rpId: 'localhost', challenge: 'AQID' },
     });
     await flush();
-    expect(dialog.signal()?.aborted).toBe(false);
+    expect(mountDialogFrame).toHaveBeenCalledWith({ token: 'token-1', kind: 'get', focus: true });
 
     cancel(requestId);
-    expect(dialog.signal()?.aborted).toBe(true);
-    dialog.answer({ action: 'use', id: 'cred-1' });
+    // The click that raced the cancel still loses.
+    dialogResult('dialog-1', 'approved');
     await flush();
 
+    expect(frame.unmount).toHaveBeenCalled();
+    expect(sentTypes()).toContain('PASSKEY_DIALOG_CANCEL');
     expect(sentTypes()).not.toContain('GET_PASSKEY');
     expect(posted).toEqual([]);
+  });
+});
+
+describe('content script: the vault dialog', () => {
+  let posted: any[];
+  const record = (event: MessageEvent) => {
+    if (event.data?.source === CONTENT_SOURCE) posted.push(event.data);
+  };
+  const sent = () =>
+    chromeMock.runtime.sendMessage.mock.calls.map(([message]: [Record<string, any>]) => message);
+
+  beforeEach(() => {
+    posted = [];
+    window.addEventListener('message', record);
+    background = (message) =>
+      message.type === 'PASSKEY_DIALOG_OPEN'
+        ? { success: true, status: 'open', dialogId: 'dialog-2', token: 'token-2' }
+        : { success: true, credential: { id: 'cred-1', response: {} } };
+  });
+
+  afterEach(() => window.removeEventListener('message', record));
+
+  it('signs after the dialog approves, naming no passkey itself', async () => {
+    const result = getRequest();
+    await flush();
+
+    dialogResult('dialog-2', 'approved');
+    const answer = await result;
+
+    expect(answer.success).toBe(true);
+    const getPasskey = sent().find((message) => message.type === 'GET_PASSKEY');
+    expect(getPasskey.payload).not.toHaveProperty('selectedPasskeyId');
+    expect(frame.unmount).toHaveBeenCalled();
+  });
+
+  it('ignores an outcome for a dialog it is not showing', async () => {
+    const result = getRequest();
+    await flush();
+
+    dialogResult('someone-elses-dialog', 'approved');
+    await flush();
+    expect(sent().map((message) => message.type)).not.toContain('GET_PASSKEY');
+
+    dialogResult('dialog-2', 'cancel');
+    expect((await result).name).toBe('NotAllowedError');
+  });
+
+  it('treats the page removing the frame as a cancel', async () => {
+    const result = getRequest();
+    await flush();
+
+    frame.remove();
+    const answer = await result;
+
+    expect(answer).toMatchObject({ success: false, name: 'NotAllowedError' });
+    expect(sent().map((message) => message.type)).toContain('PASSKEY_DIALOG_CANCEL');
+  });
+
+  it('cancels on Escape in the page, but not on an Escape the page made up', async () => {
+    const result = getRequest();
+    await flush();
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await flush();
+    expect(frame.unmount).not.toHaveBeenCalled();
+
+    trustedKey(document, 'Escape');
+    expect((await result).name).toBe('NotAllowedError');
+  });
+
+  it('hands the request to the browser when the user picks another passkey', async () => {
+    const result = getRequest();
+    await flush();
+
+    dialogResult('dialog-2', 'passthrough');
+
+    expect(await result).toMatchObject({ passthrough: true, error: 'User chose other passkey' });
+  });
+
+  it('replaces its dialog when the page asks again', async () => {
+    const first = getRequest();
+    await flush();
+    const firstFrame = frame;
+
+    void getRequest();
+    await flush();
+
+    expect((await first).name).toBe('NotAllowedError');
+    expect(firstFrame.unmount).toHaveBeenCalled();
+    expect(mountDialogFrame).toHaveBeenCalledTimes(2);
+  });
+
+  it('opens a conditional sign-in without taking focus from the page', async () => {
+    void request('PASSKEY_GET_REQUEST', {
+      publicKey: { rpId: 'localhost', challenge: 'AQID' },
+      mediation: 'conditional',
+    });
+    await flush();
+
+    expect(mountDialogFrame).toHaveBeenCalledWith(expect.objectContaining({ focus: false }));
   });
 });

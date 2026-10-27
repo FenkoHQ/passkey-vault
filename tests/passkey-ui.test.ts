@@ -13,23 +13,9 @@ chromeMock.storage.local.get.mockResolvedValue({});
 chromeMock.storage.onChanged = { addListener: jest.fn() };
 
 type VaultWindow = {
-  showPasskeySelector: (
-    passkeys: unknown[],
-    rpId: string,
-    signal?: AbortSignal
-  ) => Promise<{ action: string }>;
   showPasskeyCreateConfirm: (rpId: string, user: string, signal?: AbortSignal) => Promise<boolean>;
 };
 const vault = window as unknown as VaultWindow;
-
-const PASSKEY = {
-  id: 'cred-1',
-  credentialId: 'cred-1',
-  userName: 'alice',
-  userDisplayName: 'Alice',
-  rpId: 'example.com',
-  createdAt: 0,
-};
 
 const cards = () => document.querySelectorAll('.pkv-notification-container').length;
 
@@ -54,26 +40,14 @@ describe('in-page dialogs', () => {
     await expect(second).resolves.toBe(false);
   });
 
-  it('settles a replaced selector as cancelled', async () => {
-    const first = vault.showPasskeySelector([PASSKEY], 'example.com');
-    const controller = new AbortController();
-    const second = vault.showPasskeyCreateConfirm('example.com', 'bob', controller.signal);
-
-    await expect(first).resolves.toEqual({ action: 'cancel' });
-    expect(cards()).toBe(1);
-
-    controller.abort();
-    await expect(second).resolves.toBe(false);
-  });
-
   it('closes the dialog when its request is cancelled', async () => {
     const controller = new AbortController();
-    const shown = vault.showPasskeySelector([PASSKEY], 'example.com', controller.signal);
+    const shown = vault.showPasskeyCreateConfirm('example.com', 'alice', controller.signal);
     expect(cards()).toBe(1);
 
     controller.abort();
 
-    await expect(shown).resolves.toEqual({ action: 'cancel' });
+    await expect(shown).resolves.toBe(false);
     expect(cards()).toBe(0);
   });
 

@@ -206,7 +206,6 @@ const WEB_PAGE_MESSAGES = new Set([
   'CREATE_PASSKEY',
   'DISCARD_REGISTRATION',
   'GET_PASSKEY',
-  'LIST_PASSKEYS_FOR_RP',
   'VERIFY_RELATED_ORIGIN',
   'NEEDS_SITE_ICON',
   'SAVE_SITE_ICON',
@@ -283,9 +282,6 @@ async function bindToWebPage(
       }
       break;
     }
-    case 'LIST_PASSKEYS_FOR_RP':
-      await requireRpIdFor(String(payload.rpId || ''), origin);
-      break;
     case 'NEEDS_SITE_ICON':
     case 'SAVE_SITE_ICON':
       // Only a page of the site itself may supply its icon.
@@ -783,7 +779,6 @@ class BackgroundService {
       'RETRIEVE_PASSKEY',
       'LIST_PASSKEYS',
       'GET_PASSKEYS',
-      'LIST_PASSKEYS_FOR_RP',
       'DELETE_PASSKEY',
       'SET_PASSKEY_BACKUP',
       'ENCRYPT_BACKUP',
@@ -820,6 +815,12 @@ class BackgroundService {
     }
     if (upgradeBlockedTypes.has(type) && (await this.isUpgradeBackupRequired())) {
       throw new Error('Export an encrypted backup before changing this upgraded vault.');
+    }
+    // A web page signs only with the passkey the user picked in the vault's
+    // dialog, for the request they approved there.
+    if (message.requester && type === 'GET_PASSKEY') {
+      const selectedPasskeyId = await this.dialogs.consumeApproval(message, 'get');
+      message.payload = { ...message.payload, selectedPasskeyId };
     }
 
     // Serialize read/modify/write operations. Lookups and relay waits stay independent.
@@ -862,8 +863,6 @@ class BackgroundService {
       case 'LIST_PASSKEYS':
       case 'GET_PASSKEYS':
         return this.handleListPasskeys();
-      case 'LIST_PASSKEYS_FOR_RP':
-        return this.handleListPasskeysForRp(payload || {});
       case 'VERIFY_RELATED_ORIGIN':
         return this.handleVerifyRelatedOrigin(payload || {});
       case 'NEEDS_SITE_ICON':
@@ -1420,35 +1419,6 @@ class BackgroundService {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
-    }
-  }
-
-  private async handleListPasskeysForRp(payload: MessagePayload): Promise<unknown> {
-    try {
-      const rpId = payload.rpId as string | undefined;
-      if (!rpId) return { success: false, error: 'No rpId provided' };
-
-      const passkeys = await this.loadPasskeys();
-      const matchingPasskeys = passkeys.filter((p) => p.rpId === rpId);
-
-      logger.debug('Found', matchingPasskeys.length, 'passkeys for', rpId);
-      return {
-        success: true,
-        passkeys: matchingPasskeys.map((p) => ({
-          id: p.id,
-          credentialId: p.credentialId || p.id,
-          rpId: p.rpId,
-          origin: p.origin,
-          user: p.user,
-          createdAt: p.createdAt,
-        })),
-        count: matchingPasskeys.length,
-        rpId,
-      };
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      const code = error instanceof VaultLockedError ? error.code : undefined;
-      return { success: false, error: message, ...(code && { code }) };
     }
   }
 

@@ -89,6 +89,24 @@ interface PageResult {
   checks?: Record<string, unknown>;
 }
 
+/**
+ * Click in the vault's dialog: an extension page in a frame the page cannot
+ * reach (a closed shadow root), so it is found among the page's frames by
+ * its URL rather than by a selector.
+ */
+async function clickInDialog(page: Page, selector: string, timeout = 8000): Promise<void> {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    const dialog = page.frames().find((frame) => frame.url().includes('/vault-dialog.html'));
+    if (dialog) {
+      await dialog.locator(selector).click({ timeout: Math.max(deadline - Date.now(), 1) });
+      return;
+    }
+    if (Date.now() > deadline) throw new Error('No vault dialog');
+    await page.waitForTimeout(50);
+  }
+}
+
 /** Run create() in the page (or a frame), clicking the vault's dialog if one opens. */
 async function create(
   page: Page,
@@ -157,13 +175,7 @@ async function get(
     }
   }, json);
   if (options.click !== false) {
-    await Promise.race([
-      page
-        .locator('#pkv-continue')
-        .click({ timeout: 8000 })
-        .catch(() => undefined),
-      result,
-    ]);
+    await Promise.race([clickInDialog(page, '#pkv-continue').catch(() => undefined), result]);
   }
   return result;
 }
@@ -615,10 +627,11 @@ describe('cross-origin iframes follow the embedder’s permissions, as in Chrome
       },
       [ceremony, json] as [string, any]
     );
-    const dialog = page
-      .frameLocator('iframe')
-      .locator(ceremony === 'create' ? '#pkv-create' : '#pkv-continue')
-      .click({ timeout: 4000 })
+    const dialog = (
+      ceremony === 'create'
+        ? page.frameLocator('iframe').locator('#pkv-create').click({ timeout: 4000 })
+        : clickInDialog(page, '#pkv-continue', 4000)
+    )
       .then(() => 'vault dialog')
       .catch(() => 'no dialog');
     const [outcome, ui] = await Promise.all([result, dialog]);
