@@ -732,8 +732,12 @@ class BackgroundService {
       sendResponse(response);
     } catch (error: unknown) {
       const message_str = error instanceof Error ? error.message : String(error);
-      console.error('Message handling error:', error);
       const code = error instanceof VaultLockedError ? error.code : undefined;
+      // A locked vault is a normal state that the caller handles, not an
+      // error for chrome://extensions to list against the extension.
+      if (!code) {
+        console.error('Message handling error:', error);
+      }
       sendResponse({ success: false, error: message_str, ...(code && { code }) });
     }
   }

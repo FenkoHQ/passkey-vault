@@ -222,13 +222,8 @@ class ContentScript {
     if (await this.isRelatedOriginAuthorized(requested, trueOrigin)) {
       return { rpId: requested };
     }
-    logger.error(
-      'RP ID',
-      requested,
-      'not valid for origin',
-      trueOrigin,
-      '- leaving it to the browser'
-    );
+    // Not an error: the browser decides, and throws SecurityError if it must.
+    logger.debug('RP ID', requested, 'not valid for', trueOrigin, '- leaving it to the browser');
     return { foreign: true };
   }
 
