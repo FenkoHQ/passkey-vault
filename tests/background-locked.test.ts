@@ -47,6 +47,14 @@ describe('background: locked vault', () => {
     expect(response).toMatchObject({ success: false, code: 'VAULT_LOCKED' });
   });
 
+  it('does not report the locked vault as an extension error', async () => {
+    (console.error as jest.Mock).mockClear();
+
+    await send({ type: 'LIST_PASSKEYS_FOR_RP', payload: { rpId: 'example.com' } });
+
+    expect(console.error).not.toHaveBeenCalled();
+  });
+
   it('leaves unrelated failures untagged', async () => {
     const response = await send({ type: 'NO_SUCH_MESSAGE' });
 

@@ -47,7 +47,7 @@ function getWith(mutate: (options: any) => void, extra: Record<string, unknown> 
 }
 
 describe('user.id may be at most 64 bytes (§5.1.3 step 5)', () => {
-  it.each([1, 16, 64])('accepts %i bytes', async (length) => {
+  it.each([0, 1, 16, 64])('accepts %i bytes, as Chrome does', async (length) => {
     const { error } = await createWith((o) => (o.user.id = random(length)));
 
     expect(error).toBeUndefined();
@@ -228,6 +228,9 @@ describe('RP ID validation (§5.1.3 step 8, §5.1.4.1 step 8)', () => {
     ['a URL instead of a host', 'https://example.com/', 'https://example.com'],
     ['a host with a port', 'https://example.com/', 'example.com:443'],
     ['a trailing dot', 'https://example.com/', 'example.com.'],
+    ['the host in upper case', 'https://example.com/', 'EXAMPLE.COM'],
+    ['a parent in mixed case', 'https://www.example.com/', 'Example.com'],
+    ['an empty RP ID', 'https://example.com/', ''],
   ];
 
   it.each(refused)('does not create a passkey for %s', async (_label, url, rpId) => {
@@ -493,5 +496,100 @@ describe('the page shim never strands a promise', () => {
 
     expect(error ?? value).toBeDefined();
     void b64url;
+  });
+});
+
+describe('extension inputs Chrome refuses (§10.1.3, §10.1.4)', () => {
+  const id = (n: number) => new Uint8Array(16).fill(n);
+
+  it('rejects prf.evalByCredential at registration with NotSupportedError', async () => {
+    const { error } = await createWith(
+      (o) =>
+        (o.extensions = { prf: { evalByCredential: { AQEBAQEBAQEBAQEBAQEBAQ: { first: id(1) } } } })
+    );
+
+    expect(error?.name).toBe('NotSupportedError');
+    expect(vault.user.confirmCreate).not.toHaveBeenCalled();
+  });
+
+  it('rejects credProps at sign-in with NotSupportedError, without the browser prompt', async () => {
+    const { error } = await getWith((o) => (o.extensions = { credProps: true }));
+
+    expect(error?.name).toBe('NotSupportedError');
+    expect(vault.native.get).not.toHaveBeenCalled();
+  });
+
+  it('rejects evalByCredential without allowCredentials with NotSupportedError', async () => {
+    const { error } = await getWith(
+      (o) =>
+        (o.extensions = { prf: { evalByCredential: { AQEBAQEBAQEBAQEBAQEBAQ: { first: id(1) } } } })
+    );
+
+    expect(error?.name).toBe('NotSupportedError');
+  });
+
+  it.each([
+    ['empty', ''],
+    ['padded', 'AQEBAQEBAQEBAQEBAQEBAQ=='],
+    ['standard base64', 'AQEBAQEBAQEBAQEBAQEBA+/'],
+    ['not one of allowCredentials', 'AgICAgICAgICAgICAgICAg'],
+  ])('rejects an evalByCredential key that is %s with SyntaxError', async (_label, key) => {
+    const { error } = await getWith((o) => {
+      o.allowCredentials = [{ type: 'public-key', id: id(1) }];
+      o.extensions = { prf: { evalByCredential: { [key]: { first: id(9) } } } };
+    });
+
+    expect(error?.name).toBe('SyntaxError');
+  });
+
+  it('accepts an evalByCredential key for an allowed credential', async () => {
+    vault.native.get.mockResolvedValue({ id: 'browser' });
+
+    const { error } = await getWith((o) => {
+      o.allowCredentials = [{ type: 'public-key', id: id(1) }];
+      o.extensions = { prf: { evalByCredential: { AQEBAQEBAQEBAQEBAQEBAQ: { first: id(9) } } } };
+    });
+
+    expect(error).toBeUndefined();
+  });
+});
+
+describe('Permissions Policy (§5.9)', () => {
+  function policy(allowed: string[]) {
+    Object.defineProperty(document, 'featurePolicy', {
+      configurable: true,
+      value: {
+        features: () => ['publickey-credentials-get', 'publickey-credentials-create'],
+        allowsFeature: (name: string) => allowed.includes(name),
+      },
+    });
+  }
+
+  afterEach(() => {
+    delete (document as unknown as Record<string, unknown>).featurePolicy;
+  });
+
+  it('leaves a page that switched WebAuthn off to the browser, without a dialog', async () => {
+    policy([]);
+    vault.native.create.mockRejectedValue(new DOMException('not allowed', 'NotAllowedError'));
+    vault.native.get.mockRejectedValue(new DOMException('not allowed', 'NotAllowedError'));
+
+    const created = await createWith(() => undefined);
+    const got = await getWith(() => undefined);
+
+    expect(created.error?.name).toBe('NotAllowedError');
+    expect(got.error?.name).toBe('NotAllowedError');
+    expect(vault.user.confirmCreate).not.toHaveBeenCalled();
+    expect(vault.user.choosePasskey).not.toHaveBeenCalled();
+    expect(await vault.passkeys()).toEqual([]);
+  });
+
+  it('serves a page whose policy allows WebAuthn', async () => {
+    policy(['publickey-credentials-get', 'publickey-credentials-create']);
+
+    const { error } = await createWith(() => undefined);
+
+    expect(error).toBeUndefined();
+    expect(vault.user.confirmCreate).toHaveBeenCalled();
   });
 });
