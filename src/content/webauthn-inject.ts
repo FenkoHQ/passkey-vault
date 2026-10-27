@@ -8,6 +8,14 @@
 (function () {
   'use strict';
 
+  // Hook once per page, however the script arrived (a MAIN-world content
+  // script on Chrome, a script element on Firefox).
+  const INSTALLED = Symbol.for('fenko-vault.webauthn-hook');
+  if ((window as unknown as Record<symbol, unknown>)[INSTALLED]) {
+    return;
+  }
+  Object.defineProperty(window, INSTALLED, { value: true });
+
   type BufferInput =
     | string
     | ArrayBuffer

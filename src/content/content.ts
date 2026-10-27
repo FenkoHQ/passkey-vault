@@ -78,8 +78,16 @@ class ContentScript {
    */
   private postedRegistrations = new Map<string, number>();
 
+  /** Settles once i18n and logging are ready; page requests wait for it. */
+  private ready: Promise<void>;
+
   constructor() {
-    this.initialize();
+    // Both happen before the first await, at document_start: the page can
+    // call navigator.credentials as soon as its first script runs, and a
+    // request posted before anyone listens is lost, leaving the page waiting.
+    this.injectScript();
+    this.setupPageCommunication();
+    this.ready = this.initialize();
   }
 
   /**
@@ -94,14 +102,8 @@ class ContentScript {
 
       logger.info('Content script initializing');
 
-      // Inject WebAuthn interception code
-      this.injectScript();
-
       // Set up communication with background script
       this.setupBackgroundCommunication();
-
-      // Set up page communication
-      this.setupPageCommunication();
 
       // Listen for activation events
       this.setupActivationListeners();
@@ -114,9 +116,21 @@ class ContentScript {
   }
 
   /**
-   * Inject WebAuthn API interception script
+   * Inject WebAuthn API interception script.
+   *
+   * Chrome runs it as a MAIN-world content script declared in the manifest,
+   * before any page script. Firefox's manifest still supports versions that
+   * cannot do that, so there it is added as a script element, which runs a
+   * little later: a page that calls WebAuthn first thing can reach the
+   * browser's own API before the vault is in place.
    */
   private injectScript(): void {
+    const declared = chrome.runtime
+      .getManifest?.()
+      ?.content_scripts?.some((script) => (script as { world?: string }).world === 'MAIN');
+    if (declared) {
+      return;
+    }
     try {
       const script = document.createElement('script');
       script.src = chrome.runtime.getURL('webauthn-inject.js');
@@ -256,6 +270,10 @@ class ContentScript {
     const controller = new AbortController();
     this.inFlight.set(requestId, controller);
     try {
+      await this.ready;
+      if (controller.signal.aborted) {
+        return;
+      }
       await this.handlePageRequest(message, controller.signal);
     } finally {
       if (this.inFlight.get(requestId) === controller) {

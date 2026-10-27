@@ -3,6 +3,7 @@
   "name": "__MSG_appName__",
   "version": "0.12.0",
   "default_locale": "en",
+  "minimum_chrome_version": "111",
   "description": "__MSG_appDesc__",
   "permissions": [
     "storage",
@@ -27,18 +28,19 @@
       ],
       "run_at": "document_start",
       "all_frames": true
-    }
-  ],
-  "web_accessible_resources": [
+    },
     {
-      "resources": [
-        "content/webauthn-inject.js"
-      ],
       "matches": [
         "https://*/*",
         "http://localhost/*",
         "http://127.0.0.1/*"
-      ]
+      ],
+      "js": [
+        "content/webauthn-inject.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
     }
   ],
   "action": {
