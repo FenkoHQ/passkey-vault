@@ -64,6 +64,10 @@ Backup flags now belong to each passkey and sync with it to every device:
   behaviour.
 - The "Never" auto-lock option locked the vault immediately instead of
   keeping it unlocked.
+- Creating a sync chain failed about one time in 85 with "Invalid BIP39 word:
+  undefined", on the extension and on Android. The word list is two words
+  short of what a new phrase can need; the vault now picks another phrase.
+  Recovery phrases already issued are unaffected.
 
 ### Passkeys that behave like the browser's own
 
