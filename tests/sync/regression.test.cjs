@@ -597,6 +597,27 @@ test('disconnect during initialization leaves no keys or sockets behind', async 
   assert.equal(s.relayConnections.length, 0);
 });
 
+test('a restarted service worker keeps the persisted sync status', async () => {
+  const e = env(backgroundCode);
+  const listener = { addListener() {} };
+  e.context.chrome.runtime = {
+    onMessage: listener,
+    onInstalled: listener,
+    onStartup: listener,
+    onSuspend: listener,
+  };
+  e.storage.set('sync_status', { pendingChanges: 3, lastSyncSuccess: 1234, lastSyncAttempt: 5678 });
+  // A fresh worker: the first writes are startup sync and a cold-start change.
+  const owner = new e.api.BackgroundService();
+  await owner.updateSyncStatus({ connectionStatus: 'connected' });
+  await Promise.all([owner.incrementPendingChanges(), owner.incrementPendingChanges()]);
+  const stored = e.storage.get('sync_status');
+  assert.equal(stored.pendingChanges, 5);
+  assert.equal(stored.lastSyncSuccess, 1234);
+  assert.equal(stored.lastSyncAttempt, 5678);
+  assert.equal(stored.connectionStatus, 'connected');
+});
+
 test('a stalled sync request does not block a passkey lookup', async () => {
   const e = env(backgroundCode);
   const owner = Object.create(e.api.BackgroundService.prototype);

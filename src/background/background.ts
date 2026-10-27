@@ -161,6 +161,7 @@ class BackgroundService {
     return result;
   }
   private syncStatus: SyncStatus;
+  private syncStatusLoaded: Promise<void>;
 
   constructor() {
     this.isInitialized = false;
@@ -173,6 +174,8 @@ class BackgroundService {
       localPasskeyCount: 0,
       syncedPasskeyCount: 0,
     };
+    // A restarted worker must build on the persisted status, not the defaults.
+    this.syncStatusLoaded = this.loadSyncStatus();
     // MV3: listeners must be attached synchronously at SW wake, before any
     // await — otherwise the first message after a cold start is dropped with
     // "Could not establish connection. Receiving end does not exist."
@@ -1601,14 +1604,10 @@ class BackgroundService {
       const config: SyncConfig = configResult[SYNC_CONFIG_KEY];
       const passkeys = await this.loadPasskeys();
 
-      const statusResult = await chrome.storage.local.get(SYNC_STATUS_KEY);
-      const persistedStatus = statusResult[SYNC_STATUS_KEY] || {};
-
-      this.syncStatus = {
-        ...this.syncStatus,
-        ...persistedStatus,
-        localPasskeyCount: passkeys.length,
-      };
+      // The in-memory status is loaded from storage at startup and is the only
+      // writer since; re-reading storage here could undo a concurrent update.
+      await this.syncStatusLoaded;
+      this.syncStatus = { ...this.syncStatus, localPasskeyCount: passkeys.length };
 
       const isEnabled = config?.enabled || false;
 
@@ -1635,16 +1634,36 @@ class BackgroundService {
     }
   }
 
-  private async updateSyncStatus(updates: Partial<SyncStatus>): Promise<void> {
-    this.syncStatus = { ...this.syncStatus, ...updates };
+  private async loadSyncStatus(): Promise<void> {
+    try {
+      const persisted = (await chrome.storage.local.get(SYNC_STATUS_KEY))[SYNC_STATUS_KEY];
+      if (persisted && typeof persisted === 'object') {
+        this.syncStatus = { ...this.syncStatus, ...persisted };
+      }
+    } catch (error) {
+      logger.error('Failed to load sync status:', error);
+    }
+  }
+
+  /**
+   * Every write goes through here once the persisted status is loaded. Pass a
+   * function to derive the update from the current status, so concurrent
+   * read-modify-write updates (pending change counts) are not lost.
+   */
+  private async updateSyncStatus(
+    updates: Partial<SyncStatus> | ((current: SyncStatus) => Partial<SyncStatus>)
+  ): Promise<void> {
+    await this.syncStatusLoaded;
+    const changes = typeof updates === 'function' ? updates(this.syncStatus) : updates;
+    this.syncStatus = { ...this.syncStatus, ...changes };
     await chrome.storage.local.set({ [SYNC_STATUS_KEY]: this.syncStatus });
-    this.logSync('SYNC_STATUS_UPDATE', updates);
+    this.logSync('SYNC_STATUS_UPDATE', changes);
   }
 
   private async incrementPendingChanges(): Promise<void> {
-    await this.updateSyncStatus({
-      pendingChanges: this.syncStatus.pendingChanges + 1,
-    });
+    await this.updateSyncStatus((current) => ({
+      pendingChanges: current.pendingChanges + 1,
+    }));
   }
 
   private logSync(action: string, details?: Record<string, unknown>): void {
@@ -1721,11 +1740,11 @@ class BackgroundService {
       pendingChanges: this.syncStatus.pendingChanges,
     });
 
-    await this.updateSyncStatus({
+    await this.updateSyncStatus((current) => ({
       lastSyncAttempt: Date.now(),
       connectionStatus: 'connecting',
-      pendingChanges: Math.max(1, this.syncStatus.pendingChanges),
-    });
+      pendingChanges: Math.max(1, current.pendingChanges),
+    }));
 
     try {
       const passkeys = await this.loadPasskeys();
