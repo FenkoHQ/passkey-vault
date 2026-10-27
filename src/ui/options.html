@@ -179,7 +179,9 @@
               stroke-linejoin="round"
               aria-hidden="true"
             >
-              <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
+              <path
+                d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"
+              ></path>
             </svg>
             <span data-i18n="feedbackLabel">Feedback</span>
           </a>
@@ -197,7 +199,9 @@
             stroke-linecap="round"
             stroke-linejoin="round"
           >
-            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+            <path
+              d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+            ></path>
             <line x1="12" y1="9" x2="12" y2="13"></line>
             <line x1="12" y1="17" x2="12.01" y2="17"></line>
           </svg>
@@ -356,9 +360,7 @@
                 <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
                 <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
               </svg>
-              <p data-i18n="optionsSyncNotConfigured">
-                Sync is not configured yet.
-              </p>
+              <p data-i18n="optionsSyncNotConfigured">Sync is not configured yet.</p>
               <button
                 id="sync-setup-btn"
                 type="button"
@@ -450,10 +452,10 @@
             <h3 data-i18n="optionsImportCardTitle">Import from a file</h3>
             <p class="card-hint" data-i18n="optionsImportCardDesc">
               Reads Credential Exchange Format (Apple, Google, 1Password, Bitwarden, Dashlane),
-              Bitwarden, Proton Pass and Dashlane JSON, Google Authenticator export payloads,
-              Aegis, 2FAS, andOTP, FreeOTP+, Raivo, Ente Auth, LastPass Authenticator, and the MFA
-              column of the password-manager CSV exports. Shows a preview first and skips anything
-              already in your vault.
+              Bitwarden, Proton Pass and Dashlane JSON, Google Authenticator export payloads, Aegis,
+              2FAS, andOTP, FreeOTP+, Raivo, Ente Auth, LastPass Authenticator, and the MFA column
+              of the password-manager CSV exports. Shows a preview first and skips anything already
+              in your vault.
             </p>
             <div class="card-actions">
               <button id="open-import-page-btn" class="btn btn-primary btn-sm">
@@ -483,8 +485,7 @@
             <p class="card-hint" data-i18n="optionsExportCardDesc">
               Your own backup, or a format another provider can read. These files hold passkey
               private keys and MFA seeds in plaintext — delete them once the other app has imported
-              them. For a backup you intend to keep, use the password-protected export in the
-              popup.
+              them. For a backup you intend to keep, use the password-protected export in the popup.
             </p>
             <div class="card-actions">
               <select id="export-format"></select>
@@ -634,16 +635,18 @@
           </div>
 
           <div class="card">
-            <h3 data-i18n="optionsBackupTitle">Backup Flags</h3>
+            <h3 data-i18n="optionsBackupTitle">Backup Flags for New Passkeys</h3>
             <p class="card-hint" data-i18n="optionsBackupDesc">
-              Tell the site whether this credential can be synced to your other devices. Some sites
-              use it to decide whether to keep a second factor on the account.
+              What passkeys the vault creates from now on tell sites about syncing. Every passkey
+              keeps the flags it was created or imported with, because sites that record them reject
+              a change. To change one passkey, open it in the vault list.
             </p>
             <div class="setting-row">
               <div>
                 <h3 data-i18n="optionsBeTitle">Backup eligible (BE)</h3>
                 <p class="card-hint" data-i18n="optionsBeDesc">
-                  The credential is allowed to leave this device.
+                  New passkeys may be synced to your other devices. On by default, since the vault
+                  syncs.
                 </p>
               </div>
               <label class="toggle">
@@ -655,7 +658,8 @@
               <div>
                 <h3 data-i18n="optionsBsTitle">Backed up (BS)</h3>
                 <p class="card-hint" data-i18n="optionsBsDesc">
-                  The credential is synced right now. Requires backup eligible.
+                  Report new passkeys as backed up even before sync is set up. With sync on, they
+                  are reported as backed up anyway.
                 </p>
               </div>
               <label class="toggle">
@@ -716,8 +720,8 @@
               <code id="flags-preview" class="info-value mono">--</code>
             </div>
             <p class="card-hint" data-i18n="optionsFlagsScope">
-              Changes apply to the next ceremony. Credentials you already registered keep working,
-              though a site that recorded different flags at registration may notice.
+              Changes apply to the next ceremony. Backup flags only apply to passkeys created after
+              the change; existing passkeys keep their own.
             </p>
             <div class="card-actions">
               <button id="reset-flags-btn" class="btn btn-secondary btn-sm">
@@ -746,7 +750,8 @@
               </label>
             </div>
             <p class="card-hint" data-i18n="optionsConsoleLoggingDesc">
-              Log WebAuthn operations and sync events to the browser console.
+              Log WebAuthn operations and sync events to the browser console, and record the
+              WebAuthn event log below.
             </p>
           </div>
 
@@ -787,7 +792,8 @@
           <div class="card">
             <h3 data-i18n="optionsWebAuthnEventLog">WebAuthn Event Log</h3>
             <p class="card-hint" data-i18n="optionsWebAuthnEventLogDesc">
-              Recent credential create/get operations.
+              Passkeys created and used in this browser session, recorded only while console
+              logging is on. Kept in memory, never saved to disk, and cleared when the vault locks.
             </p>
             <div class="card-actions">
               <button id="refresh-webauthn-log-btn" class="btn btn-secondary btn-sm">
@@ -873,9 +879,8 @@
               </div>
             </div>
             <p class="card-hint">
-              Fenko Vault is an open-source project by Fenko (FENKO LIMITED), offered free of
-              charge to help the community. The source code, issue tracker, and release history
-              are public.
+              Fenko Vault is an open-source project by Fenko (FENKO LIMITED), offered free of charge
+              to help the community. The source code, issue tracker, and release history are public.
             </p>
             <div class="card-actions">
               <a
@@ -906,30 +911,29 @@
             <h3>Privacy policy</h3>
             <div class="about-text">
               <p>
-                <strong>Your data stays on your device.</strong> Passkeys, 2FA secrets, and
-                settings are stored in your browser's local extension storage. There is no
-                account, no server-side vault, and no copy we could access, recover, or hand
-                over.
+                <strong>Your data stays on your device.</strong> Passkeys, 2FA secrets, and settings
+                are stored in your browser's local extension storage. There is no account, no
+                server-side vault, and no copy we could access, recover, or hand over.
               </p>
               <p>
-                <strong>No tracking.</strong> The extension contains no telemetry, analytics,
-                or advertising, and makes no network requests of its own — with one exception:
-                the optional cross-device sync described below. If you never enable sync, the
-                extension never talks to the network.
+                <strong>No tracking.</strong> The extension contains no telemetry, analytics, or
+                advertising, and makes no network requests of its own — with one exception: the
+                optional cross-device sync described below. If you never enable sync, the extension
+                never talks to the network.
               </p>
               <p>
-                <strong>Sync, if you enable it.</strong> Sync exchanges your vault between your
-                own devices through Nostr relays, including one we operate
-                (<code>vaultsync.fenko.nz</code>). Everything is encrypted on your device with
-                keys derived from your seed phrase before it is sent. Relays — ours included —
-                see only ciphertext, a random chain identifier, and ordinary connection metadata
-                (IP address, timing) that any server you connect to can see. We cannot read your
-                vault, and neither can the relay operators.
+                <strong>Sync, if you enable it.</strong> Sync exchanges your vault between your own
+                devices through Nostr relays, including one we operate
+                (<code>vaultsync.fenko.nz</code>). Everything is encrypted on your device with keys
+                derived from your seed phrase before it is sent. Relays — ours included — see only
+                ciphertext, a random chain identifier, and ordinary connection metadata (IP address,
+                timing) that any server you connect to can see. We cannot read your vault, and
+                neither can the relay operators.
               </p>
               <p>
-                <strong>Deleting your data.</strong> Uninstalling the extension removes all
-                locally stored data. Sync messages on relays are replaceable events that hold
-                only ciphertext and are overwritten by newer ones.
+                <strong>Deleting your data.</strong> Uninstalling the extension removes all locally
+                stored data. Sync messages on relays are replaceable events that hold only
+                ciphertext and are overwritten by newer ones.
               </p>
             </div>
           </div>
@@ -938,19 +942,19 @@
             <h3>Terms of use — no warranty</h3>
             <div class="about-text">
               <div class="about-notice" role="note">
-                <strong>This software comes with no warranty of any kind.</strong> Fenko Vault
-                is provided "as is", without warranty of any kind, express or implied, including
-                but not limited to the warranties of merchantability, fitness for a particular
-                purpose, and noninfringement. In no event shall the authors, contributors, or
-                Fenko (FENKO LIMITED) be liable for any claim, damages, or other liability —
-                including loss of credentials or data — arising from the use of this software.
+                <strong>This software comes with no warranty of any kind.</strong> Fenko Vault is
+                provided "as is", without warranty of any kind, express or implied, including but
+                not limited to the warranties of merchantability, fitness for a particular purpose,
+                and noninfringement. In no event shall the authors, contributors, or Fenko (FENKO
+                LIMITED) be liable for any claim, damages, or other liability — including loss of
+                credentials or data — arising from the use of this software.
               </div>
               <p>
-                Fenko Vault is a community project, not a commercial credential-management
-                service. There is no guaranteed support, no service-level commitment, and no
-                paid tier. You are responsible for keeping backups of your vault and for
-                protecting your seed phrase, PIN, and exported files — if they are lost or
-                exposed, nobody (including us) can recover or revoke them for you.
+                Fenko Vault is a community project, not a commercial credential-management service.
+                There is no guaranteed support, no service-level commitment, and no paid tier. You
+                are responsible for keeping backups of your vault and for protecting your seed
+                phrase, PIN, and exported files — if they are lost or exposed, nobody (including us)
+                can recover or revoke them for you.
               </p>
               <p>
                 Use of the software is governed by the

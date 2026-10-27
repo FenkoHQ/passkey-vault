@@ -35,10 +35,14 @@ before(async () => {
   );
   mobileCode = await bundle(
     'android/web/src/app.ts',
-    '\nrender = () => {}; export { AndroidSync, getPasskeys, setPasskeys, getTotpEntries, setTotpEntries, mergeNativeSnapshot, restoreFromBin, getSyncConfig };',
+    '\nrender = () => {}; export { AndroidSync, getPasskeys, setPasskeys, getTotpEntries, setTotpEntries, mergeNativeSnapshot, restoreFromBin, getSyncConfig, issueHotpCode, renderTotpItem, state };',
     'void boot().catch'
   );
 });
+
+// Chrome's account of a message from the popup, an extension page.
+const EXTENSION_ORIGIN = 'chrome-extension://fenkovaulttest';
+const POPUP = { id: 'fenkovaulttest', url: `${EXTENSION_ORIGIN}/popup.html` };
 
 function env(code) {
   const storage = new Map();
@@ -61,6 +65,7 @@ function env(code) {
       removeItem: (k) => storage.delete(k),
     },
     chrome: {
+      runtime: { getURL: (path) => `${EXTENSION_ORIGIN}/${path}` },
       storage: {
         local: {
           get: async (k) => ({ [k]: storage.get(k) }),
@@ -484,6 +489,256 @@ test('legacy sync salts are removed from mobile stored configuration', () => {
   assert.equal('syncSalt' in JSON.parse(e.storage.get('sync_config')), false);
 });
 
+// Relays that never open on their own; the test drives open/close by hand.
+function unreachableRelays(code = browserCode) {
+  const e = env(code);
+  const sockets = [];
+  e.context.WebSocket = class {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    constructor(url) {
+      this.url = url;
+      this.readyState = 0;
+      this.closed = false;
+      sockets.push(this);
+    }
+    send() {}
+    close() {
+      this.closed = true;
+      this.readyState = 3;
+    }
+  };
+  e.storage.set('custom_relays', ['wss://a.test', 'wss://b.test']);
+  const s = e.api.SyncService ? new e.api.SyncService() : null;
+  if (s) s.log = () => {};
+  const fire = (delay) => {
+    for (const [id, t] of [...e.timers]) {
+      if (delay === undefined || t.delay === delay) {
+        e.timers.delete(id);
+        t.fn();
+      }
+    }
+  };
+  const until = async (condition) => {
+    for (let i = 0; i < 400 && !condition(); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.ok(condition(), 'timed out waiting for sync service');
+  };
+  // initialize() resolves after a 12s grace period when no relay opens.
+  const settle = async (promise) => {
+    let done = false;
+    promise.then(() => (done = true));
+    await until(() => {
+      fire(12000);
+      return done;
+    });
+  };
+  return { e, s, sockets, live: () => sockets.filter((ws) => !ws.closed), fire, until, settle };
+}
+
+test('re-initializing a disconnected chain reuses one socket per relay', async () => {
+  const { s, sockets, live, fire, settle } = unreachableRelays();
+  let derivations = 0;
+  const derive = s.deriveKeys.bind(s);
+  s.deriveKeys = (seedHash) => {
+    derivations++;
+    return derive(seedHash);
+  };
+  // Startup and a vault change race while the relays are unreachable.
+  const first = s.initialize(config.chainId, 'browser', config.seedHash);
+  const second = s.initialize(config.chainId, 'browser', config.seedHash);
+  await settle(Promise.all([first, second]));
+  assert.equal(live().length, 2, 'overlapping initialization opened a second set of sockets');
+
+  // Every relay drops and schedules a reconnect, then another vault change
+  // re-initializes while still disconnected.
+  for (const ws of live()) {
+    ws.close();
+    ws.onclose({ code: 1006, reason: '' });
+  }
+  await settle(s.initialize(config.chainId, 'browser', config.seedHash));
+  fire(5000);
+  assert.equal(live().length, 2, 'orphaned reconnect timers opened extra sockets');
+  assert.equal(derivations, 1, 'reconnecting the same chain must reuse its keys');
+
+  await s.disconnect();
+  fire();
+  assert.equal(live().length, 0, 'disconnect left sockets open');
+  assert.ok(
+    sockets.every((ws) => ws.closed),
+    'every socket must be closed'
+  );
+});
+
+test('initializing another chain closes the previous relay sockets', async () => {
+  const { s, live, settle } = unreachableRelays();
+  await settle(s.initialize(config.chainId, 'browser', config.seedHash));
+  const previous = live();
+  await settle(s.initialize('cd'.repeat(16), 'browser', 'cd'.repeat(32)));
+  assert.ok(
+    previous.every((ws) => ws.closed),
+    'sockets of the previous chain stayed open'
+  );
+  assert.equal(live().length, 2);
+});
+
+test('disconnect during initialization leaves no keys or sockets behind', async () => {
+  const { s, sockets, until, settle } = unreachableRelays();
+  let release;
+  const derive = s.deriveKeys.bind(s);
+  s.deriveKeys = (seedHash) =>
+    new Promise((resolve) => {
+      release = () => resolve(derive(seedHash));
+    });
+  const init = s.initialize(config.chainId, 'browser', config.seedHash);
+  await until(() => release);
+  await s.disconnect();
+  release();
+  await settle(init);
+  assert.equal(s.nostrPrivateKey, null);
+  assert.equal(s.encryptionKey, null);
+  assert.equal(sockets.length, 0);
+  assert.equal(s.relayConnections.length, 0);
+});
+
+test('a restarted service worker keeps the persisted sync status', async () => {
+  const e = env(backgroundCode);
+  const listener = { addListener() {} };
+  e.context.chrome.runtime = {
+    onMessage: listener,
+    onInstalled: listener,
+    onStartup: listener,
+    onSuspend: listener,
+  };
+  e.storage.set('sync_status', { pendingChanges: 3, lastSyncSuccess: 1234, lastSyncAttempt: 5678 });
+  // A fresh worker: the first writes are startup sync and a cold-start change.
+  const owner = new e.api.BackgroundService();
+  await owner.updateSyncStatus({ connectionStatus: 'connected' });
+  await Promise.all([owner.incrementPendingChanges(), owner.incrementPendingChanges()]);
+  const stored = e.storage.get('sync_status');
+  assert.equal(stored.pendingChanges, 5);
+  assert.equal(stored.lastSyncSuccess, 1234);
+  assert.equal(stored.lastSyncAttempt, 5678);
+  assert.equal(stored.connectionStatus, 'connected');
+});
+
+function syncOwner() {
+  const relays = unreachableRelays(backgroundCode);
+  const owner = Object.create(relays.e.api.BackgroundService.prototype);
+  owner.vaultJobs = Promise.resolve();
+  owner.syncStatus = { pendingChanges: 0, lastError: 'Relay rejected update' };
+  owner.loadPasskeys = async () => [passkey];
+  const { seedHash, ...publicConfig } = config;
+  relays.e.storage.set('sync_config', publicConfig);
+  return { ...relays, owner, seedHash };
+}
+
+test('sync now while offline does not report a healthy connection', async () => {
+  const { owner, e } = syncOwner();
+  // A PIN-protected vault keeps the seed out of raw storage; locked, it has none.
+  await owner.triggerSync();
+  const stored = e.storage.get('sync_status');
+  assert.notEqual(stored.connectionStatus, 'connected');
+  assert.equal(stored.lastError, 'Relay rejected update');
+  assert.equal(stored.pendingChanges, 1);
+});
+
+test('sync now reconnects a PIN-protected vault from its encrypted seed', async () => {
+  const { owner, e, live, settle, seedHash } = syncOwner();
+  owner.resolveSyncSeedHash = async (stored) => {
+    assert.equal(stored.seedHash, undefined);
+    return seedHash;
+  };
+  await settle(owner.triggerSync());
+  assert.equal(live().length, 2, 'triggerSync must start the relays with the unlocked seed');
+  assert.equal(e.storage.get('sync_status').connectionStatus, 'disconnected');
+
+  const [ws] = live();
+  ws.readyState = 1;
+  ws.onopen();
+  await owner.triggerSync();
+  const stored = e.storage.get('sync_status');
+  assert.equal(stored.connectionStatus, 'connected');
+  assert.equal(stored.lastError, null);
+});
+
+test('browser HOTP next-code advances, persists and publishes the counter', async () => {
+  const e = env(backgroundCode);
+  const owner = Object.create(e.api.BackgroundService.prototype);
+  owner.vaultJobs = Promise.resolve();
+  owner.syncStatus = { pendingChanges: 0 };
+  owner.updateSyncStatus = async (update) =>
+    Object.assign(
+      owner.syncStatus,
+      typeof update === 'function' ? update(owner.syncStatus) : update
+    );
+  let syncs = 0;
+  owner.triggerSync = async () => {
+    syncs++;
+  };
+  const secretB64 = Buffer.from('12345678901234567890').toString('base64');
+  e.storage.set('totp_entries', [
+    { id: 'h', type: 'hotp', secretB64, algorithm: 'SHA1', digits: 6, counter: 0, createdAt: 1 },
+  ]);
+  const send = (type) =>
+    new Promise((resolve) => owner.handleMessage({ type, payload: { id: 'h' } }, resolve, POPUP));
+  // Rendering a code is a pure read and must not consume a counter value.
+  assert.equal((await send('GENERATE_TOTP_CODE')).code, '755224');
+  assert.equal((await send('GENERATE_TOTP_CODE')).code, '755224');
+  assert.equal(e.storage.get('totp_entries')[0].counter, 0);
+  // RFC 4226 Appendix D, counts 0 and 1.
+  assert.equal((await send('NEXT_HOTP_CODE')).code, '755224');
+  assert.equal((await send('NEXT_HOTP_CODE')).code, '287082');
+  assert.equal(e.storage.get('totp_entries')[0].counter, 2);
+  assert.equal(syncs, 2);
+  assert.equal(owner.syncStatus.pendingChanges, 2);
+});
+
+test('mobile HOTP next-code advances and persists the counter', () => {
+  const e = env(mobileCode);
+  const secretB64 = Buffer.from('12345678901234567890').toString('base64');
+  e.api.setTotpEntries([
+    { id: 'h', type: 'hotp', secretB64, algorithm: 'SHA1', digits: 6, counter: 0, createdAt: 1 },
+  ]);
+  assert.equal(e.api.issueHotpCode('h'), '755224');
+  assert.equal(e.api.issueHotpCode('h'), '287082');
+  assert.equal(e.api.getTotpEntries()[0].counter, 2);
+  assert.equal(e.api.issueHotpCode('missing'), null);
+});
+
+test('mobile vault markup shows synced 2FA fields as text', () => {
+  // Synced entries are not normalised like imported ones, and any device
+  // holding the recovery phrase can publish them.
+  const e = env(mobileCode);
+  const hostile = '<img src=x onerror=alert(1)>';
+  const secretB64 = Buffer.from('12345678901234567890').toString('base64');
+  const hotp = {
+    id: 'h',
+    type: 'hotp',
+    secretB64,
+    algorithm: hostile,
+    digits: hostile,
+    counter: hostile,
+    createdAt: 1,
+  };
+  const totp = {
+    id: 't',
+    type: hostile,
+    secretB64,
+    algorithm: 'SHA1',
+    digits: 6,
+    period: 30,
+    createdAt: 1,
+  };
+  e.api.state.expanded.add('h');
+  e.api.state.expanded.add('t');
+  for (const markup of [e.api.renderTotpItem(hotp), e.api.renderTotpItem(totp)]) {
+    assert.doesNotMatch(markup, /<img/i);
+    assert.match(markup, /&lt;img/i);
+  }
+});
+
 test('a stalled sync request does not block a passkey lookup', async () => {
   const e = env(backgroundCode);
   const owner = Object.create(e.api.BackgroundService.prototype);
@@ -494,12 +749,16 @@ test('a stalled sync request does not block a passkey lookup', async () => {
       release = resolve;
     });
   owner.handleListPasskeys = async () => ({ success: true });
-  const sync = owner.handleMessage({ type: 'TRIGGER_SYNC' }, () => {});
+  const sync = owner.handleMessage({ type: 'TRIGGER_SYNC' }, () => {}, POPUP);
   await new Promise((resolve) => setImmediate(resolve));
   let replied = false;
-  const lookup = owner.handleMessage({ type: 'LIST_PASSKEYS' }, () => {
-    replied = true;
-  });
+  const lookup = owner.handleMessage(
+    { type: 'LIST_PASSKEYS' },
+    () => {
+      replied = true;
+    },
+    POPUP
+  );
   await new Promise((resolve) => setImmediate(resolve));
   const completed = replied;
   release();
@@ -664,6 +923,9 @@ for (const fixture of require('./merge-fixtures.json')) {
       m.mergeVault([remote], [], 'peer');
       assert.equal(e.api.getPasskeys()[0].label, fixture.winner);
       assert.equal(e.api.getPasskeys()[0].counter, fixture.counter);
+      if ('backupEligible' in fixture) {
+        assert.equal(e.api.getPasskeys()[0].backupEligible, fixture.backupEligible);
+      }
     }
   });
 }
@@ -685,4 +947,347 @@ test('acknowledging presence cannot hide an exhausted snapshot', async () => {
   await s.broadcastMessage({ type: 'announce', payload: { action: 'online' } });
   await s.handleWebSocketMessage(JSON.stringify(['OK', frames.at(-1)[1].id, true, '']), conn);
   assert.ok(s.getStatus().lastError, 'presence ACK is not a snapshot ACK');
+});
+
+const BITWARDEN_GUID = '674880d4-06ed-1af1-e8dd-2d901d9dbd3d';
+const DECODED_ID = 'Z0iA1AbtGvHo3S2QHZ29PQ';
+const bitwardenImport = { ...passkey, id: BITWARDEN_GUID, credentialId: BITWARDEN_GUID };
+
+// Arrays built inside the VM fail deepStrictEqual against this realm's arrays.
+const plain = (value) => JSON.parse(JSON.stringify(value));
+
+function quietOwner(owner) {
+  Object.assign(owner, {
+    logSync() {},
+    logWebAuthn() {},
+    incrementPendingChanges: async () => {},
+    triggerSync: async () => {},
+  });
+}
+
+test('Bitwarden credential IDs are re-keyed and the repair converges on mobile', async () => {
+  const { b, owner, mobile, m } = await clients();
+  quietOwner(owner);
+  await owner.savePasskeys([bitwardenImport]);
+  mobile.api.setPasskeys([bitwardenImport]);
+
+  await owner.repairStoredCredentialIds();
+  const snapshot = await b.s.vaultAdapter.getSnapshot();
+  assert.deepEqual(plain(snapshot.passkeys.map((entry) => [entry.id, entry.credentialId])), [
+    [DECODED_ID, DECODED_ID],
+  ]);
+  assert.deepEqual(plain(snapshot.deletions.map((entry) => entry.id)), [BITWARDEN_GUID]);
+
+  m.mergeVault(snapshot.passkeys, [], 'browser', snapshot.deletions);
+  assert.deepEqual(plain(mobile.api.getPasskeys().map((entry) => [entry.id, entry.privateKey])), [
+    [DECODED_ID, passkey.privateKey],
+  ]);
+});
+
+test('browser re-keys Bitwarden IDs a peer on an older build still sends', async () => {
+  const { owner } = await clients();
+  quietOwner(owner);
+  await owner.syncVaultAdapter().mergeRemote([bitwardenImport], [], 'old-peer', []);
+  assert.deepEqual(plain((await owner.loadPasskeys()).map((entry) => entry.id)), [DECODED_ID]);
+});
+
+test('browser refuses a new passkey only when the site excludes a stored one', async () => {
+  const { owner } = await clients();
+  quietOwner(owner);
+  await owner.savePasskeys([{ ...passkey, id: DECODED_ID, credentialId: DECODED_ID }]);
+  const register = (excludeCredentials) =>
+    owner.handleCreatePasskey({
+      publicKey: {
+        rp: { id: 'example.com', name: 'Example' },
+        rpId: 'example.com',
+        user: { id: 'dXNlcg', name: 'ali', displayName: 'Ali' },
+        challenge: 'AAAA',
+        excludeCredentials,
+      },
+      origin: 'https://example.com',
+    });
+
+  const second = await register([{ id: 'b3RoZXI', type: 'public-key' }]);
+  assert.equal(second.success, true, second.error);
+  const excluded = await register([{ id: DECODED_ID, type: 'public-key' }]);
+  assert.equal(excluded.name, 'InvalidStateError');
+  assert.equal((await owner.loadPasskeys()).length, 2);
+});
+
+// A fresh SecureStorage over the same chrome.storage is what a restarted
+// service worker sees: local and session storage survive, memory does not.
+function vaultWorker(shared) {
+  const e = env(storageCode);
+  const session = shared?.session ?? new Map();
+  const alarms = shared?.alarms ?? new Map();
+  const area = (map) => ({
+    get: async (k) => ({ [k]: map.get(k) }),
+    set: async (o) => Object.entries(o).forEach(([k, v]) => map.set(k, v)),
+    remove: async (k) => [].concat(k).forEach((key) => map.delete(key)),
+  });
+  if (shared) {
+    for (const [k, v] of shared.storage) e.storage.set(k, v);
+  }
+  e.context.chrome.storage.local = area(e.storage);
+  e.context.chrome.storage.session = area(session);
+  e.context.chrome.alarms = {
+    create: async (name, info) => alarms.set(name, info),
+    clear: async (name) => alarms.delete(name),
+  };
+  const vault = new e.api.SecureStorage();
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  const later = (ms) => {
+    const now = Date.now() + ms;
+    e.context.Date = class extends Date {
+      static now() {
+        return now;
+      }
+    };
+  };
+  return { ...e, session, alarms, vault, settle, later };
+}
+
+test('an unlock survives a service worker restart until the auto-lock timeout', async () => {
+  const first = vaultWorker();
+  first.storage.set('auto_lock_timeout', 30);
+  assert.equal(await first.vault.initialize('123456'), true);
+  await first.vault.storePasskeys([passkey]);
+  await first.settle();
+  const deadline = first.alarms.get('passext-auto-lock').when;
+  assert.ok(Math.abs(deadline - (Date.now() + 30 * 60000)) < 5000, 'alarm at the timeout');
+
+  const restarted = vaultWorker(first);
+  restarted.later(29 * 60000);
+  assert.equal(await restarted.vault.restoreSession(), true);
+  assert.equal((await restarted.vault.getPasskeys())[0].privateKey, passkey.privateKey);
+
+  await restarted.settle();
+  const extended = vaultWorker(first);
+  extended.later(31 * 60000);
+  assert.equal(await extended.vault.restoreSession(), true, 'activity after restart counts');
+
+  const expired = vaultWorker(first);
+  expired.later(60 * 60000);
+  assert.equal(await expired.vault.restoreSession(), false);
+  await expired.settle();
+  assert.equal(expired.session.size, 0, 'expired key is dropped from session storage');
+});
+
+test('the auto-lock alarm locks a live worker and reports it', async () => {
+  const w = vaultWorker();
+  assert.equal(await w.vault.initialize('123456'), true);
+  let autoLocked = 0;
+  w.vault.onAutoLock = () => autoLocked++;
+  await w.vault.lockIfIdle();
+  assert.equal(w.vault.isStorageUnlocked(), true, 'not idle yet');
+  w.later(31 * 60000);
+  await w.vault.lockIfIdle();
+  await w.settle();
+  assert.equal(w.vault.isStorageUnlocked(), false);
+  assert.equal(autoLocked, 1);
+  assert.equal(w.session.size + w.alarms.size, 0);
+});
+
+test('"Never" keeps the vault unlocked instead of locking at once', async () => {
+  const w = vaultWorker();
+  w.storage.set('auto_lock_timeout', 0);
+  await w.vault.restoreSession();
+  assert.equal(await w.vault.initialize('123456'), true);
+  await w.settle();
+  assert.equal(w.timers.size, 0, 'no lock timer');
+  assert.equal(w.alarms.size, 0, 'no lock alarm');
+  const restarted = vaultWorker(w);
+  restarted.later(7 * 24 * 3600000);
+  assert.equal(await restarted.vault.restoreSession(), true);
+});
+
+test('a session from before a PIN change no longer unlocks', async () => {
+  const w = vaultWorker();
+  assert.equal(await w.vault.initialize('111111'), true);
+  await w.settle();
+  const stale = w.session.get('passext_unlocked_session');
+  assert.equal(await w.vault.changeMasterPassword('111111', '222222'), true);
+  await w.settle();
+  assert.notEqual(w.session.get('passext_unlocked_session').key, stale.key);
+  w.session.set('passext_unlocked_session', stale);
+  assert.equal(await vaultWorker(w).vault.restoreSession(), false);
+});
+
+test('locking clears the saved session and alarm', async () => {
+  const w = vaultWorker();
+  assert.equal(await w.vault.initialize('123456'), true);
+  await w.settle();
+  assert.equal(w.session.size, 1);
+  w.vault.lock();
+  await w.settle();
+  assert.equal(w.session.size + w.alarms.size, 0);
+  assert.equal(await vaultWorker(w).vault.restoreSession(), false);
+});
+
+test('messages wait for the restored session before checking the lock', async () => {
+  const e = env(backgroundCode);
+  const owner = Object.create(e.api.BackgroundService.prototype);
+  owner.vaultJobs = Promise.resolve();
+  let restore;
+  owner.sessionRestored = new Promise((resolve) => {
+    restore = resolve;
+  });
+  owner.handleListPasskeys = async () => ({ success: true });
+  let replied = false;
+  const lookup = owner.handleMessage(
+    { type: 'LIST_PASSKEYS' },
+    () => {
+      replied = true;
+    },
+    POPUP
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(replied, false);
+  restore();
+  await lookup;
+  assert.equal(replied, true);
+});
+
+async function backgroundWithVault(records, stored = {}) {
+  const e = env(backgroundCode);
+  const values = new Map(Object.entries(stored));
+  e.context.chrome.storage.local.get = async (keys) => {
+    const out = {};
+    for (const key of Array.isArray(keys) ? keys : [keys]) {
+      if (values.has(key)) out[key] = values.get(key);
+    }
+    return out;
+  };
+  e.context.chrome.storage.local.set = async (items) =>
+    Object.entries(items).forEach(([key, value]) => values.set(key, value));
+  const owner = Object.create(e.api.BackgroundService.prototype);
+  owner.vaultJobs = Promise.resolve();
+  owner.loadPasskeys = async () => records;
+  owner.savePasskeys = async (next) => {
+    records = next;
+  };
+  owner.logWebAuthn = async () => {};
+  owner.logSync = () => {};
+  owner.incrementPendingChanges = async () => {};
+  owner.triggerSync = () => {};
+  return { owner, values, records: () => records };
+}
+
+async function vaultKey() {
+  const pair = await webcrypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+    'sign',
+    'verify',
+  ]);
+  const pkcs8 = Buffer.from(await webcrypto.subtle.exportKey('pkcs8', pair.privateKey));
+  return pkcs8.toString('base64');
+}
+
+function signedFlags(response) {
+  return Buffer.from(response.credential.response.authenticatorData, 'base64')[32];
+}
+
+const BE = 0x08;
+const BS = 0x10;
+const getRequest = {
+  origin: 'https://tele.example.com',
+  publicKey: { challenge: 'Y2hhbGxlbmdl', rpId: 'tele.example.com' },
+};
+
+test("sign-in uses the passkey's own backup flags, whatever the global toggles say", async () => {
+  const privateKey = await vaultKey();
+  const base = { rpId: 'tele.example.com', privateKey, createdAt: 1, counter: 0, user: {} };
+  const { owner } = await backgroundWithVault(
+    [
+      { ...base, id: 'synced', backupEligible: true, backupState: true, backupSource: 'imported' },
+      { ...base, id: 'bound', backupEligible: false, backupState: false, backupSource: 'created' },
+    ],
+    { webauthn_flags: { backupEligible: false, backupState: false } }
+  );
+
+  const synced = await owner.handleGetPasskey({ ...getRequest, selectedPasskeyId: 'synced' });
+  assert.equal(signedFlags(synced) & (BE | BS), BE | BS);
+  const bound = await owner.handleGetPasskey({ ...getRequest, selectedPasskeyId: 'bound' });
+  assert.equal(signedFlags(bound) & (BE | BS), 0);
+});
+
+test('a passkey without flags signs with the pre-upgrade snapshot', async () => {
+  const privateKey = await vaultKey();
+  const record = { id: 'old', rpId: 'tele.example.com', privateKey, createdAt: 1, counter: 0 };
+  const withSnapshot = await backgroundWithVault([{ ...record }], {
+    webauthn_backup_snapshot: { backupEligible: true, backupState: true },
+  });
+  const response = await withSnapshot.owner.handleGetPasskey(getRequest);
+  assert.equal(signedFlags(response) & (BE | BS), BE | BS);
+
+  const noSnapshot = await backgroundWithVault([{ ...record }]);
+  assert.equal(signedFlags(await noSnapshot.owner.handleGetPasskey(getRequest)) & (BE | BS), 0);
+});
+
+test('upgrade stamps the toggles in force onto existing passkeys, once', async () => {
+  const vault = await backgroundWithVault(
+    [{ id: 'old', rpId: 'tele.example.com', privateKey: 'k', createdAt: 1, counter: 0 }],
+    { webauthn_flags: { backupEligible: true, backupState: true } }
+  );
+  await vault.owner.stampLegacyBackupFlags();
+  assert.deepEqual(JSON.parse(JSON.stringify(vault.records()[0])), {
+    id: 'old',
+    rpId: 'tele.example.com',
+    privateKey: 'k',
+    createdAt: 1,
+    counter: 0,
+    backupEligible: true,
+    backupState: true,
+    backupSource: 'legacy',
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(vault.values.get('webauthn_backup_snapshot'))), {
+    backupEligible: true,
+    backupState: true,
+  });
+
+  // Turning the toggles off afterwards only affects new passkeys.
+  vault.values.set('webauthn_flags', { backupEligible: false, backupState: false });
+  await vault.owner.stampLegacyBackupFlags();
+  assert.equal(vault.records()[0].backupEligible, true);
+});
+
+test('a new passkey records the flags it registered with', async () => {
+  const vault = await backgroundWithVault([], {});
+  const response = await vault.owner.handleCreatePasskey({
+    origin: 'https://tele.example.com',
+    publicKey: {
+      challenge: 'Y2hhbGxlbmdl',
+      rp: { id: 'tele.example.com', name: 'Teleport' },
+      user: { id: 'dXNlcg', name: 'colin', displayName: 'colin' },
+    },
+  });
+  assert.equal(response.success, true);
+  const [created] = vault.records();
+  assert.equal(created.backupEligible, true);
+  assert.equal(created.backupState, false);
+  assert.equal(created.backupSource, 'created');
+  const attestedFlags = Buffer.from(response.credential.response.authenticatorData, 'base64')[32];
+  assert.equal(attestedFlags & (BE | BS), BE);
+});
+
+test('the per-passkey switch sets both flags, marks the choice and bumps the revision', async () => {
+  const vault = await backgroundWithVault([
+    {
+      id: 'p',
+      rpId: 'tele.example.com',
+      privateKey: 'k',
+      createdAt: 1,
+      updatedAt: 5,
+      counter: 0,
+      backupEligible: false,
+      backupState: false,
+      backupSource: 'legacy',
+    },
+  ]);
+  const result = await vault.owner.handleSetPasskeyBackup({ credentialId: 'p', synced: true });
+  assert.equal(result.success, true);
+  const [record] = vault.records();
+  assert.equal(record.backupEligible, true);
+  assert.equal(record.backupState, true);
+  assert.equal(record.backupSource, 'manual');
+  assert.ok(record.updatedAt > 5);
 });

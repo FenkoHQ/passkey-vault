@@ -22,6 +22,7 @@
     "zip:all": "npm run build:all && rm -f passkey-vault-chrome.zip passkey-vault-firefox.zip && cd dist && zip -r ../passkey-vault-chrome.zip . && cd ../dist-firefox && zip -r ../passkey-vault-firefox.zip .",
     "clean": "rm -rf dist dist-firefox",
     "version:bump": "node scripts/bump-version.js",
+    "update:psl": "node scripts/update-public-suffix-list.js",
     "capture": "node scripts/capture-assets.js all",
     "capture:screenshots": "node scripts/capture-assets.js screenshots",
     "capture:video": "node scripts/capture-assets.js video",
@@ -29,6 +30,7 @@
     "capture:promo": "node scripts/capture-assets.js promo",
     "test:sync": "node tests/sync/regression.test.cjs",
     "test:e2e": "npm run build:chrome && node tests/e2e/popup.test.cjs",
+    "test:e2e:webauthn": "npm run build:chrome && jest --config jest.e2e.config.js",
     "typecheck:mobile": "tsc --noEmit -p tsconfig.mobile.json"
   },
   "keywords": [
@@ -48,6 +50,7 @@
     "url": ""
   },
   "devDependencies": {
+    "@simplewebauthn/server": "^14.0.3",
     "@types/chrome": "^0.0.254",
     "@types/jest": "^29.5.8",
     "@types/node": "^20.9.0",
@@ -62,14 +65,19 @@
     "playwright": "^1.57.0",
     "prettier": "^3.1.0",
     "ts-jest": "^29.1.1",
-    "typescript": "^5.2.2"
+    "typescript": "^5.2.2",
+    "web-ext": "10.8.0"
   },
   "dependencies": {
     "@noble/ciphers": "^0.5.1",
     "@noble/hashes": "^1.3.3",
     "@noble/secp256k1": "^3.0.0",
-    "cbor-x": "^1.6.0",
     "jsqr": "^1.4.0"
+  },
+  "overrides": {
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "9.0.9"
+    }
   },
   "jest": {
     "preset": "ts-jest",

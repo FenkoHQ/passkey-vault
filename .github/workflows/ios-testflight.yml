@@ -28,6 +28,9 @@ jobs:
   build:
     name: Archive and upload to TestFlight
     runs-on: macos-15
+    # Uploads to TestFlight: behind the same reviewable environment as the
+    # store releases in release.yml.
+    environment: release
     env:
       DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
 
