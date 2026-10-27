@@ -132,6 +132,12 @@ function main() {
       `Firefox manifest should not set version_name (got ${manifest.version_name})`
     );
   }
+  // Only a Chrome development build carries the development key; the stores
+  // keep their own (build-extension.js).
+  assert(
+    manifest.key === undefined || (target === 'chrome' && !release),
+    `${release ? 'A release' : 'A Firefox'} package must not carry a manifest key`
+  );
   assert(manifest.name === '__MSG_appName__', `Unexpected manifest name: ${manifest.name}`);
   assert(
     enMessages.appName?.message === 'Fenko Vault | Passkey and MFA Manager',
