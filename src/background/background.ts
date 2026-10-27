@@ -55,6 +55,7 @@ import { verifyRelatedOrigin } from './related-origins';
 import { serializeClientData } from './client-data';
 import { acceptsEs256 } from '../utils/algorithms';
 import { isRpIdValidForHost } from '../utils/rp-id';
+import { hasStringId, wellFormedRecords } from '../utils/records';
 import { needsSiteIcon, saveSiteIcon, clearSiteIcons } from '../site-icons';
 import {
   selectPrfEval,
@@ -352,13 +353,13 @@ class BackgroundService {
 
   private async loadPasskeys(): Promise<StoredPasskey[]> {
     if (this.useSecureStorage) {
-      return (await secureStorage.getPasskeys()) as unknown as StoredPasskey[];
+      return wellFormedRecords((await secureStorage.getPasskeys()) as unknown as StoredPasskey[]);
     }
     if (await secureStorage.isSetup()) {
       throw new VaultLockedError();
     }
     const result = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
-    return result[PASSKEY_STORAGE_KEY] || [];
+    return wellFormedRecords(result[PASSKEY_STORAGE_KEY] || []);
   }
 
   private async savePasskeys(passkeys: StoredPasskey[]): Promise<void> {
@@ -681,6 +682,10 @@ class BackgroundService {
       mergeRemote: (remotePasskeys, remoteTotpEntries, sourceDeviceId, remoteDeletions = []) =>
         this.withVault(async () => {
           void sourceDeviceId;
+          // A peer on another build or platform can send a damaged record;
+          // it must not stop the rest of its snapshot from merging.
+          remotePasskeys = wellFormedRecords(remotePasskeys).filter(hasStringId);
+          remoteTotpEntries = wellFormedRecords(remoteTotpEntries).filter(hasStringId);
           const deletions = mergeDeletions(await this.loadDeletions(), remoteDeletions);
           // Persist deletion records first, so interrupted merges cannot resurrect entries.
           await chrome.storage.local.set({ [SYNC_DELETIONS_KEY]: deletions });
