@@ -21,6 +21,8 @@ export interface CredentialParts {
   signature?: Uint8Array;
   userHandle?: Uint8Array | null;
   extensionResults?: Record<string, unknown>;
+  /** The same results as toJSON() reports them (buffers as base64url). */
+  extensionResultsJSON?: Record<string, unknown>;
 }
 
 function buffer(bytes: Uint8Array): ArrayBuffer {
@@ -89,7 +91,7 @@ export function syntheticCredential(parts: CredentialParts): any {
       rawId: b64url(parts.rawId),
       type: 'public-key',
       authenticatorAttachment: parts.authenticatorAttachment ?? null,
-      clientExtensionResults: {},
+      clientExtensionResults: parts.extensionResultsJSON ?? {},
       response: json,
     }),
   });
