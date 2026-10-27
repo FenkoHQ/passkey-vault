@@ -247,7 +247,10 @@ describe('an interrupted upgrade', () => {
     );
 
     void send({ type: 'UNLOCK_SECURE_STORAGE', payload: { password: PIN } });
-    while (!local().remove.mock.calls.length) await flush();
+    // Wait for the salt removal itself: the worker removes other keys too.
+    const removesSalt = (call: unknown[]) =>
+      [call[0] as string | string[]].flat().includes('passext_encryption_salt');
+    while (!local().remove.mock.calls.some(removesSalt)) await flush();
     local().remove.mockImplementation(drop);
     expect(storage.passext_vault_kdf).toBeDefined();
     expect(storage.passext_encryption_salt).toBeDefined();
