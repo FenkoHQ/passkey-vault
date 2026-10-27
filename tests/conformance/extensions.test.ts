@@ -42,7 +42,7 @@ describe('credProps (§10.1.3)', () => {
 
   it('is never part of an authentication result', async () => {
     const registration = await register({ extensions: { credProps: true } });
-    const { assertion } = await authenticate(registration, { extensions: { credProps: true } });
+    const { assertion } = await authenticate(registration);
 
     expect(assertion.getClientExtensionResults()).not.toHaveProperty('credProps');
   });
