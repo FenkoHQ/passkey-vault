@@ -16,6 +16,7 @@ const CONTENT_SOURCE = 'PASSKEY_VAULT_CONTENT';
 
 jest.mock('../src/content/vault-dialog-frame', () => ({
   extensionOrigin: () => 'chrome-extension://test',
+  supportsFrameDialogs: () => true,
   mountDialogFrame: jest.fn(),
 }));
 // eslint-disable-next-line @typescript-eslint/no-var-requires

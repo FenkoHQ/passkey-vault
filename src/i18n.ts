@@ -541,6 +541,7 @@ const en: TranslationMap = {
   pageVaultLockedMsg: 'Unlock Fenko Vault from the toolbar to sign in with a vault passkey.',
   pageContinue: 'Continue',
   pageUseOtherPasskey: 'Use other passkey',
+  pageChoosePasskeyButton: 'Choose a passkey',
   pageCreatePasskeyTitle: 'Create a Passkey?',
   pageCreatePasskeyMsg: 'Create a passkey for {user} on {rp}?',
   pageCreate: 'Create',

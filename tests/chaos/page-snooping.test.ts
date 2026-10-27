@@ -12,7 +12,8 @@
  * can read names an account, a credential ID, or how many there are.
  *
  * The real dialog frame is mounted here (jsdom does not load it, so the
- * dialog stays open until the page cancels).
+ * dialog stays open until the page cancels). jsdom has no
+ * IntersectionObserver v2, so one is stood in for Chrome's.
  */
 
 import { setupVault, vaultReady } from '../helpers/harness';
@@ -22,6 +23,16 @@ import { authenticationJSON, requestOptionsFromJSON } from '../helpers/options';
 const vault = setupVault('https://bank.example/login', { realDialogFrame: true });
 
 beforeAll(() => vaultReady(vault));
+beforeAll(() => {
+  (window as unknown as Record<string, unknown>).IntersectionObserverEntry = class {
+    get isVisible() {
+      return true;
+    }
+  };
+});
+afterAll(() => {
+  delete (window as unknown as Record<string, unknown>).IntersectionObserverEntry;
+});
 
 const ACCOUNTS = [
   ['cred-alice-7f3a', 'alice.secret@bank.example', 'Alice Secret'],
@@ -120,6 +131,43 @@ describe('a page watching its DOM while the picker is open', () => {
     await vault.settle();
     expect(error?.name).toBe('AbortError');
     expect(document.documentElement.children).toHaveLength(2);
+  });
+
+  it('sees nothing at all when the dialog opens in a window (Firefox)', async () => {
+    delete (window as unknown as Record<string, unknown>).IntersectionObserverEntry;
+    const opened: string[] = [];
+    const answer = vault.chrome.onWindowOpened;
+    vault.chrome.onWindowOpened = (window) => opened.push(window.url);
+    const watcher = watchPage();
+    const controller = new AbortController();
+    try {
+      const signIn = outcome(
+        navigator.credentials.get({
+          publicKey: requestOptionsFromJSON(authenticationJSON({ rpId: 'bank.example' })),
+          signal: controller.signal,
+        })
+      );
+      await vault.settle();
+      watcher.stop();
+
+      expect(opened).toHaveLength(1);
+      expect(watcher.seen).toEqual([]);
+      expect(document.documentElement.children).toHaveLength(2);
+      for (const secret of SECRETS) {
+        expect(JSON.stringify(vault.posted.map((message) => message.data))).not.toContain(secret);
+      }
+      controller.abort();
+      await signIn;
+      await vault.settle();
+      expect(vault.chrome.windows.every((window) => !window.open)).toBe(true);
+    } finally {
+      vault.chrome.onWindowOpened = answer;
+      (window as unknown as Record<string, unknown>).IntersectionObserverEntry = class {
+        get isVisible() {
+          return true;
+        }
+      };
+    }
   });
 
   it('cannot tell how many passkeys the site has from the frame', async () => {

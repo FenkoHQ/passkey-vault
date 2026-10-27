@@ -36,8 +36,7 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "webauthn-inject.js",
-        "vault-dialog.html"
+        "webauthn-inject.js"
       ],
       "matches": [
         "https://*/*",

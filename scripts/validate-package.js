@@ -147,14 +147,15 @@ function main() {
     );
   }
 
-  // Web pages may load only what they must: the ceremony dialog, framed by
-  // the content script, and on Firefox the page shim. Chrome serves the
-  // dialog from a per-session URL, so a page cannot frame it by itself.
+  // Web pages may load only what they must. On Chrome, the ceremony dialog,
+  // which the content script frames, served from a per-session URL so a
+  // page cannot frame it by itself. On Firefox, which opens the dialog in a
+  // window of its own, only the page shim.
   const webAccessible = (manifest.web_accessible_resources || []).flatMap(
     (entry) => entry.resources || []
   );
   const expectedWebAccessible =
-    target === 'chrome' ? ['vault-dialog.html'] : ['webauthn-inject.js', 'vault-dialog.html'];
+    target === 'chrome' ? ['vault-dialog.html'] : ['webauthn-inject.js'];
   assert(
     JSON.stringify(webAccessible) === JSON.stringify(expectedWebAccessible),
     `Unexpected web_accessible_resources: ${JSON.stringify(webAccessible)}`

@@ -338,6 +338,7 @@ class ContentScript {
         const dialog = await this.dialogs.run({
           kind: 'create',
           requestId,
+          rpId,
           payload,
           conditional: false,
           signal,
@@ -469,6 +470,7 @@ class ContentScript {
         const dialog = await this.dialogs.run({
           kind: 'get',
           requestId,
+          rpId,
           payload,
           conditional: payload.mediation === 'conditional',
           signal,

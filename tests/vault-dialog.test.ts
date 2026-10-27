@@ -5,7 +5,12 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { VaultDialog, receiveTokenFromParent, type ConsentGate } from '../src/ui/vault-dialog';
+import {
+  VaultDialog,
+  receiveTokenFromParent,
+  takeTokenFromUrl,
+  type ConsentGate,
+} from '../src/ui/vault-dialog';
 import type { VaultDialogView } from '../src/utils/vault-dialog';
 import { trustedClick, trustedKey } from './helpers/trusted-input';
 
@@ -13,6 +18,7 @@ const HTML = fs.readFileSync(path.join(__dirname, '../src/ui/vault-dialog.html')
 
 const GET_VIEW: VaultDialogView = {
   kind: 'get',
+  mode: 'frame',
   rpId: 'bank.example',
   passkeys: [
     { id: 'cred-alice', userName: 'alice@bank.example', userDisplayName: 'Alice' },
@@ -20,7 +26,12 @@ const GET_VIEW: VaultDialogView = {
   ],
 };
 
-const CREATE_VIEW: VaultDialogView = { kind: 'create', rpId: 'bank.example', userName: 'Carol' };
+const CREATE_VIEW: VaultDialogView = {
+  kind: 'create',
+  mode: 'frame',
+  rpId: 'bank.example',
+  userName: 'Carol',
+};
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -30,7 +41,8 @@ function openGate(): ConsentGate {
 
 async function show(
   view: VaultDialogView | null,
-  gate: () => ConsentGate = openGate
+  gate: () => ConsentGate = openGate,
+  inWindow = false
 ): Promise<jest.Mock> {
   document.documentElement.innerHTML = HTML.replace(/^<!doctype html>/i, '');
   const send = jest.fn(async (message: Record<string, unknown>) => {
@@ -41,6 +53,7 @@ async function show(
   });
   const dialog = new VaultDialog({
     window,
+    inWindow,
     token: async () => 'token-1',
     send,
     createGate: gate,
@@ -171,6 +184,42 @@ describe('a dialog whose request is gone', () => {
     expect(byId('subtitle').textContent).toBe('This request is no longer active.');
     expect(document.querySelectorAll('button')).toHaveLength(0);
     expect(decisions(send)).toEqual([]);
+  });
+});
+
+describe('in a window of its own', () => {
+  const inWindow = (view: VaultDialogView | null) => show(view, openGate, true);
+
+  it('closes its window once the decision is in', async () => {
+    const close = jest.spyOn(window, 'close').mockImplementation(() => undefined);
+    await inWindow({ ...GET_VIEW, mode: 'window' });
+
+    trustedClick(byId('pkv-continue'));
+    await flush();
+
+    expect(close).toHaveBeenCalled();
+    close.mockRestore();
+  });
+
+  it('offers to close a window whose request is gone', async () => {
+    const close = jest.spyOn(window, 'close').mockImplementation(() => undefined);
+    await inWindow(null);
+
+    trustedClick(byId('pkv-close'));
+
+    expect(close).toHaveBeenCalled();
+    close.mockRestore();
+  });
+
+  it('takes its token from the URL, and drops it from the address', () => {
+    const replaceState = jest.fn();
+    const win = {
+      location: { hash: '#the-token', pathname: '/vault-dialog.html' },
+      history: { replaceState },
+    } as unknown as Window;
+
+    expect(takeTokenFromUrl(win)).toBe('the-token');
+    expect(replaceState).toHaveBeenCalledWith(null, '', '/vault-dialog.html');
   });
 });
 

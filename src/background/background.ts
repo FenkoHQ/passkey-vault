@@ -202,6 +202,7 @@ interface ExtensionMessage {
  */
 const WEB_PAGE_MESSAGES = new Set([
   DIALOG_MESSAGES.OPEN,
+  DIALOG_MESSAGES.LAUNCH,
   DIALOG_MESSAGES.CANCEL,
   'CREATE_PASSKEY',
   'DISCARD_REGISTRATION',
@@ -767,6 +768,9 @@ class BackgroundService {
     const { type } = message;
     if (type === DIALOG_MESSAGES.OPEN) {
       return this.dialogs.open(message, sender);
+    }
+    if (type === DIALOG_MESSAGES.LAUNCH) {
+      return this.dialogs.launch(message);
     }
     if (type === DIALOG_MESSAGES.CANCEL) {
       return this.dialogs.cancel(message);

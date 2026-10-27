@@ -5,7 +5,10 @@
  * They are an extension page (vault-dialog.html), never page DOM. In
  * Chrome the content script shows that page in an iframe inside a closed
  * shadow root, so the page can neither read the dialog (it is another
- * origin, and the frame is not in `window.frames`) nor script it.
+ * origin, and the frame is not in `window.frames`) nor script it. Where
+ * the dialog cannot tell whether it is really visible in the page (no
+ * IntersectionObserver v2, as in Firefox), it opens in a popup window of
+ * its own instead, which a page cannot draw over.
  *
  * The dialog gets what it shows from the background, and its decision goes
  * to the background, never through the page or the content script:
@@ -19,11 +22,17 @@
  *   content script ◀─ PASSKEY_DIALOG_RESULT ───────────── background
  *   content script ── GET_PASSKEY / CREATE_PASSKEY ─────▶ background
  *                     (refused unless the dialog approved this request)
+ *
+ * In a window, the background opens the dialog page with the token in its
+ * URL; the page that asked has no handle on that window.
  */
 
 export const VAULT_DIALOG_PAGE = 'vault-dialog.html';
 
 export type VaultDialogKind = 'get' | 'create';
+
+/** An iframe in the page, or a popup window of its own. */
+export type VaultDialogMode = 'frame' | 'window';
 
 /**
  * What the content script learns: whether to go on with the ceremony. It
@@ -38,8 +47,8 @@ export interface VaultDialogPasskey {
 }
 
 export type VaultDialogView =
-  | { kind: 'get'; rpId: string; passkeys: VaultDialogPasskey[] }
-  | { kind: 'create'; rpId: string; userName: string };
+  | { kind: 'get'; mode: VaultDialogMode; rpId: string; passkeys: VaultDialogPasskey[] }
+  | { kind: 'create'; mode: VaultDialogMode; rpId: string; userName: string };
 
 export type VaultDialogDecision =
   | { action: 'use'; id: string }
@@ -50,6 +59,8 @@ export type VaultDialogDecision =
 export const DIALOG_MESSAGES = {
   /** Content script: open a dialog for one of its requests. */
   OPEN: 'PASSKEY_DIALOG_OPEN',
+  /** Content script: the user asked for a deferred (autofill) dialog's window. */
+  LAUNCH: 'PASSKEY_DIALOG_LAUNCH',
   /** Content script: the page gave up on the request. */
   CANCEL: 'PASSKEY_DIALOG_CANCEL',
   /** Dialog page: claim a session with its token and fetch what to show. */
@@ -59,12 +70,6 @@ export const DIALOG_MESSAGES = {
   /** Background to content script: the outcome of a dialog. */
   RESULT: 'PASSKEY_DIALOG_RESULT',
 } as const;
-
-/** Messages only the dialog page may send. */
-export const DIALOG_PAGE_MESSAGES: ReadonlySet<string> = new Set([
-  DIALOG_MESSAGES.ATTACH,
-  DIALOG_MESSAGES.DECIDE,
-]);
 
 /** The postMessage that hands a framed dialog its token. */
 export const DIALOG_TOKEN_MESSAGE = 'fenko-vault-dialog-token';
@@ -77,6 +82,12 @@ export const DIALOG_TOKEN_MESSAGE = 'fenko-vault-dialog-token';
 export const DIALOG_FRAME_SIZE: Record<VaultDialogKind, { width: number; height: number }> = {
   get: { width: 340, height: 372 },
   create: { width: 340, height: 232 },
+};
+
+/** Outer size of the popup window: the frame, plus room for the title bar. */
+export const DIALOG_WINDOW_SIZE: Record<VaultDialogKind, { width: number; height: number }> = {
+  get: { width: 380, height: 440 },
+  create: { width: 380, height: 300 },
 };
 
 /**

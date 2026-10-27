@@ -111,7 +111,7 @@ body {
   border-top: 1px solid var(--border-soft);
 }
 
-.card-footer .btn-primary.wide {
+.card-footer .wide {
   grid-column: 1 / -1;
 }
 

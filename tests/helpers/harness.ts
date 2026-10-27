@@ -58,6 +58,11 @@ export interface UserScript {
    * (options: PasskeyOption[], rpId, signal) => SelectorResult | Promise<SelectorResult>.
    */
   choosePasskey: jest.Mock;
+  /**
+   * Answer to the in-page card that offers an autofill sign-in where the
+   * dialog opens in a window: (rpId) => 'open' | 'cancel' | 'passthrough'.
+   */
+  launch: jest.Mock;
   createdToast: jest.Mock;
   usedToast: jest.Mock;
   errorToast: jest.Mock;
@@ -85,19 +90,27 @@ export interface Vault {
   passkeys(): Promise<any[]>;
   /** The current worker's stubbed sync service (its calls, and the vault adapter it was given). */
   syncService: Record<string, jest.Mock>;
-  /** The dialog frames the content script mounted, in order. */
+  /** The dialogs shown, as frames or windows, in order. */
   dialogs: MountedDialog[];
+  /**
+   * Where dialogs open: in a frame (Chrome, with IntersectionObserver v2)
+   * or in a popup window (Firefox). Reset to 'frame'.
+   */
+  dialogMode: 'frame' | 'window';
+  /** RP IDs of the autofill launcher cards shown (window mode). */
+  launchers: string[];
 }
 
 export interface MountedDialog {
   token: string;
   kind: string;
   focus: boolean;
+  mode: 'frame' | 'window';
   /** What the background showed the dialog, once it claimed its session. */
   view?: any;
-  /** The content script took the frame off the page. */
+  /** The frame is off the page, or the window closed. */
   unmounted: boolean;
-  /** Stand in for the page removing the frame. */
+  /** Stand in for the page removing the frame, or the user closing the window. */
   remove(): void;
 }
 
@@ -105,6 +118,7 @@ const BACKGROUND = '../../src/background/background';
 const CONTENT = '../../src/content/content';
 const INJECT = '../../src/content/webauthn-inject';
 const DIALOG_FRAME = '../../src/content/vault-dialog-frame';
+const LAUNCHER = '../../src/content/vault-launcher';
 const SYNC_SERVICE = '../../src/sync/sync-service';
 
 export const EXTENSION_PAGE: MessageSender = {
@@ -149,6 +163,7 @@ function defaultUser(): UserScript {
       (options: PasskeyOption[]): SelectorResult =>
         options.length > 0 ? { action: 'use', id: options[0].id } : { action: 'cancel' }
     ),
+    launch: jest.fn(() => 'open'),
     createdToast: jest.fn(),
     usedToast: jest.fn(),
     errorToast: jest.fn(),
@@ -197,7 +212,12 @@ export function setupVault(
 
   // The in-page notices are bound when content.js loads, so install
   // forwarding stubs that consult whatever `vault.user` holds at call time.
-  const vault = { user, dialogs: [] as MountedDialog[] } as Vault;
+  const vault = {
+    user,
+    dialogs: [] as MountedDialog[],
+    dialogMode: 'frame',
+    launchers: [] as string[],
+  } as Vault;
   win.showPasskeyCreatedNotification = (...args: unknown[]) => vault.user.createdToast(...args);
   win.showPasskeyUsedNotification = (...args: unknown[]) => vault.user.usedToast(...args);
   win.showErrorNotification = (...args: unknown[]) => vault.user.errorToast(...args);
@@ -240,6 +260,9 @@ export function setupVault(
       chrome.sentToTabs.length = 0;
       posted.length = 0;
       vault.dialogs.length = 0;
+      vault.dialogMode = 'frame';
+      vault.launchers.length = 0;
+      chrome.windows.length = 0;
       vault.user = defaultUser();
       native.reset();
       startWorker();
@@ -264,27 +287,26 @@ export function setupVault(
     },
   });
 
-  let nextFrameId = 100;
-  /** The dialog page in a frame, with `vault.user` in front of it. */
-  const mountDialogFrame = (options: { token: string; kind: string; focus: boolean }) => {
-    const unmounted = new AbortController();
-    let removed!: () => void;
-    const gone = new Promise<void>((resolve) => (removed = resolve));
-    const mounted: MountedDialog = {
-      ...options,
-      unmounted: false,
-      remove: () => removed(),
-    };
-    vault.dialogs.push(mounted);
-    const sender = dialogSender(nextFrameId++);
+  /**
+   * The dialog page with `vault.user` in front of it: claim the session with
+   * the token, show the user what the background sent, send the decision.
+   * Nothing is clicked once `closed` fires (the frame or window is gone).
+   */
+  const scriptDialog = (
+    token: string,
+    sender: MessageSender,
+    closed: AbortSignal,
+    mounted: MountedDialog
+  ) => {
     const deliver = (message: Record<string, unknown>) =>
       chrome.deliver(message, sender).catch(() => undefined) as Promise<any>;
     void (async () => {
       await tick();
-      const attached = await deliver({ type: 'PASSKEY_DIALOG_ATTACH', token: options.token });
-      if (!attached?.success || unmounted.signal.aborted) return;
+      const attached = await deliver({ type: 'PASSKEY_DIALOG_ATTACH', token });
+      if (!attached?.success || closed.aborted) return;
       const view = attached.view;
       mounted.view = view;
+      mounted.kind = view.kind;
       let decision: Record<string, unknown>;
       if (view.kind === 'get') {
         const offered: PasskeyOption[] = view.passkeys.map((passkey: any) => ({
@@ -295,24 +317,35 @@ export function setupVault(
           rpId: view.rpId,
           createdAt: 0,
         }));
-        const choice: SelectorResult = await vault.user.choosePasskey(
-          offered,
-          view.rpId,
-          unmounted.signal
-        );
+        const choice: SelectorResult = await vault.user.choosePasskey(offered, view.rpId, closed);
         decision = choice;
       } else {
         const confirmed = await vault.user.confirmCreate(
           view.rpId,
           view.userName || 'Unknown User',
-          unmounted.signal
+          closed
         );
         decision = { action: confirmed ? 'create' : 'cancel' };
       }
-      // A frame the content script took away cannot be clicked.
-      if (unmounted.signal.aborted) return;
-      await deliver({ type: 'PASSKEY_DIALOG_DECIDE', token: options.token, decision });
+      if (closed.aborted) return;
+      await deliver({ type: 'PASSKEY_DIALOG_DECIDE', token, decision });
     })();
+  };
+
+  let nextFrameId = 100;
+  /** The dialog page in a frame the content script mounted. */
+  const mountDialogFrame = (options: { token: string; kind: string; focus: boolean }) => {
+    const unmounted = new AbortController();
+    let removed!: () => void;
+    const gone = new Promise<void>((resolve) => (removed = resolve));
+    const mounted: MountedDialog = {
+      ...options,
+      mode: 'frame',
+      unmounted: false,
+      remove: () => removed(),
+    };
+    vault.dialogs.push(mounted);
+    scriptDialog(options.token, dialogSender(nextFrameId++), unmounted.signal, mounted);
     return {
       gone,
       unmount() {
@@ -324,9 +357,45 @@ export function setupVault(
   if (!options.realDialogFrame) {
     jest.doMock(DIALOG_FRAME, () => ({
       extensionOrigin: () => EXTENSION_ORIGIN,
+      supportsFrameDialogs: () => vault.dialogMode === 'frame',
       mountDialogFrame,
     }));
   }
+  jest.doMock(LAUNCHER, () => ({
+    showLauncher: (rpId: string) => {
+      vault.launchers.push(rpId);
+      return {
+        choice: Promise.resolve(vault.user.launch(rpId)),
+        remove: () => undefined,
+      };
+    },
+  }));
+
+  /** The dialog page in a popup window the background opened. */
+  chrome.onWindowOpened = (opened) => {
+    const closed = new AbortController();
+    const mounted: MountedDialog = {
+      token: new URL(opened.url).hash.slice(1),
+      kind: '',
+      focus: true,
+      mode: 'window',
+      unmounted: false,
+      remove: () => chrome.closeWindow(opened.id),
+    };
+    vault.dialogs.push(mounted);
+    chrome.whenWindowCloses(opened.id, () => {
+      mounted.unmounted = true;
+      closed.abort();
+    });
+    const sender: MessageSender = {
+      id: EXTENSION_ID,
+      url: opened.url,
+      origin: EXTENSION_ORIGIN,
+      tab: { id: opened.tabId, url: opened.url },
+      frameId: 0,
+    };
+    scriptDialog(mounted.token, sender, closed.signal, mounted);
+  };
 
   startWorker();
   // eslint-disable-next-line @typescript-eslint/no-var-requires

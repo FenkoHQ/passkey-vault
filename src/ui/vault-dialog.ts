@@ -26,6 +26,8 @@ export interface ConsentGate {
 
 export interface DialogEnvironment {
   window: Window;
+  /** In a popup window of its own, rather than a frame on the page. */
+  inWindow: boolean;
   /** The token that names this dialog's session. */
   token(): Promise<string>;
   send(message: Record<string, unknown>): Promise<unknown>;
@@ -35,6 +37,16 @@ export interface DialogEnvironment {
 
 const LOCK_ICON =
   '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>';
+
+/**
+ * The token of a dialog the background opened in a window: in the URL's
+ * fragment, which is then dropped from the address.
+ */
+export function takeTokenFromUrl(win: Window): string {
+  const token = win.location.hash.slice(1);
+  win.history.replaceState(null, '', win.location.pathname);
+  return token;
+}
 
 /**
  * Resolve with the first token the frame's parent posts. Only the content
@@ -266,7 +278,12 @@ export class VaultDialog {
     } catch {
       response = undefined;
     }
-    if (!response?.success) this.showInactive();
+    if (!response?.success) {
+      this.showInactive();
+      return;
+    }
+    // The background closes the window too; this is in case it cannot.
+    if (this.env.inWindow) this.env.window.close();
   }
 
   /** The request is gone: the page gave up, or another dialog replaced this one. */
@@ -277,6 +294,11 @@ export class VaultDialog {
     this.el('subtitle').textContent = t('dialogInactive');
     this.el('passkeys').textContent = '';
     this.el('footer').textContent = '';
+    if (this.env.inWindow) {
+      this.el('footer').append(
+        this.button('pkv-close', t('commonClose'), 'secondary wide', () => this.env.window.close())
+      );
+    }
     this.el('card').hidden = false;
   }
 }

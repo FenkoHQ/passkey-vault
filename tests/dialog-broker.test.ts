@@ -214,6 +214,7 @@ describe('the dialog page', () => {
     expect(response.success).toBe(true);
     expect(response.view).toEqual({
       kind: 'get',
+      mode: 'frame',
       rpId: 'bank.example',
       passkeys: [
         { id: 'cred-alice', userName: 'alice@bank.example', userDisplayName: 'Alice' },
@@ -394,5 +395,118 @@ describe('closing a dialog', () => {
     ]);
     expect((await attach(second.token, { ...DIALOG, frameId: 6 })).success).toBe(true);
     expect((await decide(first.token, { action: 'cancel' })).success).toBe(false);
+  });
+});
+
+describe('a dialog in a window of its own', () => {
+  let opened: Array<{ id: number; tabId: number; url: string }>;
+
+  beforeEach(() => {
+    opened = [];
+    // Nobody answers: these tests speak for the dialog page themselves.
+    vault.chrome.onWindowOpened = (window) => opened.push(window);
+  });
+
+  const openInWindow = (requestId = 'req-1', extra: Record<string, unknown> = {}) =>
+    open(requestId, { ...getPayload(), mode: 'window', ...extra } as any);
+
+  const windowSender = (window: { tabId: number; url: string }): MessageSender => ({
+    id: EXTENSION_ID,
+    url: window.url,
+    origin: EXTENSION_ORIGIN,
+    tab: { id: window.tabId, url: window.url },
+    frameId: 0,
+  });
+
+  const tokenOf = (window: { url: string }) => new URL(window.url).hash.slice(1);
+
+  it('opens the dialog page in a popup window, and gives the page no token', async () => {
+    const response = await openInWindow();
+    await vault.settle();
+
+    expect(response).toEqual({ success: true, status: 'open', dialogId: expect.any(String) });
+    expect(opened).toHaveLength(1);
+    expect(opened[0].url).toMatch(/^chrome-extension:\/\/[a-z]+\/vault-dialog\.html#.{43}$/);
+  });
+
+  it('lets only that window claim it', async () => {
+    await openInWindow();
+    await vault.settle();
+    const token = tokenOf(opened[0]);
+
+    expect((await attach(token, DIALOG)).success).toBe(false);
+    expect((await attach(token, { ...windowSender(opened[0]), frameId: 1 })).success).toBe(false);
+    expect((await attach(token, { ...windowSender(opened[0]), tab: { id: 99 } })).success).toBe(
+      false
+    );
+    expect((await attach(token, windowSender(opened[0]))).view).toMatchObject({
+      kind: 'get',
+      mode: 'window',
+    });
+  });
+
+  it('closes the window when the user decides', async () => {
+    await openInWindow();
+    await vault.settle();
+    const token = tokenOf(opened[0]);
+    await attach(token, windowSender(opened[0]));
+
+    await decide(token, { action: 'use', id: 'cred-alice' }, windowSender(opened[0]));
+    await vault.settle();
+
+    expect(vault.chrome.windows.map((window) => window.open)).toEqual([false]);
+    expect(results().map((sent) => sent.message.outcome)).toEqual(['approved']);
+  });
+
+  it('cancels when the user closes the window', async () => {
+    await openInWindow();
+    await vault.settle();
+
+    vault.chrome.closeWindow(opened[0].id);
+    await vault.settle();
+
+    expect(results().map((sent) => sent.message.outcome)).toEqual(['cancel']);
+    expect((await attach(tokenOf(opened[0]), windowSender(opened[0]))).success).toBe(false);
+  });
+
+  it('closes the window when the page gives up', async () => {
+    await openInWindow('req-1');
+    await vault.settle();
+
+    await vault.send({ type: 'PASSKEY_DIALOG_CANCEL', requestId: 'req-1' }, PAGE);
+    await vault.settle();
+
+    expect(vault.chrome.windows.map((window) => window.open)).toEqual([false]);
+  });
+
+  it('closes the window when the page’s tab closes', async () => {
+    await openInWindow('req-1');
+    await vault.settle();
+
+    vault.chrome.closeTab(7);
+    await vault.settle();
+
+    expect(vault.chrome.windows.map((window) => window.open)).toEqual([false]);
+  });
+
+  it('waits for the user to ask before opening an autofill sign-in’s window', async () => {
+    await openInWindow('req-1', { deferWindow: true });
+    await vault.settle();
+    expect(opened).toEqual([]);
+
+    expect(
+      (
+        await vault.send(
+          { type: 'PASSKEY_DIALOG_LAUNCH', requestId: 'req-1' },
+          { ...PAGE, frameId: 2 }
+        )
+      ).success
+    ).toBe(false);
+    expect(
+      (await vault.send({ type: 'PASSKEY_DIALOG_LAUNCH', requestId: 'req-1' }, PAGE)).success
+    ).toBe(true);
+    await vault.settle();
+
+    expect(opened).toHaveLength(1);
   });
 });

@@ -121,6 +121,9 @@ class FakeStorageArea {
 
 interface WorkerGeneration {
   listeners: MessageListener[];
+  /** windows.onRemoved and tabs.onRemoved listeners the worker added. */
+  windowRemoved: Array<(windowId: number) => void>;
+  tabRemoved: Array<(tabId: number) => void>;
   alive: boolean;
   /** Rejecters for messages this generation has not answered yet. */
   pending: Set<(error: Error) => void>;
@@ -129,7 +132,7 @@ interface WorkerGeneration {
 export class FakeChrome {
   readonly faults: StorageFault[] = [];
   private changeListeners: ChangeListener[] = [];
-  private worker: WorkerGeneration = { listeners: [], alive: true, pending: new Set() };
+  private worker: WorkerGeneration = this.generation();
   private contentListeners: MessageListener[] = [];
   private loadingWorker = false;
   /** Every message the background received, as it arrived (after JSON). */
@@ -143,6 +146,33 @@ export class FakeChrome {
   }> = [];
   /** The tab whose frame 0 runs the content script. */
   contentTab = 7;
+  /** Popup windows the extension opened, and the one tab each holds. */
+  readonly windows: Array<{ id: number; tabId: number; url: string; open: boolean }> = [];
+  /** Called when the extension opens a window, as the page in it loads. */
+  onWindowOpened: (opened: { id: number; tabId: number; url: string }) => void = () => undefined;
+  private nextWindowId = 500;
+
+  private windowClosed = new Map<number, () => void>();
+
+  /** Run `callback` when the window closes. */
+  whenWindowCloses(windowId: number, callback: () => void): void {
+    this.windowClosed.set(windowId, callback);
+  }
+
+  /** Close a tab, as the user does. */
+  closeTab(tabId: number): void {
+    if (this.worker.alive) for (const listener of this.worker.tabRemoved) listener(tabId);
+  }
+
+  /** Close a window, as the user does. */
+  closeWindow(windowId: number): void {
+    const found = this.windows.find((window) => window.id === windowId && window.open);
+    if (!found) return;
+    found.open = false;
+    this.windowClosed.get(windowId)?.();
+    this.windowClosed.delete(windowId);
+    if (this.worker.alive) for (const listener of this.worker.windowRemoved) listener(windowId);
+  }
   /** The sender a content-script message carries; follows the page URL. */
   contentSender: () => MessageSender = () => ({ id: EXTENSION_ID });
 
@@ -179,8 +209,12 @@ export class FakeChrome {
   }
 
   /** Run `load` with every onMessage listener it adds attributed to a new worker. */
+  private generation(): WorkerGeneration {
+    return { listeners: [], windowRemoved: [], tabRemoved: [], alive: true, pending: new Set() };
+  }
+
   startWorker(load: () => void): void {
-    this.worker = { listeners: [], alive: true, pending: new Set() };
+    this.worker = this.generation();
     this.loadingWorker = true;
     try {
       load();
@@ -268,6 +302,9 @@ export class FakeChrome {
           manifest_version: 3,
           version: '0.0.0-test',
           permissions: ['storage', 'alarms', 'favicon'],
+          web_accessible_resources: [
+            { resources: ['vault-dialog.html'], matches: ['https://*/*'], use_dynamic_url: true },
+          ],
         }),
         sendMessage: (message: unknown) => self.deliver(message, self.contentSender()),
         onMessage,
@@ -299,7 +336,30 @@ export class FakeChrome {
             self.alarmListeners.push(listener),
         },
       },
+      windows: {
+        create: async (options: { url: string }) => {
+          // A relative URL is the extension's own, as in Chrome.
+          const url = new URL(options.url, `${EXTENSION_ORIGIN}/`).href;
+          const opened = { id: self.nextWindowId++, tabId: self.nextWindowId++, url };
+          self.windows.push({ ...opened, open: true });
+          setTimeout(() => self.onWindowOpened(opened), 0);
+          return { id: opened.id, tabs: [{ id: opened.tabId }] };
+        },
+        remove: async (windowId: number) => self.closeWindow(windowId),
+        get: async (windowId: number) => ({ id: windowId, left: 0, top: 0, width: 1280 }),
+        onRemoved: {
+          addListener: (listener: (windowId: number) => void) => {
+            if (self.loadingWorker) self.worker.windowRemoved.push(listener);
+          },
+        },
+      },
       tabs: {
+        get: async (tabId: number) => ({ id: tabId, windowId: 1 }),
+        onRemoved: {
+          addListener: (listener: (tabId: number) => void) => {
+            if (self.loadingWorker) self.worker.tabRemoved.push(listener);
+          },
+        },
         /**
          * To the page's content script, which runs in frame 0 of tab
          * `contentTab`; any other tab or frame has no receiver.

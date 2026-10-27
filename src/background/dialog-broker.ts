@@ -7,6 +7,11 @@
  * user's decision here. Nothing the dialog shows passes through the page or
  * the content script, and only the dialog page can decide.
  *
+ * Where the content script cannot frame the dialog (no IntersectionObserver
+ * v2 to prove the frame is visible), the session opens the dialog page in
+ * a popup window of its own, with the token in its URL, and only that
+ * window may claim it.
+ *
  * Sessions live in chrome.storage.session, which content scripts cannot
  * read, so a service worker that Chrome stops while the user is choosing
  * hands the session to the next one.
@@ -15,9 +20,12 @@
 import { arrayBufferToBase64URL } from '../utils/base64';
 import {
   DIALOG_MESSAGES,
+  DIALOG_WINDOW_SIZE,
+  VAULT_DIALOG_PAGE,
   isVaultDialogSender,
   type VaultDialogDecision,
   type VaultDialogKind,
+  type VaultDialogMode,
   type VaultDialogOutcome,
   type VaultDialogPasskey,
   type VaultDialogView,
@@ -61,8 +69,20 @@ interface DialogSession {
   approvedPasskeyId?: string;
   /** The dialog document that claimed the session. */
   dialog?: { tabId: number; frameId: number; documentId?: string };
+  /** Window mode: where the dialog page was opened, once it was. */
+  window?: DialogWindow;
   expiresAt: number;
   decidedAt?: number;
+}
+
+interface DialogWindow {
+  /** A conditional sign-in waits for the user to ask for the window. */
+  deferred: boolean;
+  opened: boolean;
+  windowId?: number;
+  tabId?: number;
+  /** Opened as a tab, where the browser has no popup windows (Android). */
+  asTab?: boolean;
 }
 
 export interface DialogBrokerDeps {
@@ -111,7 +131,22 @@ export class DialogBroker {
   private queue: Promise<unknown> = Promise.resolve();
   private memory: Record<string, DialogSession> = {};
 
-  constructor(private readonly deps: DialogBrokerDeps) {}
+  /** Windows being opened; a claim from one waits until its IDs are known. */
+  private opening = new Set<Promise<void>>();
+
+  constructor(private readonly deps: DialogBrokerDeps) {
+    // Closing the dialog's window is the user saying no.
+    chrome.windows?.onRemoved?.addListener((windowId: number) => {
+      void this.closed((session) => session.window?.windowId === windowId);
+    });
+    chrome.tabs?.onRemoved?.addListener((tabId: number) => {
+      void this.closed(
+        (session) =>
+          (session.window?.asTab === true && session.window.tabId === tabId) ||
+          session.tabId === tabId
+      );
+    });
+  }
 
   // ==================== STORAGE ====================
 
@@ -127,11 +162,11 @@ export class DialogBroker {
         ? (((await area.get(STORAGE_KEY))[STORAGE_KEY] as Record<string, DialogSession>) ?? {})
         : this.memory;
       const now = Date.now();
-      for (const [id, session] of Object.entries(sessions)) {
-        if (session.expiresAt <= now) delete sessions[id];
-      }
+      const expired = Object.values(sessions).filter((session) => session.expiresAt <= now);
+      for (const session of expired) delete sessions[session.id];
       const result = await change(sessions);
       if (area) await area.set({ [STORAGE_KEY]: sessions });
+      for (const session of expired) void this.closeWindow(session);
       return result;
     });
     this.queue = run.catch(() => undefined);
@@ -148,6 +183,7 @@ export class DialogBroker {
   async open(message: BoundRequest, sender: DialogSender): Promise<unknown> {
     const payload = message.payload ?? {};
     const kind = payload.kind;
+    const mode: VaultDialogMode = payload.mode === 'window' ? 'window' : 'frame';
     const requestId = message.requestId;
     const tabId = sender.tab?.id;
     if (
@@ -182,11 +218,11 @@ export class DialogBroker {
         userName: passkey.user?.name || '',
         userDisplayName: passkey.user?.displayName || '',
       }));
-      view = { kind, rpId, passkeys };
+      view = { kind, mode, rpId, passkeys };
     } else {
       const user = (publicKey.user as Payload | undefined) ?? {};
       const userName = String(user.displayName || user.name || '');
-      view = { kind, rpId, userName };
+      view = { kind, mode, rpId, userName };
     }
 
     const session: DialogSession = {
@@ -202,6 +238,9 @@ export class DialogBroker {
       binding: ceremonyBinding(payload),
       view,
       passkeyIds,
+      ...(mode === 'window' && {
+        window: { deferred: payload.deferWindow === true, opened: false },
+      }),
       expiresAt: Date.now() + SESSION_TTL_MS,
     };
     const replaced = await this.update((sessions) => {
@@ -214,8 +253,29 @@ export class DialogBroker {
       sessions[session.id] = session;
       return previous;
     });
-    for (const other of replaced) void this.notify(other, 'cancel');
+    for (const other of replaced) this.ended(other, 'cancel');
+    if (mode === 'window') {
+      if (!session.window?.deferred) await this.openWindow(session.id);
+      // The token is for the window the background opens, not the page.
+      return { success: true, status: 'open', dialogId: session.id };
+    }
     return { success: true, status: 'open', dialogId: session.id, token: session.token };
+  }
+
+  /** The user asked for the window of a deferred (autofill) sign-in. */
+  async launch(message: BoundRequest): Promise<unknown> {
+    const session = await this.update((sessions) =>
+      Object.values(sessions).find(
+        (candidate) =>
+          candidate.requester === message.requester &&
+          candidate.requestId === message.requestId &&
+          candidate.state === 'pending' &&
+          candidate.window?.deferred === true
+      )
+    );
+    if (!session) return { success: false, error: 'This request is no longer active' };
+    await this.openWindow(session.id);
+    return { success: true };
   }
 
   /** The page stopped waiting: close the request's dialog. */
@@ -228,6 +288,7 @@ export class DialogBroker {
       for (const session of found) delete sessions[session.id];
       return found;
     });
+    for (const session of closed) void this.closeWindow(session);
     return { success: closed.length > 0 };
   }
 
@@ -287,6 +348,7 @@ export class DialogBroker {
    * only the first claim counts.
    */
   private async attach(token: string, sender: DialogSender): Promise<unknown> {
+    await Promise.all(this.opening);
     const view = await this.update((sessions) => {
       const session = Object.values(sessions).find((candidate) => candidate.token === token);
       if (!session || !token || session.state !== 'pending' || session.dialog) return undefined;
@@ -305,6 +367,14 @@ export class DialogBroker {
   }
 
   private mayClaim(session: DialogSession, sender: DialogSender): boolean {
+    if (session.view.mode === 'window') {
+      // Only the top frame of the window the background opened.
+      return (
+        session.window?.tabId !== undefined &&
+        sender.tab?.id === session.window.tabId &&
+        sender.frameId === 0
+      );
+    }
     return (
       sender.tab?.id === session.tabId &&
       typeof sender.frameId === 'number' &&
@@ -336,7 +406,7 @@ export class DialogBroker {
     if (!decided) {
       return { success: false, error: 'This request is no longer active' };
     }
-    void this.notify(decided.session, decided.outcome);
+    this.ended(decided.session, decided.outcome);
     return { success: true };
   }
 
@@ -371,7 +441,123 @@ export class DialogBroker {
     }
   }
 
+  // ==================== WINDOWS ====================
+
+  /** Open a window-mode session's dialog page in a popup window. */
+  private openWindow(id: string): Promise<void> {
+    const opening = this.placeWindow(id);
+    this.opening.add(opening);
+    return opening.finally(() => this.opening.delete(opening));
+  }
+
+  private async placeWindow(id: string): Promise<void> {
+    const target = await this.update((sessions) => {
+      const session = sessions[id];
+      if (!session?.window || session.window.opened || session.state !== 'pending') return;
+      session.window.opened = true;
+      session.window.deferred = false;
+      return { token: session.token, kind: session.kind, tabId: session.tabId };
+    });
+    if (!target) return;
+
+    // Relative, so it resolves to the extension's own origin: getURL() gives
+    // Chrome's per-session URL for this web-accessible page, which is for
+    // the pages that frame it and does not load in a window.
+    const url = `${VAULT_DIALOG_PAGE}#${target.token}`;
+    let placed: Pick<DialogWindow, 'windowId' | 'tabId' | 'asTab'> | undefined;
+    try {
+      if (chrome.windows?.create) {
+        const created = await chrome.windows.create({
+          url,
+          type: 'popup',
+          focused: true,
+          ...(await this.windowBounds(target.tabId, target.kind)),
+        });
+        placed = { windowId: created?.id, tabId: created?.tabs?.[0]?.id };
+      } else {
+        const tab = await chrome.tabs.create({ url, active: true });
+        placed = { tabId: tab?.id, asTab: true };
+      }
+    } catch (error) {
+      console.warn('Could not open the vault dialog window', error);
+    }
+
+    const kept = await this.update((sessions) => {
+      const session = sessions[id];
+      if (!session?.window) return undefined;
+      if (placed?.tabId === undefined) {
+        delete sessions[id];
+        return { session, ok: false };
+      }
+      Object.assign(session.window, placed);
+      return { session, ok: true };
+    });
+    if (!kept) {
+      // The request ended while the window was opening.
+      if (placed) void this.closeWindow({ window: { deferred: false, opened: true, ...placed } });
+      return;
+    }
+    if (!kept.ok) void this.notify(kept.session, 'cancel');
+  }
+
+  /** Centre the dialog over the requesting tab's window, where the browser says where that is. */
+  private async windowBounds(
+    tabId: number,
+    kind: VaultDialogKind
+  ): Promise<{ width: number; height: number; left?: number; top?: number }> {
+    const size = DIALOG_WINDOW_SIZE[kind];
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      const parent = await chrome.windows.get(tab.windowId);
+      if (
+        typeof parent.left === 'number' &&
+        typeof parent.top === 'number' &&
+        typeof parent.width === 'number'
+      ) {
+        return {
+          ...size,
+          left: Math.round(parent.left + (parent.width - size.width) / 2),
+          top: parent.top + 80,
+        };
+      }
+    } catch {
+      // Let the browser place it.
+    }
+    return size;
+  }
+
+  private async closeWindow(session: Pick<DialogSession, 'window'>): Promise<void> {
+    const placed = session.window;
+    try {
+      if (placed?.asTab && placed.tabId !== undefined) {
+        await chrome.tabs.remove(placed.tabId);
+      } else if (placed?.windowId !== undefined) {
+        await chrome.windows.remove(placed.windowId);
+      }
+    } catch {
+      // Already closed.
+    }
+  }
+
+  /** A window or tab closed: end the pending dialogs it held. */
+  private async closed(match: (session: DialogSession) => boolean): Promise<void> {
+    const ended = await this.update((sessions) => {
+      const found = Object.values(sessions).filter(
+        (session) => session.state === 'pending' && match(session)
+      );
+      for (const session of found) delete sessions[session.id];
+      return found;
+    });
+    for (const session of ended) this.ended(session, 'cancel');
+  }
+
   // ==================== HELPERS ====================
+
+  /** A dialog ended: close its window, and tell the content script. */
+  private ended(session: DialogSession, outcome: VaultDialogOutcome): void {
+    void this.closeWindow(session);
+    void this.notify(session, outcome);
+  }
 
   /** Tell the requesting content script how its dialog ended. */
   private async notify(session: DialogSession, outcome: VaultDialogOutcome): Promise<void> {

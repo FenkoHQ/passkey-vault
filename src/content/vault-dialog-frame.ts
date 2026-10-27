@@ -32,6 +32,26 @@ export interface MountOptions {
 }
 
 /**
+ * Whether the dialog can be a frame on the page. Only where the browser
+ * reports whether the frame is really visible to the user
+ * (IntersectionObserver v2), which the dialog needs before it takes a
+ * click as consent, and where the build lets pages load the dialog page.
+ * Elsewhere (Firefox) it opens in a popup window, which a page cannot
+ * cover or fade.
+ */
+export function supportsFrameDialogs(): boolean {
+  const entry = (globalThis as { IntersectionObserverEntry?: { prototype: object } })
+    .IntersectionObserverEntry;
+  if (!entry || !('isVisible' in entry.prototype)) return false;
+  const resources = (chrome.runtime.getManifest?.()?.web_accessible_resources ?? []) as Array<
+    string | { resources?: string[] }
+  >;
+  return resources.some(
+    (entry) => typeof entry === 'object' && entry.resources?.includes(VAULT_DIALOG_PAGE)
+  );
+}
+
+/**
  * The origin the dialog page loads under. Chrome serves a web-accessible
  * page with use_dynamic_url from a per-session URL, which getURL() returns,
  * but the document in the frame still has the extension's own origin.
