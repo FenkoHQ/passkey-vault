@@ -198,6 +198,11 @@ export class SyncService {
   private isConnected = false;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private firstConnectResolve: (() => void) | null = null;
+  // Initializations run one at a time. Each one, and each disconnect, bumps the
+  // generation so a superseded run stops at its next await.
+  private initGeneration = 0;
+  private initQueue: Promise<void> = Promise.resolve();
+  private pendingInit: { key: string; promise: Promise<void> } | null = null;
   private debugLogs: DebugLogEntry[] = [];
   private lastBroadcastTime = 0;
   private pendingMessages = new Map<string, SyncMessage>();
@@ -317,11 +322,71 @@ export class SyncService {
     vaultAdapter?: SyncVaultAdapter
   ): Promise<void> {
     if (vaultAdapter) this.vaultAdapter = vaultAdapter;
+    // Startup, unlock and every vault change while offline can all call this
+    // at once. Share the run already connecting this chain rather than opening
+    // a second set of sockets.
+    const key = `${chainId}:${deviceId}:${seedHash}`;
+    if (this.pendingInit?.key === key) {
+      this.log('info', 'init', 'Initialization already in progress for this chain');
+      return this.pendingInit.promise;
+    }
+    if (!this.pendingInit && this.chainId === chainId && this.isConnected) {
+      this.log('info', 'init', 'Already initialized for this chain');
+      return;
+    }
+
+    const generation = ++this.initGeneration;
+    // A superseded run may be waiting for its first relay; let it finish now.
+    this.firstConnectResolve?.();
+    const promise = this.initQueue.then(() =>
+      this.runInitialize(generation, chainId, deviceId, seedHash, deviceName)
+    );
+    const entry = { key, promise };
+    this.pendingInit = entry;
+    this.initQueue = promise.catch(() => {});
+    try {
+      await promise;
+    } finally {
+      if (this.pendingInit === entry) this.pendingInit = null;
+    }
+  }
+
+  private async runInitialize(
+    generation: number,
+    chainId: string,
+    deviceId: string,
+    seedHash: string,
+    deviceName?: string
+  ): Promise<void> {
+    if (generation !== this.initGeneration) return;
     if (this.chainId === chainId && this.isConnected) {
       this.log('info', 'init', 'Already initialized for this chain');
       return;
     }
 
+    // Same chain, relays still retrying in the background: reconnect them now
+    // instead of replacing them, which would orphan their sockets and timers.
+    if (
+      this.chainId === chainId &&
+      this.deviceId === deviceId &&
+      this.seedHash === seedHash &&
+      this.encryptionKey &&
+      this.relayConnections.length > 0
+    ) {
+      this.log('info', 'init', 'Reconnecting existing relay connections');
+      await this.waitForFirstRelay(() => {
+        for (const conn of this.relayConnections) {
+          if (conn.reconnectTimer) {
+            clearTimeout(conn.reconnectTimer);
+            conn.reconnectTimer = null;
+          }
+          this.connectRelay(conn);
+        }
+      });
+      return;
+    }
+
+    this.closeRelayConnections();
     this.chainId = chainId;
     this.deviceId = deviceId;
     this.seedHash = seedHash;
@@ -334,9 +399,16 @@ export class SyncService {
     });
 
     await this.deriveKeys(seedHash);
+    if (generation !== this.initGeneration) {
+      // Disconnected (or re-initialized) while deriving. A newer run derives
+      // its own keys after this one, so never leave these in memory.
+      this.wipeKeys();
+      return;
+    }
     this.log('info', 'crypto', 'Derived encryption and signing keys');
 
     const relayUrls = await this.loadRelayUrls();
+    if (generation !== this.initGeneration) return;
     await this.connectAll(relayUrls);
 
     this.log('info', 'init', 'Initialized for chain', { chainId: chainId.substring(0, 8) + '...' });
@@ -435,6 +507,15 @@ export class SyncService {
 
     this.log('info', 'ws', 'Connecting to all relays', { count: urls.length, relays: urls });
 
+    return this.waitForFirstRelay(() => {
+      for (const conn of this.relayConnections) {
+        this.connectRelay(conn);
+      }
+    });
+  }
+
+  // Run `connect`, then resolve once any relay opens or the grace period ends.
+  private waitForFirstRelay(connect: () => void): Promise<void> {
     return new Promise((resolve) => {
       let settled = false;
       const settle = () => {
@@ -453,9 +534,7 @@ export class SyncService {
           settle();
         }
       }, 12000);
-      for (const conn of this.relayConnections) {
-        this.connectRelay(conn);
-      }
+      connect();
     });
   }
 
@@ -497,6 +576,7 @@ export class SyncService {
 
     ws.onopen = () => {
       clearTimeout(timeoutId);
+      if (conn.ws !== ws) return; // Closed by disconnect or re-initialization
       this.log('info', 'ws', 'WebSocket connected', { relay: conn.url });
       conn.reconnectDelay = RECONNECT_DELAY;
       this.isConnected = true;
@@ -1400,38 +1480,16 @@ export class SyncService {
     this.knownDevices.clear();
     this.lastBroadcastTime = 0;
 
+    // Stop any initialization still in flight at its next await.
+    this.initGeneration++;
+    this.pendingInit = null;
+
     // chainId is cleared below, which stops onclose handlers from reconnecting,
     // but clear it before closing sockets so no handler races us
     this.chainId = null;
 
-    for (const conn of this.relayConnections) {
-      if (conn.reconnectTimer) {
-        clearTimeout(conn.reconnectTimer);
-        conn.reconnectTimer = null;
-      }
-      if (conn.ws) {
-        if (conn.subId && conn.ws.readyState === WebSocket.OPEN) {
-          try {
-            conn.ws.send(JSON.stringify(['CLOSE', conn.subId]));
-          } catch {
-            // Ignore errors when closing subscription - socket may already be closing
-          }
-        }
-        conn.ws.close();
-        conn.ws = null;
-      }
-    }
-    this.relayConnections = [];
-    this.firstConnectResolve = null;
-
-    // SECURITY FIX: Wipe sensitive keys from memory
-    if (this.nostrPrivateKey) {
-      crypto.getRandomValues(this.nostrPrivateKey);
-      this.nostrPrivateKey.fill(0);
-      this.nostrPrivateKey = null;
-    }
-    this.encryptionKey = null;
-    this.seedHash = null;
+    this.closeRelayConnections();
+    this.wipeKeys();
 
     this.deviceId = null;
     this.isConnected = false;
@@ -1439,6 +1497,44 @@ export class SyncService {
     this.messageSequence = 0;
 
     this.log('info', 'ws', 'Disconnected');
+  }
+
+  // Close every relay socket and cancel its reconnect timer. conn.ws is cleared
+  // before close() so the socket's onclose does not schedule a reconnect.
+  private closeRelayConnections(): void {
+    for (const conn of this.relayConnections) {
+      if (conn.reconnectTimer) {
+        clearTimeout(conn.reconnectTimer);
+        conn.reconnectTimer = null;
+      }
+      const ws = conn.ws;
+      if (ws) {
+        conn.ws = null;
+        if (conn.subId && ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify(['CLOSE', conn.subId]));
+          } catch {
+            // Ignore errors when closing subscription - socket may already be closing
+          }
+        }
+        ws.close();
+      }
+    }
+    this.relayConnections = [];
+    this.isConnected = false;
+    // Release an initialization waiting for these relays to open
+    this.firstConnectResolve?.();
+  }
+
+  // SECURITY FIX: Wipe sensitive keys from memory
+  private wipeKeys(): void {
+    if (this.nostrPrivateKey) {
+      crypto.getRandomValues(this.nostrPrivateKey);
+      this.nostrPrivateKey.fill(0);
+      this.nostrPrivateKey = null;
+    }
+    this.encryptionKey = null;
+    this.seedHash = null;
   }
 }
 

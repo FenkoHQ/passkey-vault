@@ -484,6 +484,119 @@ test('legacy sync salts are removed from mobile stored configuration', () => {
   assert.equal('syncSalt' in JSON.parse(e.storage.get('sync_config')), false);
 });
 
+// Relays that never open on their own; the test drives open/close by hand.
+function unreachableRelays() {
+  const e = env(browserCode);
+  const sockets = [];
+  e.context.WebSocket = class {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    constructor(url) {
+      this.url = url;
+      this.readyState = 0;
+      this.closed = false;
+      sockets.push(this);
+    }
+    send() {}
+    close() {
+      this.closed = true;
+      this.readyState = 3;
+    }
+  };
+  e.storage.set('custom_relays', ['wss://a.test', 'wss://b.test']);
+  const s = new e.api.SyncService();
+  s.log = () => {};
+  const fire = (delay) => {
+    for (const [id, t] of [...e.timers]) {
+      if (delay === undefined || t.delay === delay) {
+        e.timers.delete(id);
+        t.fn();
+      }
+    }
+  };
+  const until = async (condition) => {
+    for (let i = 0; i < 400 && !condition(); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.ok(condition(), 'timed out waiting for sync service');
+  };
+  // initialize() resolves after a 12s grace period when no relay opens.
+  const settle = async (promise) => {
+    let done = false;
+    promise.then(() => (done = true));
+    await until(() => {
+      fire(12000);
+      return done;
+    });
+  };
+  return { e, s, sockets, live: () => sockets.filter((ws) => !ws.closed), fire, until, settle };
+}
+
+test('re-initializing a disconnected chain reuses one socket per relay', async () => {
+  const { s, sockets, live, fire, settle } = unreachableRelays();
+  let derivations = 0;
+  const derive = s.deriveKeys.bind(s);
+  s.deriveKeys = (seedHash) => {
+    derivations++;
+    return derive(seedHash);
+  };
+  // Startup and a vault change race while the relays are unreachable.
+  const first = s.initialize(config.chainId, 'browser', config.seedHash);
+  const second = s.initialize(config.chainId, 'browser', config.seedHash);
+  await settle(Promise.all([first, second]));
+  assert.equal(live().length, 2, 'overlapping initialization opened a second set of sockets');
+
+  // Every relay drops and schedules a reconnect, then another vault change
+  // re-initializes while still disconnected.
+  for (const ws of live()) {
+    ws.close();
+    ws.onclose({ code: 1006, reason: '' });
+  }
+  await settle(s.initialize(config.chainId, 'browser', config.seedHash));
+  fire(5000);
+  assert.equal(live().length, 2, 'orphaned reconnect timers opened extra sockets');
+  assert.equal(derivations, 1, 'reconnecting the same chain must reuse its keys');
+
+  await s.disconnect();
+  fire();
+  assert.equal(live().length, 0, 'disconnect left sockets open');
+  assert.ok(
+    sockets.every((ws) => ws.closed),
+    'every socket must be closed'
+  );
+});
+
+test('initializing another chain closes the previous relay sockets', async () => {
+  const { s, live, settle } = unreachableRelays();
+  await settle(s.initialize(config.chainId, 'browser', config.seedHash));
+  const previous = live();
+  await settle(s.initialize('cd'.repeat(16), 'browser', 'cd'.repeat(32)));
+  assert.ok(
+    previous.every((ws) => ws.closed),
+    'sockets of the previous chain stayed open'
+  );
+  assert.equal(live().length, 2);
+});
+
+test('disconnect during initialization leaves no keys or sockets behind', async () => {
+  const { s, sockets, until, settle } = unreachableRelays();
+  let release;
+  const derive = s.deriveKeys.bind(s);
+  s.deriveKeys = (seedHash) =>
+    new Promise((resolve) => {
+      release = () => resolve(derive(seedHash));
+    });
+  const init = s.initialize(config.chainId, 'browser', config.seedHash);
+  await until(() => release);
+  await s.disconnect();
+  release();
+  await settle(init);
+  assert.equal(s.nostrPrivateKey, null);
+  assert.equal(s.encryptionKey, null);
+  assert.equal(sockets.length, 0);
+  assert.equal(s.relayConnections.length, 0);
+});
+
 test('a stalled sync request does not block a passkey lookup', async () => {
   const e = env(backgroundCode);
   const owner = Object.create(e.api.BackgroundService.prototype);
