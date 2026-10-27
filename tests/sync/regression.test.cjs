@@ -35,7 +35,7 @@ before(async () => {
   );
   mobileCode = await bundle(
     'android/web/src/app.ts',
-    '\nrender = () => {}; export { AndroidSync, getPasskeys, setPasskeys, getTotpEntries, setTotpEntries, mergeNativeSnapshot, restoreFromBin, getSyncConfig };',
+    '\nrender = () => {}; export { AndroidSync, getPasskeys, setPasskeys, getTotpEntries, setTotpEntries, mergeNativeSnapshot, restoreFromBin, getSyncConfig, issueHotpCode };',
     'void boot().catch'
   );
 });
@@ -482,6 +482,224 @@ test('legacy sync salts are removed from mobile stored configuration', () => {
   e.storage.set('sync_config', JSON.stringify(config));
   assert.equal('syncSalt' in e.api.getSyncConfig(), false);
   assert.equal('syncSalt' in JSON.parse(e.storage.get('sync_config')), false);
+});
+
+// Relays that never open on their own; the test drives open/close by hand.
+function unreachableRelays(code = browserCode) {
+  const e = env(code);
+  const sockets = [];
+  e.context.WebSocket = class {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    constructor(url) {
+      this.url = url;
+      this.readyState = 0;
+      this.closed = false;
+      sockets.push(this);
+    }
+    send() {}
+    close() {
+      this.closed = true;
+      this.readyState = 3;
+    }
+  };
+  e.storage.set('custom_relays', ['wss://a.test', 'wss://b.test']);
+  const s = e.api.SyncService ? new e.api.SyncService() : null;
+  if (s) s.log = () => {};
+  const fire = (delay) => {
+    for (const [id, t] of [...e.timers]) {
+      if (delay === undefined || t.delay === delay) {
+        e.timers.delete(id);
+        t.fn();
+      }
+    }
+  };
+  const until = async (condition) => {
+    for (let i = 0; i < 400 && !condition(); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.ok(condition(), 'timed out waiting for sync service');
+  };
+  // initialize() resolves after a 12s grace period when no relay opens.
+  const settle = async (promise) => {
+    let done = false;
+    promise.then(() => (done = true));
+    await until(() => {
+      fire(12000);
+      return done;
+    });
+  };
+  return { e, s, sockets, live: () => sockets.filter((ws) => !ws.closed), fire, until, settle };
+}
+
+test('re-initializing a disconnected chain reuses one socket per relay', async () => {
+  const { s, sockets, live, fire, settle } = unreachableRelays();
+  let derivations = 0;
+  const derive = s.deriveKeys.bind(s);
+  s.deriveKeys = (seedHash) => {
+    derivations++;
+    return derive(seedHash);
+  };
+  // Startup and a vault change race while the relays are unreachable.
+  const first = s.initialize(config.chainId, 'browser', config.seedHash);
+  const second = s.initialize(config.chainId, 'browser', config.seedHash);
+  await settle(Promise.all([first, second]));
+  assert.equal(live().length, 2, 'overlapping initialization opened a second set of sockets');
+
+  // Every relay drops and schedules a reconnect, then another vault change
+  // re-initializes while still disconnected.
+  for (const ws of live()) {
+    ws.close();
+    ws.onclose({ code: 1006, reason: '' });
+  }
+  await settle(s.initialize(config.chainId, 'browser', config.seedHash));
+  fire(5000);
+  assert.equal(live().length, 2, 'orphaned reconnect timers opened extra sockets');
+  assert.equal(derivations, 1, 'reconnecting the same chain must reuse its keys');
+
+  await s.disconnect();
+  fire();
+  assert.equal(live().length, 0, 'disconnect left sockets open');
+  assert.ok(
+    sockets.every((ws) => ws.closed),
+    'every socket must be closed'
+  );
+});
+
+test('initializing another chain closes the previous relay sockets', async () => {
+  const { s, live, settle } = unreachableRelays();
+  await settle(s.initialize(config.chainId, 'browser', config.seedHash));
+  const previous = live();
+  await settle(s.initialize('cd'.repeat(16), 'browser', 'cd'.repeat(32)));
+  assert.ok(
+    previous.every((ws) => ws.closed),
+    'sockets of the previous chain stayed open'
+  );
+  assert.equal(live().length, 2);
+});
+
+test('disconnect during initialization leaves no keys or sockets behind', async () => {
+  const { s, sockets, until, settle } = unreachableRelays();
+  let release;
+  const derive = s.deriveKeys.bind(s);
+  s.deriveKeys = (seedHash) =>
+    new Promise((resolve) => {
+      release = () => resolve(derive(seedHash));
+    });
+  const init = s.initialize(config.chainId, 'browser', config.seedHash);
+  await until(() => release);
+  await s.disconnect();
+  release();
+  await settle(init);
+  assert.equal(s.nostrPrivateKey, null);
+  assert.equal(s.encryptionKey, null);
+  assert.equal(sockets.length, 0);
+  assert.equal(s.relayConnections.length, 0);
+});
+
+test('a restarted service worker keeps the persisted sync status', async () => {
+  const e = env(backgroundCode);
+  const listener = { addListener() {} };
+  e.context.chrome.runtime = {
+    onMessage: listener,
+    onInstalled: listener,
+    onStartup: listener,
+    onSuspend: listener,
+  };
+  e.storage.set('sync_status', { pendingChanges: 3, lastSyncSuccess: 1234, lastSyncAttempt: 5678 });
+  // A fresh worker: the first writes are startup sync and a cold-start change.
+  const owner = new e.api.BackgroundService();
+  await owner.updateSyncStatus({ connectionStatus: 'connected' });
+  await Promise.all([owner.incrementPendingChanges(), owner.incrementPendingChanges()]);
+  const stored = e.storage.get('sync_status');
+  assert.equal(stored.pendingChanges, 5);
+  assert.equal(stored.lastSyncSuccess, 1234);
+  assert.equal(stored.lastSyncAttempt, 5678);
+  assert.equal(stored.connectionStatus, 'connected');
+});
+
+function syncOwner() {
+  const relays = unreachableRelays(backgroundCode);
+  const owner = Object.create(relays.e.api.BackgroundService.prototype);
+  owner.vaultJobs = Promise.resolve();
+  owner.syncStatus = { pendingChanges: 0, lastError: 'Relay rejected update' };
+  owner.loadPasskeys = async () => [passkey];
+  const { seedHash, ...publicConfig } = config;
+  relays.e.storage.set('sync_config', publicConfig);
+  return { ...relays, owner, seedHash };
+}
+
+test('sync now while offline does not report a healthy connection', async () => {
+  const { owner, e } = syncOwner();
+  // A PIN-protected vault keeps the seed out of raw storage; locked, it has none.
+  await owner.triggerSync();
+  const stored = e.storage.get('sync_status');
+  assert.notEqual(stored.connectionStatus, 'connected');
+  assert.equal(stored.lastError, 'Relay rejected update');
+  assert.equal(stored.pendingChanges, 1);
+});
+
+test('sync now reconnects a PIN-protected vault from its encrypted seed', async () => {
+  const { owner, e, live, settle, seedHash } = syncOwner();
+  owner.resolveSyncSeedHash = async (stored) => {
+    assert.equal(stored.seedHash, undefined);
+    return seedHash;
+  };
+  await settle(owner.triggerSync());
+  assert.equal(live().length, 2, 'triggerSync must start the relays with the unlocked seed');
+  assert.equal(e.storage.get('sync_status').connectionStatus, 'disconnected');
+
+  const [ws] = live();
+  ws.readyState = 1;
+  ws.onopen();
+  await owner.triggerSync();
+  const stored = e.storage.get('sync_status');
+  assert.equal(stored.connectionStatus, 'connected');
+  assert.equal(stored.lastError, null);
+});
+
+test('browser HOTP next-code advances, persists and publishes the counter', async () => {
+  const e = env(backgroundCode);
+  const owner = Object.create(e.api.BackgroundService.prototype);
+  owner.vaultJobs = Promise.resolve();
+  owner.syncStatus = { pendingChanges: 0 };
+  owner.updateSyncStatus = async (update) =>
+    Object.assign(
+      owner.syncStatus,
+      typeof update === 'function' ? update(owner.syncStatus) : update
+    );
+  let syncs = 0;
+  owner.triggerSync = async () => {
+    syncs++;
+  };
+  const secretB64 = Buffer.from('12345678901234567890').toString('base64');
+  e.storage.set('totp_entries', [
+    { id: 'h', type: 'hotp', secretB64, algorithm: 'SHA1', digits: 6, counter: 0, createdAt: 1 },
+  ]);
+  const send = (type) =>
+    new Promise((resolve) => owner.handleMessage({ type, payload: { id: 'h' } }, resolve));
+  // Rendering a code is a pure read and must not consume a counter value.
+  assert.equal((await send('GENERATE_TOTP_CODE')).code, '755224');
+  assert.equal((await send('GENERATE_TOTP_CODE')).code, '755224');
+  assert.equal(e.storage.get('totp_entries')[0].counter, 0);
+  // RFC 4226 Appendix D, counts 0 and 1.
+  assert.equal((await send('NEXT_HOTP_CODE')).code, '755224');
+  assert.equal((await send('NEXT_HOTP_CODE')).code, '287082');
+  assert.equal(e.storage.get('totp_entries')[0].counter, 2);
+  assert.equal(syncs, 2);
+  assert.equal(owner.syncStatus.pendingChanges, 2);
+});
+
+test('mobile HOTP next-code advances and persists the counter', () => {
+  const e = env(mobileCode);
+  const secretB64 = Buffer.from('12345678901234567890').toString('base64');
+  e.api.setTotpEntries([
+    { id: 'h', type: 'hotp', secretB64, algorithm: 'SHA1', digits: 6, counter: 0, createdAt: 1 },
+  ]);
+  assert.equal(e.api.issueHotpCode('h'), '755224');
+  assert.equal(e.api.issueHotpCode('h'), '287082');
+  assert.equal(e.api.getTotpEntries()[0].counter, 2);
+  assert.equal(e.api.issueHotpCode('missing'), null);
 });
 
 test('a stalled sync request does not block a passkey lookup', async () => {

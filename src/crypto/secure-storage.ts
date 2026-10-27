@@ -32,6 +32,13 @@ export interface SecureStorageConfig {
   enabled: boolean;
 }
 
+/** The decrypted vault handed over when the master password is removed. */
+export interface DecryptedVault {
+  passkeys: Record<string, unknown>[];
+  totpEntries: Record<string, unknown>[];
+  syncConfig: SecureStorageConfig | null;
+}
+
 export interface EncryptedData {
   data: string;
   iv: string;
@@ -73,6 +80,14 @@ function encryptData(data: string, key: Uint8Array): EncryptedData {
   };
 }
 
+function opensVault(check: EncryptedData, key: Uint8Array): boolean {
+  try {
+    return decryptData(check, key) === 'passkey-vault-check';
+  } catch {
+    return false;
+  }
+}
+
 function decryptData(encryptedData: EncryptedData, key: Uint8Array): string {
   const iv = base64ToUint8Array(encryptedData.iv);
   const encrypted = base64ToUint8Array(encryptedData.data);
@@ -103,53 +118,75 @@ export class SecureStorage {
    * This must be called before any other operations
    */
   async initialize(masterPassword: string): Promise<boolean> {
+    // The candidate key stays local until it has opened the check value. A
+    // wrong PIN then leaves an unlocked vault unlocked with its own key, and
+    // concurrent readers never decrypt with an unverified key.
+    let key: Uint8Array | null = null;
     try {
       // Load or create salt
+      let salt: Uint8Array;
       const saltResult = await chrome.storage.local.get(STORAGE_KEYS.ENCRYPTION_SALT);
       if (saltResult[STORAGE_KEYS.ENCRYPTION_SALT]) {
-        this.salt = base64ToUint8Array(saltResult[STORAGE_KEYS.ENCRYPTION_SALT]);
+        salt = base64ToUint8Array(saltResult[STORAGE_KEYS.ENCRYPTION_SALT]);
       } else {
         // First time setup - generate new salt
-        this.salt = randomBytes(ENCRYPTION_CONFIG.saltLength);
+        salt = randomBytes(ENCRYPTION_CONFIG.saltLength);
         await chrome.storage.local.set({
-          [STORAGE_KEYS.ENCRYPTION_SALT]: uint8ArrayToBase64(this.salt),
+          [STORAGE_KEYS.ENCRYPTION_SALT]: uint8ArrayToBase64(salt),
         });
       }
 
       // Derive encryption key
-      this.encryptionKey = await deriveKeyFromPassword(masterPassword, this.salt);
+      key = await deriveKeyFromPassword(masterPassword, salt);
 
       // Verify password is correct (if we have existing data)
       const checkResult = await chrome.storage.local.get(STORAGE_KEYS.MASTER_KEY_CHECK);
       if (checkResult[STORAGE_KEYS.MASTER_KEY_CHECK]) {
-        try {
-          const decrypted = decryptData(
-            checkResult[STORAGE_KEYS.MASTER_KEY_CHECK],
-            this.encryptionKey
-          );
-          if (decrypted !== 'passkey-vault-check') {
-            this.lock();
-            return false;
-          }
-        } catch {
-          this.lock();
+        if (!opensVault(checkResult[STORAGE_KEYS.MASTER_KEY_CHECK], key)) {
+          secureWipe(key);
           return false;
         }
       } else {
         // First time - store check value
-        const checkData = encryptData('passkey-vault-check', this.encryptionKey);
+        const checkData = encryptData('passkey-vault-check', key);
         await chrome.storage.local.set({
           [STORAGE_KEYS.MASTER_KEY_CHECK]: checkData,
         });
       }
 
+      if (this.encryptionKey) {
+        secureWipe(this.encryptionKey);
+      }
+      this.encryptionKey = key;
+      this.salt = salt;
       this.isUnlocked = true;
       this.resetAutoLock();
       return true;
     } catch (error) {
       console.error('SecureStorage initialization failed:', error);
-      this.lock();
+      if (key) secureWipe(key);
       return false;
+    }
+  }
+
+  /**
+   * Check a PIN against the stored check value without touching the unlock
+   * state: the candidate key is derived locally and wiped afterwards. False
+   * when no PIN is set up.
+   */
+  private async verifyPassword(password: string): Promise<boolean> {
+    const salt = (await chrome.storage.local.get(STORAGE_KEYS.ENCRYPTION_SALT))[
+      STORAGE_KEYS.ENCRYPTION_SALT
+    ];
+    const check = (await chrome.storage.local.get(STORAGE_KEYS.MASTER_KEY_CHECK))[
+      STORAGE_KEYS.MASTER_KEY_CHECK
+    ];
+    if (!salt || !check) return false;
+    const key = await deriveKeyFromPassword(password, base64ToUint8Array(salt));
+    try {
+      return opensVault(check, key);
+    } finally {
+      secureWipe(key);
     }
   }
 
@@ -206,13 +243,18 @@ export class SecureStorage {
   }
 
   /**
-   * Store sync configuration securely
+   * Store sync configuration securely. `alongside` holds other keys to write
+   * in the same storage operation, so the two land together or not at all.
    */
-  async storeSyncConfig(config: SecureStorageConfig): Promise<void> {
+  async storeSyncConfig(
+    config: SecureStorageConfig,
+    alongside: Record<string, unknown> = {}
+  ): Promise<void> {
     this.ensureUnlocked();
 
     const encrypted = encryptData(JSON.stringify(cleanSyncConfig(config)), this.encryptionKey!);
     await chrome.storage.local.set({
+      ...alongside,
       [STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG]: encrypted,
     });
 
@@ -373,12 +415,13 @@ export class SecureStorage {
    * Change the master password
    */
   async changeMasterPassword(currentPassword: string, newPassword: string): Promise<boolean> {
-    // Verify current password
-    if (!this.isUnlocked) {
-      const verified = await this.initialize(currentPassword);
-      if (!verified) {
-        return false;
-      }
+    // Always check the current PIN. The background only routes this message
+    // while unlocked, so a check that ran only when locked never ran at all.
+    if (!(await this.verifyPassword(currentPassword))) {
+      return false;
+    }
+    if (!this.isStorageUnlocked() && !(await this.initialize(currentPassword))) {
+      return false;
     }
 
     try {
@@ -431,15 +474,32 @@ export class SecureStorage {
   }
 
   /**
-   * Remove the master password: verify the current one, then drop the
-   * encrypted layer (check value, salt, encrypted blobs) so the vault is no
-   * longer locked. Raw display copies in chrome.storage.local are untouched.
+   * Remove the master password: verify the current one, hand the decrypted
+   * vault to `persistPlaintext` to write the cleartext copy, and only once that
+   * write has succeeded drop the encrypted layer (check value, salt, blobs).
+   * A failure or a stopped worker before then leaves the PIN'd vault intact.
+   * If only the final removal fails, the vault stays PIN'd and locked, and the
+   * next unlock folds the cleartext copy back in and deletes it.
    */
-  async removeMasterPassword(currentPassword: string): Promise<boolean> {
-    const verified = await this.initialize(currentPassword);
-    if (!verified) {
+  async removeMasterPassword(
+    currentPassword: string,
+    persistPlaintext: (vault: DecryptedVault) => Promise<void>
+  ): Promise<boolean> {
+    // A side-effect-free check: initialize() here used to lock the vault on a
+    // mistyped PIN without disconnecting sync.
+    if (!(await this.verifyPassword(currentPassword))) {
       return false;
     }
+    // Strict reads: a blob that fails to decrypt aborts the removal rather
+    // than being replaced by an empty cleartext list and then deleted.
+    const syncConfig = await this.readEncrypted<SecureStorageConfig>(
+      STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG
+    );
+    await persistPlaintext({
+      passkeys: (await this.readEncrypted(STORAGE_KEYS.ENCRYPTED_PASSKEYS)) || [],
+      totpEntries: (await this.readEncrypted(STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES)) || [],
+      syncConfig: syncConfig ? cleanSyncConfig(syncConfig) : null,
+    });
     this.lock();
     await chrome.storage.local.remove([
       STORAGE_KEYS.MASTER_KEY_CHECK,
@@ -449,6 +509,16 @@ export class SecureStorage {
       STORAGE_KEYS.ENCRYPTION_SALT,
     ]);
     return true;
+  }
+
+  /** Decrypt a stored blob; null when absent, throws when it does not decrypt. */
+  private async readEncrypted<T = Record<string, unknown>[]>(
+    storageKey: string
+  ): Promise<T | null> {
+    this.ensureUnlocked();
+    const stored = (await chrome.storage.local.get(storageKey))[storageKey];
+    if (!stored) return null;
+    return JSON.parse(decryptData(stored, this.encryptionKey!)) as T;
   }
 
   /**

@@ -25,7 +25,10 @@ export interface PrfEvalInput {
 
 /**
  * Select the PRF eval input from the extensions payload.
- * Checks eval, then evalByCredential with flexible key matching.
+ *
+ * An evalByCredential entry for the credential being returned wins, and eval
+ * is only the fallback when no entry matches (WebAuthn Level 3 §10.1.4, client
+ * extension processing for authentication). Keys match as base64url or base64.
  */
 export function selectPrfEval(
   prfInput:
@@ -35,9 +38,9 @@ export function selectPrfEval(
   credentialId?: string
 ): PrfEvalInput | null {
   if (!prfInput) return null;
-  if (prfInput.eval) return prfInput.eval;
+  const fallback = prfInput.eval ?? null;
   const map = prfInput.evalByCredential;
-  if (!map) return null;
+  if (!map) return fallback;
 
   const candidates = new Set<string>();
   if (credentialId) {
@@ -59,7 +62,7 @@ export function selectPrfEval(
       /* ignore conversion failure */
     }
   }
-  return null;
+  return fallback;
 }
 
 /**
@@ -83,7 +86,12 @@ export async function getOrCreatePrfKey(passkey: {
 export function normalizePrfInput(input: unknown): ArrayBuffer | null {
   if (!input) return null;
   if (input instanceof ArrayBuffer) return input;
-  if (ArrayBuffer.isView(input)) return (input as ArrayBufferView).buffer as ArrayBuffer;
+  if (ArrayBuffer.isView(input)) {
+    // Only the bytes the view covers: `.buffer` is the whole backing store,
+    // which for a subarray or pooled buffer holds unrelated bytes too.
+    const view = input as ArrayBufferView;
+    return (view.buffer as ArrayBuffer).slice(view.byteOffset, view.byteOffset + view.byteLength);
+  }
   if (
     input != null &&
     typeof input === 'object' &&
