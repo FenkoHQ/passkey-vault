@@ -80,6 +80,8 @@ git push origin v0.9.0
 
 The CI pipeline builds both extensions, publishes to the Chrome Web Store, and creates a GitHub release. Release notes come from the matching `## [x.y.z]` section in `CHANGELOG.md`.
 
+The publishing jobs (Chrome Web Store, Firefox Add-ons, Google Play, the GitHub release, and the iOS TestFlight upload) run in the `release` deployment environment. Configure it under Settings → Environments with required reviewers, and keep the store credentials there as environment secrets, so a pushed tag waits for a maintainer's approval before anything is published. Without that protection rule the jobs still run unattended. Firefox signing uses the `web-ext` version pinned in `package.json`; update it there, not in the workflow.
+
 Store listing copy and upload assets live in `docs/cws/`.
 
 ## Security Issues

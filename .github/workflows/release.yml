@@ -154,6 +154,11 @@ jobs:
     name: Publish to Chrome Web Store
     needs: build
     runs-on: ubuntu-latest
+    # Publishing jobs run in the "release" deployment environment, so a
+    # maintainer can require reviewers (and keep the store credentials as
+    # environment secrets) under Settings > Environments. Without a
+    # protection rule there, a tag push still publishes unattended.
+    environment: release
 
     steps:
       - name: Download Chrome ZIP artifact
@@ -163,24 +168,31 @@ jobs:
 
       - name: Get OAuth access token
         id: token
+        # Secrets reach the script through the environment, and the form is
+        # piped to curl, so the refresh token never appears on a command line.
+        env:
+          CLIENT_ID: ${{ secrets.CHROME_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.CHROME_CLIENT_SECRET }}
+          REFRESH_TOKEN: ${{ secrets.CHROME_REFRESH_TOKEN }}
         run: |
-          TOKEN=$(curl -sf -X POST https://oauth2.googleapis.com/token \
-            -d "client_id=${{ secrets.CHROME_CLIENT_ID }}" \
-            -d "client_secret=${{ secrets.CHROME_CLIENT_SECRET }}" \
-            -d "refresh_token=${{ secrets.CHROME_REFRESH_TOKEN }}" \
-            -d "grant_type=refresh_token" | jq -r .access_token)
+          TOKEN=$(printf 'client_id=%s&client_secret=%s&refresh_token=%s&grant_type=refresh_token' \
+            "$CLIENT_ID" "$CLIENT_SECRET" "$REFRESH_TOKEN" |
+            curl -sf -X POST https://oauth2.googleapis.com/token --data @- | jq -r .access_token)
           test -n "$TOKEN" && test "$TOKEN" != "null"
           echo "::add-mask::$TOKEN"
           echo "access_token=$TOKEN" >> $GITHUB_OUTPUT
 
       - name: Upload ZIP to Chrome Web Store
+        env:
+          ACCESS_TOKEN: ${{ steps.token.outputs.access_token }}
+          EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
         run: |
           RESPONSE=$(curl -s -X PUT \
-            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "x-goog-api-version: 2" \
             -H "Content-Type: application/zip" \
             --data-binary @passkey-vault-chrome.zip \
-            "https://www.googleapis.com/upload/chromewebstore/v1.1/items/${{ secrets.CHROME_EXTENSION_ID }}?uploadType=media")
+            "https://www.googleapis.com/upload/chromewebstore/v1.1/items/${EXTENSION_ID}?uploadType=media")
           echo "$RESPONSE" | jq .
           STATE=$(echo "$RESPONSE" | jq -r '.uploadState')
           if [ "$STATE" != "SUCCESS" ]; then
@@ -190,12 +202,15 @@ jobs:
           fi
 
       - name: Publish to Chrome Web Store
+        env:
+          ACCESS_TOKEN: ${{ steps.token.outputs.access_token }}
+          EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
         run: |
           RESPONSE=$(curl -s -X POST \
-            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
             -H "x-goog-api-version: 2" \
             -H "Content-Length: 0" \
-            "https://www.googleapis.com/chromewebstore/v1.1/items/${{ secrets.CHROME_EXTENSION_ID }}/publish")
+            "https://www.googleapis.com/chromewebstore/v1.1/items/${EXTENSION_ID}/publish")
           echo "$RESPONSE" | jq .
           STATUS=$(echo "$RESPONSE" | jq -r '.status[0] // empty')
           case "$STATUS" in
@@ -215,12 +230,25 @@ jobs:
     name: Publish to Firefox Add-ons (AMO)
     needs: build
     runs-on: ubuntu-latest
+    environment: release
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: '24'
+          cache: 'npm'
+
+      # web-ext is an exact devDependency, so the lockfile fixes the version
+      # and integrity of everything that handles the AMO credentials. No
+      # install scripts: none of web-ext's tree needs one.
+      - name: Install web-ext from the lockfile
+        run: npm ci --ignore-scripts
 
       - name: Download Firefox build artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -228,13 +256,16 @@ jobs:
           name: passkey-vault-firefox
           path: dist-firefox
 
+      # web-ext takes its API key and secret from WEB_EXT_API_KEY and
+      # WEB_EXT_API_SECRET, which keeps them off the command line.
       - name: Sign and submit to AMO (listed channel)
+        env:
+          WEB_EXT_API_KEY: ${{ secrets.AMO_JWT_ISSUER }}
+          WEB_EXT_API_SECRET: ${{ secrets.AMO_JWT_SECRET }}
         run: |
-          npx --yes web-ext@8 sign \
+          ./node_modules/.bin/web-ext sign \
             --channel=listed \
             --source-dir=dist-firefox \
-            --api-key="${{ secrets.AMO_JWT_ISSUER }}" \
-            --api-secret="${{ secrets.AMO_JWT_SECRET }}" \
             --timeout=900000
 
   publish-play:
@@ -247,6 +278,7 @@ jobs:
     # variable, so the job is a clean skip until that's set — the rest of the
     # release (Chrome, Firefox, GitHub Release) is never affected.
     if: ${{ vars.PLAY_WIF_PROVIDER != '' }}
+    environment: release
     permissions:
       contents: read
       id-token: write # required to mint the OIDC token for WIF
@@ -345,6 +377,7 @@ jobs:
     name: Create Release
     needs: [build, build-android]
     runs-on: ubuntu-latest
+    environment: release
     permissions:
       contents: write
 
