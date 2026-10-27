@@ -1,0 +1,7 @@
+{
+  "origins": [
+    "https://login.live.com",
+    "https://login.microsoftonline.com",
+    "https://account.live.com"
+  ]
+}

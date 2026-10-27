@@ -256,6 +256,40 @@ describe('TOTP module', () => {
       ).toThrow(/digits/);
     });
 
+    it.each([
+      ['digits=six', /Unsupported digits: six/],
+      ['digits=7abc', /Unsupported digits: 7abc/],
+      ['digits=-6', /Unsupported digits/],
+      ['period=abc', /Unsupported period: abc/],
+      ['period=0', /Unsupported period: 0/],
+      ['period=30.5', /Unsupported period/],
+      ['counter=abc', /Unsupported counter: abc/],
+      ['counter=99999999999999999999', /Unsupported counter/],
+    ])('rejects malformed %s instead of storing NaN', (param, error) => {
+      expect(() =>
+        parseOtpauth(`otpauth://hotp/Acme:user?secret=JBSWY3DPEHPK3PXP&${param}`)
+      ).toThrow(error);
+    });
+
+    it('treats empty numeric parameters as defaults', () => {
+      const parsed = parseOtpauth(
+        'otpauth://totp/Acme:user?secret=JBSWY3DPEHPK3PXP&digits=&period=&counter='
+      );
+      expect([parsed.digits, parsed.period, parsed.counter]).toEqual([6, 30, 0]);
+    });
+
+    it('rejects a secret that decodes to no bytes', () => {
+      expect(() => parseOtpauth('otpauth://totp/Acme:user?secret====')).toThrow(/Empty secret/);
+    });
+
+    it('refuses to generate codes from non-integer parameters', () => {
+      const secret = base32Decode('JBSWY3DPEHPK3PXP');
+      expect(() => generateHotp({ secret, digits: NaN, counter: 0 })).toThrow(/digits/);
+      expect(() => generateHotp({ secret, counter: NaN })).toThrow(/counter/);
+      expect(() => generateTotp({ secret, period: NaN })).toThrow(/period/);
+      expect(() => generateTotp({ secret, period: 0 })).toThrow(/period/);
+    });
+
     it('round-trips through buildOtpauth', () => {
       const params = {
         type: 'totp' as const,

@@ -30,7 +30,8 @@ describe('password manager imports', () => {
             totp: URI,
             fido2Credentials: [
               {
-                credentialId: 'Y3JlZC1pZA',
+                // Bitwarden writes 16-byte credential IDs as GUIDs.
+                credentialId: '674880d4-06ed-1af1-e8dd-2d901d9dbd3d',
                 keyType: 'public-key',
                 keyAlgorithm: 'ECDSA',
                 keyCurve: 'P-256',
@@ -56,9 +57,30 @@ describe('password manager imports', () => {
       rpId: 'github.com',
       userName: 'ali@example.com',
       userDisplayName: 'Ali',
-      credentialId: 'Y3JlZC1pZA',
+      credentialId: 'Z0iA1AbtGvHo3S2QHZ29PQ',
     });
     expect(parsed.passkeys[0].createdAt).toBe(Date.parse('2026-01-02T03:04:05.000Z'));
+  });
+
+  it('decodes Bitwarden "b64."-prefixed credential IDs', () => {
+    const rawId = Buffer.from(Array.from({ length: 32 }, (_, i) => i)).toString('base64url');
+    const text = JSON.stringify({
+      encrypted: false,
+      items: [
+        {
+          type: 1,
+          name: 'Example',
+          login: {
+            username: 'ali',
+            fido2Credentials: [
+              { credentialId: `b64.${rawId}`, keyValue: pkcs8Base64Url, rpId: 'example.com' },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(parseImport('bitwarden.json', text).passkeys[0].credentialId).toBe(rawId);
   });
 
   it('refuses an encrypted Bitwarden export', () => {

@@ -9,6 +9,7 @@
 import { FormatParser, ImportInput, ParsedImport, PortablePasskey, emptyImport } from '../types';
 import { otpFromManagerField, otpFromUri } from '../otp';
 import { parseCsv, parseCsvGrid, csvHeaders, CsvRow } from '../csv';
+import { decodeBitwardenCredentialId } from '../../sync/credential-ids';
 
 type Json = Record<string, unknown>;
 
@@ -110,9 +111,11 @@ export const bitwardenJson: FormatParser = {
       asArray(login.fido2Credentials).forEach((rawCredential) => {
         const credential = asObject(rawCredential);
         if (!credential?.keyValue) return;
+        // Bitwarden writes credential IDs as GUIDs or "b64."-prefixed, not base64url.
+        const credentialId = str(credential.credentialId);
         result.passkeys.push(
           passkeyFrom({
-            credentialId: str(credential.credentialId),
+            credentialId: decodeBitwardenCredentialId(credentialId) ?? credentialId,
             rpId: str(credential.rpId),
             userName: str(credential.userName) || username,
             userDisplayName: str(credential.userDisplayName),

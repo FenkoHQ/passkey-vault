@@ -25,7 +25,10 @@ export interface PrfEvalInput {
 
 /**
  * Select the PRF eval input from the extensions payload.
- * Checks eval, then evalByCredential with flexible key matching.
+ *
+ * An evalByCredential entry for the credential being returned wins, and eval
+ * is only the fallback when no entry matches (WebAuthn Level 3 §10.1.4, client
+ * extension processing for authentication). Keys match as base64url or base64.
  */
 export function selectPrfEval(
   prfInput:
@@ -35,9 +38,9 @@ export function selectPrfEval(
   credentialId?: string
 ): PrfEvalInput | null {
   if (!prfInput) return null;
-  if (prfInput.eval) return prfInput.eval;
+  const fallback = prfInput.eval ?? null;
   const map = prfInput.evalByCredential;
-  if (!map) return null;
+  if (!map) return fallback;
 
   const candidates = new Set<string>();
   if (credentialId) {
@@ -59,7 +62,7 @@ export function selectPrfEval(
       /* ignore conversion failure */
     }
   }
-  return null;
+  return fallback;
 }
 
 /**
@@ -83,7 +86,12 @@ export async function getOrCreatePrfKey(passkey: {
 export function normalizePrfInput(input: unknown): ArrayBuffer | null {
   if (!input) return null;
   if (input instanceof ArrayBuffer) return input;
-  if (ArrayBuffer.isView(input)) return (input as ArrayBufferView).buffer as ArrayBuffer;
+  if (ArrayBuffer.isView(input)) {
+    // Only the bytes the view covers: `.buffer` is the whole backing store,
+    // which for a subarray or pooled buffer holds unrelated bytes too.
+    const view = input as ArrayBufferView;
+    return (view.buffer as ArrayBuffer).slice(view.byteOffset, view.byteOffset + view.byteLength);
+  }
   if (
     input != null &&
     typeof input === 'object' &&
@@ -150,24 +158,60 @@ async function hmacSha256(keyBytes: ArrayBuffer, data: ArrayBuffer): Promise<Arr
   return crypto.subtle.sign('HMAC', key, data);
 }
 
+export interface PrfInput {
+  eval?: PrfEvalInput;
+  evalByCredential?: Record<string, PrfEvalInput>;
+}
+
 /**
- * Build clientExtensionResults including PRF output if present.
+ * The prf input to act on, or null when the relying party did not ask for
+ * prf or the request must skip it: evalByCredential is an error at
+ * registration, and an extension whose processing errs is skipped
+ * (WebAuthn Level 3 §10.1.4, §5.1.3 step 13).
+ */
+export function usablePrfInput(
+  extensions: Record<string, unknown> | undefined,
+  ceremony: 'create' | 'get'
+): PrfInput | null {
+  const prf = extensions?.prf;
+  if (!prf || typeof prf !== 'object') return null;
+  if (ceremony === 'create' && (prf as PrfInput).evalByCredential !== undefined) return null;
+  return prf as PrfInput;
+}
+
+/**
+ * Client extension outputs for the extensions the relying party requested,
+ * and nothing it did not ask for (WebAuthn Level 3 §9.4):
+ *
+ *   credProps  registration only (§10.1.3); every vault passkey is
+ *              discoverable, so rk is true
+ *   prf        `enabled` is always reported at registration and never at
+ *              sign-in (§10.1.4); `results` only when an input was
+ *              evaluated, so a sign-in with no applicable input gets {}
  */
 export function buildClientExtensionResults(
+  extensions: Record<string, unknown> | undefined,
+  ceremony: 'create' | 'get',
   prfResults: PrfResults | null
 ): Record<string, unknown> {
-  const baseResults: Record<string, unknown> = { credProps: { rk: true } };
-  if (!prfResults?.results) return baseResults;
-
-  const encoded: { results: Record<string, string> } = { results: {} };
-  if (prfResults.results.first) {
-    encoded.results.first = arrayBufferToBase64URL(prfResults.results.first);
+  const results: Record<string, unknown> = {};
+  if (ceremony === 'create' && extensions?.credProps === true) {
+    results.credProps = { rk: true };
   }
-  if (prfResults.results.second) {
-    encoded.results.second = arrayBufferToBase64URL(prfResults.results.second);
+  if (usablePrfInput(extensions, ceremony)) {
+    const prf: Record<string, unknown> = ceremony === 'create' ? { enabled: true } : {};
+    if (prfResults?.results.first) {
+      const encoded: Record<string, string> = {
+        first: arrayBufferToBase64URL(prfResults.results.first),
+      };
+      if (prfResults.results.second) {
+        encoded.second = arrayBufferToBase64URL(prfResults.results.second);
+      }
+      prf.results = encoded;
+    }
+    results.prf = prf;
   }
-  if (encoded.results.first || encoded.results.second) baseResults.prf = encoded;
-  return baseResults;
+  return results;
 }
 
 /**

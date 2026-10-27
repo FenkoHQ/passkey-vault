@@ -11,6 +11,15 @@
 import { arrayBufferToBase64, arrayBufferToBase64URL } from '../utils/base64';
 import { StoredTotpEntry } from '../crypto/totp-store';
 import { derivePublicKeyBase64, toPkcs8Base64 } from './keys';
+import {
+  IMPORTED_BACKUP_FLAGS,
+  canRepairBackupFlags,
+  hasBackupFlags,
+  normalizeBackupFlags,
+  withBackupFlags,
+  type BackupFields,
+  type BackupRepair,
+} from '../sync/backup-flags';
 import { FormatParser, ImportInput, ParsedImport, PortableOtp, PortablePasskey } from './types';
 import { AUTHENTICATOR_PARSERS } from './formats/authenticators';
 import { MANAGER_PARSERS } from './formats/managers';
@@ -31,7 +40,7 @@ export const IMPORT_PARSERS: FormatParser[] = [
   ...AUTHENTICATOR_PARSERS,
 ];
 
-export interface StoredPasskeyRecord {
+export interface StoredPasskeyRecord extends BackupFields {
   id: string;
   credentialId: string;
   type: string;
@@ -42,10 +51,13 @@ export interface StoredPasskeyRecord {
   publicKey: string;
   createdAt: number;
   counter: number;
+  prfKey?: string;
 }
 
 export interface ExistingVault {
-  passkeys: Array<{ id?: string; credentialId?: string; rpId?: string; publicKey?: string }>;
+  passkeys: Array<
+    { id?: string; credentialId?: string; rpId?: string; publicKey?: string } & BackupFields
+  >;
   totpEntries: Array<Partial<StoredTotpEntry>>;
 }
 
@@ -56,6 +68,11 @@ export interface MaterializedImport {
   totpEntries: StoredTotpEntry[];
   duplicatePasskeys: number;
   duplicateTotp: number;
+  /**
+   * Passkeys already in the vault whose backup flags this file corrects,
+   * typically ones imported before passkeys carried their own flags.
+   */
+  backupRepairs: BackupRepair[];
   warnings: string[];
 }
 
@@ -127,7 +144,7 @@ function toStoredTotp(entry: PortableOtp): StoredTotpEntry {
   secret.set(entry.secret);
 
   return {
-    id: crypto.randomUUID(),
+    id: entry.id || crypto.randomUUID(),
     type: entry.type,
     issuer: entry.issuer,
     account: entry.account,
@@ -136,7 +153,8 @@ function toStoredTotp(entry: PortableOtp): StoredTotpEntry {
     digits: entry.digits,
     period: entry.period,
     counter: entry.counter,
-    createdAt: Date.now(),
+    createdAt: entry.createdAt || Date.now(),
+    ...(entry.lastUsed && { lastUsed: entry.lastUsed }),
   };
 }
 
@@ -157,8 +175,8 @@ async function toStoredPasskey(passkey: PortablePasskey): Promise<StoredPasskeyR
   const publicKey = await derivePublicKeyBase64(privateKey);
   const credentialId = normalizeCredentialId(passkey.credentialId);
 
-  return {
-    id: credentialId,
+  const record: StoredPasskeyRecord = {
+    id: passkey.id || credentialId,
     credentialId,
     type: PASSKEY_TYPE,
     rpId: passkey.rpId,
@@ -172,13 +190,41 @@ async function toStoredPasskey(passkey: PortablePasskey): Promise<StoredPasskeyR
     publicKey,
     createdAt: passkey.createdAt || Date.now(),
     counter: passkey.counter || 0,
+    ...(passkey.prfKey && { prfKey: passkey.prfKey }),
   };
+
+  if (passkey.backup === 'unknown') return record;
+  const backup = passkey.backup ?? { flags: IMPORTED_BACKUP_FLAGS, source: 'imported' as const };
+  return withBackupFlags(record, backup.flags, backup.source);
+}
+
+/**
+ * A re-imported passkey the vault already holds: correct its backup flags if
+ * they are only an assumption (an earlier import, or the upgrade snapshot)
+ * and the file says otherwise. Nothing else about the stored record changes.
+ */
+function backupRepairFor(
+  record: StoredPasskeyRecord,
+  existing: ExistingVault['passkeys'][number]
+): BackupRepair | null {
+  if (!hasBackupFlags(record) || !canRepairBackupFlags(existing)) return null;
+  if (existing.rpId !== record.rpId || existing.publicKey !== record.publicKey) return null;
+  const flags = normalizeBackupFlags(record.backupEligible === true, record.backupState === true);
+  if (
+    hasBackupFlags(existing) &&
+    existing.backupEligible === flags.backupEligible &&
+    (existing.backupState === true) === flags.backupState
+  ) {
+    return null;
+  }
+  return { id: existing.id || record.id, rpId: record.rpId, publicKey: record.publicKey, ...flags };
 }
 
 /**
  * Turn parsed entries into vault records, dropping anything the vault already
  * holds. TOTP seeds have no stable id across apps, so they are matched on
- * issuer + account + secret rather than on id.
+ * issuer + account + secret; a Fenko backup does carry the ids, so those are
+ * matched too.
  */
 export async function materialize(
   parsed: ParsedImport,
@@ -186,10 +232,15 @@ export async function materialize(
 ): Promise<MaterializedImport> {
   const warnings = [...parsed.warnings];
 
-  const knownPasskeys = new Set(
-    existing.passkeys.flatMap((entry) => [entry.id, entry.credentialId].filter(Boolean) as string[])
-  );
+  const knownPasskeys = new Map<string, ExistingVault['passkeys'][number]>();
+  for (const entry of existing.passkeys) {
+    for (const key of [entry.id, entry.credentialId]) {
+      if (key) knownPasskeys.set(key, entry);
+    }
+  }
+  const backupRepairs: BackupRepair[] = [];
   const knownOtp = new Set(existing.totpEntries.map(otpFingerprint));
+  const knownOtpIds = new Set(existing.totpEntries.map((entry) => entry.id).filter(Boolean));
 
   const passkeys: StoredPasskeyRecord[] = [];
   let duplicatePasskeys = 0;
@@ -197,11 +248,17 @@ export async function materialize(
   for (const candidate of parsed.passkeys) {
     try {
       const record = await toStoredPasskey(candidate);
-      if (knownPasskeys.has(record.id)) {
+      const known = knownPasskeys.get(record.id) ?? knownPasskeys.get(record.credentialId);
+      if (known) {
         duplicatePasskeys += 1;
+        const repair = backupRepairFor(record, known);
+        if (repair && !backupRepairs.some((entry) => entry.id === repair.id)) {
+          backupRepairs.push(repair);
+        }
         continue;
       }
-      knownPasskeys.add(record.id);
+      knownPasskeys.set(record.id, record);
+      knownPasskeys.set(record.credentialId, record);
       passkeys.push(record);
     } catch (error) {
       warnings.push(`${candidate.rpId || 'passkey'}: ${(error as Error).message}`);
@@ -214,11 +271,12 @@ export async function materialize(
   for (const candidate of parsed.otp) {
     const record = toStoredTotp(candidate);
     const fingerprint = otpFingerprint(record);
-    if (knownOtp.has(fingerprint)) {
+    if (knownOtp.has(fingerprint) || knownOtpIds.has(record.id)) {
       duplicateTotp += 1;
       continue;
     }
     knownOtp.add(fingerprint);
+    knownOtpIds.add(record.id);
     totpEntries.push(record);
   }
 
@@ -229,6 +287,7 @@ export async function materialize(
     totpEntries,
     duplicatePasskeys,
     duplicateTotp,
+    backupRepairs,
     warnings,
   };
 }
