@@ -499,8 +499,7 @@ class BackgroundService {
       if (stamped === 0) return;
       await this.savePasskeys(records);
       logger.info(`Recorded pre-upgrade backup flags on ${stamped} passkeys`);
-      await this.incrementPendingChanges();
-      void this.triggerSync();
+      await this.noteVaultChange();
     });
   }
 
@@ -638,8 +637,7 @@ class BackgroundService {
     await this.recordDeletions(repair.deletions);
     await this.savePasskeys(repair.passkeys);
     logger.info(`Re-keyed ${repair.deletions.length} passkeys with Bitwarden credential IDs`);
-    await this.incrementPendingChanges();
-    void this.triggerSync();
+    await this.noteVaultChange();
   }
 
   private async loadDeletions(): Promise<SyncDeletion[]> {
@@ -1099,8 +1097,7 @@ class BackgroundService {
         user: (user?.name as string) || '',
       });
       this.logSync('PASSKEY_CREATED', { id: credentialIdBase64, rpId });
-      await this.incrementPendingChanges();
-      this.triggerSync();
+      await this.noteVaultChange();
 
       const rawIdBase64 = base64urlToBase64(credentialIdBase64);
       const clientDataJSONBase64 = arrayBufferToBase64(clientDataJSONBytes.buffer);
@@ -1416,8 +1413,7 @@ class BackgroundService {
         `Marked passkey for ${current.rpId} as ${synced ? 'synced' : 'device-bound'}`,
         { rpId: current.rpId, credentialId: current.id }
       );
-      await this.incrementPendingChanges();
-      void this.triggerSync();
+      await this.noteVaultChange();
       const { backupEligible, backupState, backupSource, updatedAt } = passkeys[index];
       return { success: true, passkey: { backupEligible, backupState, backupSource, updatedAt } };
     } catch (error: unknown) {
@@ -1442,8 +1438,7 @@ class BackgroundService {
         );
         await this.savePasskeys(filtered);
         this.logSync('PASSKEY_DELETED', { credentialId });
-        await this.incrementPendingChanges();
-        this.triggerSync();
+        await this.noteVaultChange();
         return { success: true, message: 'Passkey deleted' };
       }
       return { success: false, error: 'Passkey not found' };
@@ -1508,8 +1503,7 @@ class BackgroundService {
     if (newTotp.length > 0) await saveTotpEntries([...totpEntries, ...newTotp]);
 
     if (newPasskeys.length > 0 || newTotp.length > 0 || repaired > 0) {
-      await this.incrementPendingChanges();
-      void this.triggerSync();
+      await this.noteVaultChange();
     }
     return {
       success: true,
@@ -1538,8 +1532,7 @@ class BackgroundService {
     await this.savePasskeys([]);
     await saveTotpEntries([]);
     await clearSiteIcons();
-    await this.incrementPendingChanges();
-    void this.triggerSync();
+    await this.noteVaultChange();
     return { success: true };
   }
 
@@ -1620,8 +1613,7 @@ class BackgroundService {
 
       await addTotpEntryStore(entry);
       this.logSync('TOTP_CREATED', { id: entry.id, issuer: entry.issuer });
-      await this.incrementPendingChanges();
-      this.triggerSync();
+      await this.noteVaultChange();
       return { success: true, entry };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1641,8 +1633,7 @@ class BackgroundService {
       const deleted = await deleteTotpEntryStore(id);
       if (!deleted) return { success: false, error: 'Entry not found' };
       this.logSync('TOTP_DELETED', { id });
-      await this.incrementPendingChanges();
-      this.triggerSync();
+      await this.noteVaultChange();
       return { success: true };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1703,8 +1694,7 @@ class BackgroundService {
       const issued = await issueHotpCode(id);
       if (!issued) return { success: false, error: 'Entry not found' };
       this.logSync('HOTP_COUNTER_ADVANCED', { id, counter: issued.entry.counter });
-      await this.incrementPendingChanges();
-      this.triggerSync();
+      await this.noteVaultChange();
       return {
         success: true,
         code: issued.code,
@@ -2010,6 +2000,24 @@ class BackgroundService {
     this.syncStatus = { ...this.syncStatus, ...changes };
     await chrome.storage.local.set({ [SYNC_STATUS_KEY]: this.syncStatus });
     this.logSync('SYNC_STATUS_UPDATE', changes);
+  }
+
+  /**
+   * Count a saved vault change for sync and push it out. This is
+   * bookkeeping: the change is already stored, so a failure here (a full
+   * storage quota, an unreachable relay) is logged instead of turning the
+   * caller's success into an error. A registration reported as failed after
+   * its passkey was saved leaves a passkey the site never received.
+   */
+  private async noteVaultChange(): Promise<void> {
+    try {
+      await this.incrementPendingChanges();
+    } catch (error) {
+      logger.error('Failed to count a pending sync change:', error);
+    }
+    void Promise.resolve(this.triggerSync()).catch((error) =>
+      logger.error('Failed to start a sync:', error)
+    );
   }
 
   private async incrementPendingChanges(): Promise<void> {
