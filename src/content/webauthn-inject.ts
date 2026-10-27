@@ -87,37 +87,63 @@
       const { requestId, result } = event.data;
 
       if (pendingRequests.has(requestId)) {
-        const { resolve, reject, timeoutId, nativeFallback, detachSignal } =
-          pendingRequests.get(requestId)!;
+        const pending = pendingRequests.get(requestId)!;
         pendingRequests.delete(requestId);
-        if (timeoutId) {
-          clearTimeout(timeoutId);
+        if (pending.timeoutId) {
+          clearTimeout(pending.timeoutId);
         }
-        detachSignal();
-
-        if (result.success) {
-          const credential = result.credential ? buildCredential(result.credential) : null;
-          resolve(credential || result);
-        } else if (result.passthrough) {
-          if (DEBUG) console.log('Fenko Vault: Passing WebAuthn request to native browser UI');
-          if (!nativeFallback) {
-            reject(new DOMException('Native WebAuthn fallback is unavailable.', 'NotAllowedError'));
-            return;
-          }
-          nativeFallback().then(resolve).catch(reject);
-        } else {
-          // Create proper DOMException for WebAuthn errors
-          const errorName = result.name || 'NotAllowedError';
-          const errorMessage = result.error || 'The operation was aborted.';
-          const error = new DOMException(errorMessage, errorName);
-          if (result.blockNativeFallback) {
-            Object.defineProperty(error, '__passkeyVaultBlockNativeFallback', { value: true });
-          }
-          reject(error);
-        }
+        pending.detachSignal();
+        settle(pending, result);
       }
     }
   });
+
+  /**
+   * Settle a request with the content script's answer. The request is
+   * already off the pending list and its timer cleared, so this must settle
+   * it whatever the answer holds: an answer that cannot be turned into a
+   * credential rejects, rather than leaving the page's promise unsettled.
+   */
+  function settle(pending: PendingRequest, result: unknown): void {
+    const { resolve, reject, nativeFallback } = pending;
+    try {
+      if (!result || typeof result !== 'object') {
+        throw new TypeError('No result');
+      }
+      const answer = result as Record<string, unknown>;
+      if (answer.success) {
+        if (!answer.credential) {
+          throw new TypeError('No credential');
+        }
+        resolve(buildCredential(answer.credential as SerializedCredential));
+      } else if (answer.passthrough) {
+        if (DEBUG) console.log('Fenko Vault: Passing WebAuthn request to native browser UI');
+        if (!nativeFallback) {
+          reject(new DOMException('Native WebAuthn fallback is unavailable.', 'NotAllowedError'));
+          return;
+        }
+        nativeFallback().then(resolve).catch(reject);
+      } else {
+        // Create proper DOMException for WebAuthn errors
+        const errorName = (answer.name as string) || 'NotAllowedError';
+        const errorMessage = (answer.error as string) || 'The operation was aborted.';
+        const error = new DOMException(errorMessage, errorName);
+        if (answer.blockNativeFallback) {
+          Object.defineProperty(error, '__passkeyVaultBlockNativeFallback', { value: true });
+        }
+        reject(error);
+      }
+    } catch (cause) {
+      if (DEBUG) console.warn('Fenko Vault: Unusable answer from the vault', cause);
+      // The user already dealt with the vault, so do not open another prompt.
+      const error = new DOMException(
+        'The passkey vault returned a credential that could not be read.',
+        'UnknownError'
+      );
+      Object.defineProperty(error, '__passkeyVaultBlockNativeFallback', { value: true });
+      reject(error);
+    }
+  }
 
   // Hook WebAuthn API
   if (navigator.credentials) {
@@ -358,15 +384,19 @@
     const rawId = base64ToArrayBuffer(raw.rawId);
     const attachment = raw.authenticatorAttachment ?? null;
 
+    // id is by definition the base64url of rawId (§5.1), whatever alphabet
+    // the vault happened to store the credential ID in.
+    const id = arrayBufferToBase64URL(rawId);
+
     return onNativePrototype('PublicKeyCredential', {
-      id: raw.id,
+      id,
       type: raw.type,
       rawId,
       response,
       authenticatorAttachment: attachment,
       getClientExtensionResults: () => extensions,
       toJSON: () => ({
-        id: raw.id,
+        id,
         rawId: arrayBufferToBase64URL(rawId),
         type: raw.type,
         authenticatorAttachment: attachment,
