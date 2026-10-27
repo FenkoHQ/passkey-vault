@@ -6,6 +6,35 @@ All notable changes to Passkey Vault are documented here. The format follows
 
 ## [Unreleased]
 
+### Lock the vault with a passphrase
+
+Anyone with a copy of your browser profile (a computer backup, a stolen disk,
+malware) could try every 6-digit PIN against the vault in about 11 seconds on
+one gaming graphics card. A slower key now multiplies the cost of each guess;
+only a longer secret multiplies the number of guesses.
+
+- **Passphrases.** The vault takes a passphrase of 8 or more characters, or a
+  PIN of 4 or more digits, in the popup and in Options. Existing PINs keep
+  working. A short PIN mainly stops someone at your unlocked computer: even
+  with the slower key, every 6-digit PIN can be tried within hours from a copy
+  of the profile. Use four or more random words, or a PIN of 10 or more
+  digits.
+- **A slower key.** The vault key now comes from scrypt (128 MiB, the
+  parameters OWASP recommends) instead of 100,000 rounds of PBKDF2, which makes
+  each guess on a graphics card roughly a hundred times or more as expensive.
+  Unlocking takes about a third of a second longer on a fast laptop, and up to
+  a second or two on a slow one.
+- **Existing vaults upgrade themselves** on the next unlock; after this update
+  the vault asks for its PIN once. Everything is re-encrypted in one step, so
+  an interrupted upgrade leaves the vault as it was and is tried again next
+  time. An older version of the extension cannot open an upgraded vault.
+- **Encrypted backups** use the same key derivation and record it in the
+  file, so later versions can raise the cost. Older backups still import, and
+  a backup from a newer version says so instead of "wrong password". New
+  backups need a password of at least 12 characters.
+- **Android and iOS** read and write the same backup format, with the same
+  12-character minimum.
+
 ### Imported passkeys sign in where they used to
 
 A passkey imported from Bitwarden failed on Teleport with nothing more than
