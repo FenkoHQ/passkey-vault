@@ -1,8 +1,6 @@
 import {
   encrypt,
   decrypt,
-  encryptWithPassword,
-  decryptWithPassword,
   deriveKey,
   createChecksum,
   verifyChecksum,
@@ -106,54 +104,6 @@ describe('Encryption Module', () => {
         )
       );
 
-      expect(decrypted).toBe(plaintext);
-    });
-  });
-
-  describe('encryptWithPassword and decryptWithPassword', () => {
-    it('should encrypt and decrypt with password', async () => {
-      const plaintext = 'My secret password';
-      const password = 'master-password';
-
-      const encrypted = await encryptWithPassword(plaintext, password);
-      expect(encrypted).toHaveProperty('data');
-      expect(encrypted).toHaveProperty('iv');
-      expect(encrypted).toHaveProperty('salt');
-      expect(encrypted.algorithm).toBe('AES-256-GCM');
-
-      const decrypted = await decryptWithPassword(
-        encrypted.data,
-        encrypted.iv,
-        encrypted.salt,
-        password
-      );
-      expect(decrypted).toBe(plaintext);
-    });
-
-    it('should fail to decrypt with wrong password', async () => {
-      const plaintext = 'My secret password';
-      const correctPassword = 'master-password';
-      const wrongPassword = 'wrong-password';
-
-      const encrypted = await encryptWithPassword(plaintext, correctPassword);
-      await expect(
-        decryptWithPassword(encrypted.data, encrypted.iv, encrypted.salt, wrongPassword)
-      ).rejects.toThrow('Failed to decrypt data');
-    });
-
-    it('should round-trip a backup larger than the engine argument limit', async () => {
-      // A full backup of a few hundred passkeys; spreading this many bytes into
-      // String.fromCharCode overflows the call stack.
-      const plaintext = JSON.stringify({ passkeys: 'x'.repeat(1_000_000) });
-      const password = 'master-password';
-
-      const encrypted = await encryptWithPassword(plaintext, password);
-      const decrypted = await decryptWithPassword(
-        encrypted.data,
-        encrypted.iv,
-        encrypted.salt,
-        password
-      );
       expect(decrypted).toBe(plaintext);
     });
   });

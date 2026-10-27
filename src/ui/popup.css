@@ -1338,6 +1338,11 @@ textarea {
   margin: 0 0 20px;
 }
 
+.modal-message.modal-hint {
+  font-size: 12px;
+  margin: -12px 0 12px;
+}
+
 .modal-actions {
   display: flex;
   gap: 8px;

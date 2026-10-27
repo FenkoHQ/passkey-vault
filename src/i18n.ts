@@ -119,13 +119,16 @@ const en: TranslationMap = {
   popupFailedDelete: 'Failed to delete passkey',
   popupFailedCopy: 'Failed to copy',
   popupEncryptBackup: 'Encrypt Backup',
+  popupBackupPasswordMin: 'Use at least 12 characters',
+  popupBackupPasswordHint:
+    'Anyone who gets the file can try passwords offline, as fast as their hardware allows. Use a passphrase of four or more random words.',
   popupEncryptBackupMessage:
     'Choose a password to encrypt the backup file. You will need this password to import it later.',
   popupNoPasskeysExport: 'No passkeys to export',
   popupEncryptionFailed: 'Encryption failed: {error}',
   popupExportedPasskeys: 'Exported {count} items (encrypted)',
   popupFailedExport: 'Failed to export passkeys',
-  popupPromptPasswordPlaceholder: 'Password (min 8 chars)',
+  popupPromptPasswordPlaceholder: 'Password (at least 12 characters)',
   popupEncryptAndExport: 'Encrypt & Export',
 
   popupTabPasskeys: 'Passkeys',
@@ -374,6 +377,8 @@ const en: TranslationMap = {
   importCancelled: 'Import cancelled',
   importDecrypting: 'Decrypting...',
   importWrongPassword: 'Wrong password or corrupted file',
+  importBackupNewerVersion:
+    'This backup was made by a newer version of Fenko Vault. Update the extension to import it.',
   importInvalidDecrypted: 'Decryption succeeded but file contents are invalid',
   importInvalidFormat: 'Invalid file format: missing passkeys array',
   importNoPrivateKeys:
@@ -600,6 +605,9 @@ const ru: TranslationMap = {
   popupDeletePasskeyMessage: 'Вы больше не сможете входить на {site} с помощью этого passkey.',
   popupPasskeyDeleted: 'Passkey удалён',
   popupEncryptBackup: 'Зашифровать резервную копию',
+  popupBackupPasswordMin: 'Используйте не менее 12 символов',
+  popupBackupPasswordHint:
+    'Любой, кто получит файл, сможет подбирать пароль офлайн с той скоростью, какую позволяет его оборудование. Используйте парольную фразу из четырёх или более случайных слов.',
   popupEncryptAndExport: 'Зашифровать и экспортировать',
   navGeneral: 'Общие',
   navInterception: 'Перехват',
@@ -686,6 +694,8 @@ const ru: TranslationMap = {
   importEnterBackupPassword: 'Введите пароль резервной копии',
   importDecrypt: 'Расшифровать',
   importWrongPassword: 'Неверный пароль или повреждённый файл',
+  importBackupNewerVersion:
+    'Эта резервная копия создана более новой версией Fenko Vault. Обновите расширение, чтобы импортировать её.',
   importAlreadyExists: 'Уже существует',
   importNew: 'Новый',
   importSuccess: 'Успешно импортировано: {count} passkey{plural}!',
@@ -868,6 +878,10 @@ const zh_CN: TranslationMap = {
   vaultSecretTooLong: '最多 256 个字符',
   vaultSecretHint:
     '较短的 PIN 码主要用于防止他人在这台电脑解锁时使用它。任何拿到你浏览器配置文件副本的人，都能在几小时内试遍所有 6 位 PIN 码。如需防范这种情况，请使用由四个或更多随机单词组成的密码短语，或至少 10 位数字的 PIN 码。',
+  popupBackupPasswordMin: '请至少使用 12 个字符',
+  popupBackupPasswordHint:
+    '任何拿到该文件的人都可以离线猜测密码，速度只受其硬件限制。请使用由四个或更多随机单词组成的密码短语。',
+  importBackupNewerVersion: '此备份由更新版本的 Fenko Vault 创建。请更新扩展后再导入。',
 };
 
 const ar: TranslationMap = {
@@ -1005,6 +1019,11 @@ const ar: TranslationMap = {
   vaultSecretTooLong: 'استخدم 256 حرفًا على الأكثر',
   vaultSecretHint:
     'رمز PIN القصير يمنع أساسًا من يستخدم هذا الحاسوب وهو غير مقفل. أي شخص لديه نسخة من ملف تعريف متصفحك يستطيع تجربة كل رموز PIN المكوّنة من 6 أرقام في غضون ساعات. للحماية من ذلك، استخدم عبارة مرور من أربع كلمات عشوائية أو أكثر، أو رمز PIN من 10 أرقام على الأقل.',
+  popupBackupPasswordMin: 'استخدم 12 حرفًا على الأقل',
+  popupBackupPasswordHint:
+    'يستطيع أي شخص يحصل على الملف تجربة كلمات المرور دون اتصال وبالسرعة التي يسمح بها عتاده. استخدم عبارة مرور من أربع كلمات عشوائية أو أكثر.',
+  importBackupNewerVersion:
+    'أُنشئت هذه النسخة الاحتياطية بإصدار أحدث من Fenko Vault. حدّث الإضافة لاستيرادها.',
 };
 
 const fa: TranslationMap = {
@@ -1062,6 +1081,9 @@ const fa: TranslationMap = {
   popupPasskeyNotFound: 'کلید عبور پیدا نشد',
   popupFailedDelete: 'حذف کلید عبور ناموفق بود',
   popupEncryptBackup: 'رمزنگاری پشتیبان',
+  popupBackupPasswordMin: 'دست‌کم ۱۲ نویسه به کار ببرید',
+  popupBackupPasswordHint:
+    'هر کسی که این فایل به دستش برسد می‌تواند بدون اتصال و با هر سرعتی که سخت‌افزارش اجازه دهد رمزها را امتحان کند. از عبارت عبوری با چهار واژهٔ تصادفی یا بیشتر استفاده کنید.',
   popupEncryptBackupMessage:
     'برای رمزنگاری فایل پشتیبان یک رمز انتخاب کنید. برای وارد کردن دوباره به آن نیاز دارید.',
   popupEncryptAndExport: 'رمزنگاری و خروجی گرفتن',
@@ -1172,6 +1194,8 @@ const fa: TranslationMap = {
     'این پشتیبان رمزنگاری شده است. رمز استفاده‌شده هنگام خروجی گرفتن را وارد کنید.',
   importDecrypt: 'رمزگشایی',
   importWrongPassword: 'رمز اشتباه است یا فایل خراب شده',
+  importBackupNewerVersion:
+    'این پشتیبان با نسخه‌ای جدیدتر از Fenko Vault ساخته شده است. برای وارد کردن آن، افزونه را به‌روزرسانی کنید.',
   importAlreadyExists: 'از قبل وجود دارد',
   importNew: 'جدید',
   importSuccess: '{count} کلید عبور با موفقیت وارد شد!',
@@ -1371,6 +1395,11 @@ const es: TranslationMap = {
   vaultSecretTooLong: 'Usa como máximo 256 caracteres',
   vaultSecretHint:
     'Un PIN corto protege sobre todo frente a quien use este ordenador mientras está desbloqueado. Cualquiera con una copia de tu perfil del navegador puede probar todos los PIN de 6 dígitos en cuestión de horas. Para protegerte de eso, usa una frase de contraseña de cuatro o más palabras aleatorias, o un PIN de al menos 10 dígitos.',
+  popupBackupPasswordMin: 'Usa al menos 12 caracteres',
+  popupBackupPasswordHint:
+    'Quien consiga el archivo puede probar contraseñas sin conexión, tan rápido como le permita su hardware. Usa una frase de contraseña de cuatro o más palabras aleatorias.',
+  importBackupNewerVersion:
+    'Esta copia de seguridad se creó con una versión más reciente de Fenko Vault. Actualiza la extensión para importarla.',
 };
 
 const fr: TranslationMap = {
@@ -1513,6 +1542,11 @@ const fr: TranslationMap = {
   vaultSecretTooLong: 'Utilisez au maximum 256 caractères',
   vaultSecretHint:
     'Un code PIN court protège surtout contre quelqu’un qui utilise cet ordinateur pendant qu’il est déverrouillé. Toute personne disposant d’une copie de votre profil de navigateur peut essayer tous les codes PIN à 6 chiffres en quelques heures. Pour vous en protéger, utilisez une phrase secrète de quatre mots aléatoires ou plus, ou un code PIN d’au moins 10 chiffres.',
+  popupBackupPasswordMin: 'Utilisez au moins 12 caractères',
+  popupBackupPasswordHint:
+    'Quiconque obtient le fichier peut essayer des mots de passe hors ligne, aussi vite que son matériel le permet. Utilisez une phrase secrète de quatre mots aléatoires ou plus.',
+  importBackupNewerVersion:
+    'Cette sauvegarde a été créée par une version plus récente de Fenko Vault. Mettez à jour l’extension pour l’importer.',
 };
 
 const translations: Record<ResolvedLanguage, TranslationMap> = { en, ru, zh_CN, ar, fa, es, fr };

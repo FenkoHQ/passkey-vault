@@ -26,7 +26,14 @@ import {
   UnsupportedKdfError,
 } from '../crypto/secure-storage';
 import { checkVaultSecret, MAX_SECRET_LENGTH } from '../crypto/vault-secret';
-import { encryptWithPassword, decryptWithPassword } from '../crypto/encryption';
+import {
+  checkBackupPassword,
+  decryptBackup,
+  encryptBackup,
+  MIN_BACKUP_PASSWORD_LENGTH,
+  UnsupportedBackupError,
+  type EncryptedBackupFields,
+} from '../crypto/backup-crypto';
 import { logger } from '../utils/logger';
 import { arrayBufferToBase64, arrayBufferToBase64URL, base64urlToBase64 } from '../utils/base64';
 import {
@@ -892,7 +899,7 @@ class BackgroundService {
         return this.handleCompleteUpgradeBackup();
       case 'DECRYPT_BACKUP':
         return this.handleDecryptBackup(
-          payload as { data: string; iv: string; salt: string; password: string }
+          payload as Partial<EncryptedBackupFields> & { password?: string }
         );
       case 'ACTIVATE_UI':
         return { success: true, message: 'Activate UI placeholder' };
@@ -2445,10 +2452,14 @@ class BackgroundService {
   private async handleEncryptBackup(payload: { data: string; password: string }): Promise<unknown> {
     try {
       const { data, password } = payload;
-      if (!password || password.length < 8) {
-        return { success: false, error: 'Password must be at least 8 characters' };
+      if (checkBackupPassword(password)) {
+        return {
+          success: false,
+          error: `Password must be at least ${MIN_BACKUP_PASSWORD_LENGTH} characters`,
+        };
       }
-      const result = await encryptWithPassword(data, password);
+      if (typeof data !== 'string') return { success: false, error: 'Nothing to encrypt' };
+      const result = await encryptBackup(data, password);
       return { success: true, encrypted: result };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2456,19 +2467,22 @@ class BackgroundService {
     }
   }
 
-  private async handleDecryptBackup(payload: {
-    data: string;
-    iv: string;
-    salt: string;
-    password: string;
-  }): Promise<unknown> {
+  /**
+   * Decrypt a backup in any format version. The import page passes the
+   * header's ciphertext and KDF fields; a backup from a newer version is
+   * answered with code UNSUPPORTED_BACKUP rather than as a wrong password.
+   */
+  private async handleDecryptBackup(
+    payload: Partial<EncryptedBackupFields> & { password?: string }
+  ): Promise<unknown> {
     try {
-      const { data, iv, salt, password } = payload;
-      const decrypted = await decryptWithPassword(data, iv, salt, password);
+      const { password, ...backup } = payload || {};
+      const decrypted = await decryptBackup(backup, String(password ?? ''));
       return { success: true, data: decrypted };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
+      const code = error instanceof UnsupportedBackupError ? error.code : undefined;
+      return { success: false, error: message, ...(code ? { code } : {}) };
     }
   }
 
