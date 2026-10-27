@@ -495,6 +495,11 @@ const en: TranslationMap = {
   syncConnected: 'Connected',
   syncError: 'Error',
   syncRemoveDevice: 'Remove device',
+  syncRemoveDeviceConfirm:
+    'Remove "{name}" from this list?\n\nThis does not disconnect it. That device still has your recovery phrase: it keeps everything already synced to it, and it can still read and change this vault through sync.\n\nRemoving it only stops it being listed here. To cut it off, start a new sync chain and join only the devices you keep.',
+  syncRemoveDeviceNewChain:
+    '"{name}" is no longer listed, but it can still sync.\n\nStart a new sync chain now? This device leaves the current chain and you create a new one, with a new recovery phrase. Then, on each device you keep, leave the old chain and join the new one. Your passkeys and codes stay on this device.',
+  syncRemoveDeviceFailed: 'Failed to remove the device: {error}',
   syncDeviceTypeDesktop: 'Desktop',
   syncDeviceTypeLaptop: 'Laptop',
   syncDeviceTypeMobile: 'Mobile',

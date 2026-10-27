@@ -52,6 +52,7 @@ import {
   type BackupRepair,
 } from '../sync/backup-flags';
 import { verifyRelatedOrigin } from './related-origins';
+import { removeDevice } from '../sync/devices';
 import {
   appendWebAuthnLog,
   clearWebAuthnLog,
@@ -2011,17 +2012,23 @@ class BackgroundService {
     }
   }
 
+  /**
+   * Take another device off this device's list, for good. This is not
+   * revocation: the device keeps the recovery phrase and the keys derived
+   * from it. The settings page says so, and offers a new chain instead.
+   */
   private async removeSyncDevice(deviceId: string): Promise<unknown> {
     try {
-      const result = await chrome.storage.local.get(SYNC_DEVICES_KEY);
-      const chain: SyncChain = result[SYNC_DEVICES_KEY];
-
-      if (!chain) return { success: false, error: 'Sync chain not found' };
-
-      const updatedDevices = chain.devices.filter((d) => d.id !== deviceId);
-      const updatedChain: SyncChain = { ...chain, devices: updatedDevices };
-
-      await chrome.storage.local.set({ [SYNC_DEVICES_KEY]: updatedChain });
+      if (!deviceId) return { success: false, error: 'No device given' };
+      const config = (await chrome.storage.local.get(SYNC_CONFIG_KEY))[SYNC_CONFIG_KEY] as
+        | SyncConfig
+        | undefined;
+      const result = await removeDevice(deviceId, config?.deviceId ?? null);
+      if (result === 'no-chain') return { success: false, error: 'Sync chain not found' };
+      if (result === 'this-device') {
+        return { success: false, error: 'This device leaves the chain instead' };
+      }
+      this.logSync('SYNC_DEVICE_REMOVED', { deviceId: deviceId.substring(0, 8) });
       return { success: true };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);

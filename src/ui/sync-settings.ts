@@ -139,6 +139,13 @@ function setupEventListeners(): void {
     leaveChainBtn.addEventListener('click', confirmLeaveChain);
   }
 
+  // The device cards are re-rendered, so their remove buttons are handled here.
+  document.getElementById('devices-list')?.addEventListener('click', (event) => {
+    const button = (event.target as Element | null)?.closest<HTMLElement>('.device-remove-btn');
+    if (!button?.dataset.deviceId) return;
+    void confirmRemoveDevice(button.dataset.deviceId, button.dataset.deviceName || '');
+  });
+
   if (setupSyncBtn) {
     setupSyncBtn.addEventListener('click', () => {
       window.location.href = chrome.runtime.getURL('sync-setup.html');
@@ -177,6 +184,41 @@ async function confirmLeaveChain(): Promise<void> {
   } catch (error) {
     alert(t('syncLeaveError', { error: String(error) }));
   }
+}
+
+/**
+ * Take another device off the list. Every device in a chain holds the same
+ * recovery phrase and keys, so this cannot cut it off, and the confirmation
+ * says so. Cutting it off means a new chain that only the kept devices
+ * join, which is offered once the device is removed.
+ */
+async function confirmRemoveDevice(deviceId: string, name: string): Promise<void> {
+  if (!confirm(t('syncRemoveDeviceConfirm', { name }))) return;
+
+  try {
+    const result = await chrome.runtime.sendMessage({ type: 'REMOVE_SYNC_DEVICE', deviceId });
+    if (!result?.success) {
+      alert(t('syncRemoveDeviceFailed', { error: result?.error ?? t('commonUnknown') }));
+      return;
+    }
+  } catch (error) {
+    alert(t('syncRemoveDeviceFailed', { error: String(error) }));
+    return;
+  }
+  await loadDevicesList();
+
+  if (!confirm(t('syncRemoveDeviceNewChain', { name }))) return;
+  try {
+    const left = await chrome.runtime.sendMessage({ type: 'LEAVE_SYNC_CHAIN' });
+    if (!left?.success) {
+      alert(t('syncLeaveFailed', { error: left?.error ?? t('commonUnknown') }));
+      return;
+    }
+  } catch (error) {
+    alert(t('syncLeaveError', { error: String(error) }));
+    return;
+  }
+  window.location.href = chrome.runtime.getURL('sync-setup.html');
 }
 
 async function triggerManualSync(): Promise<void> {
@@ -413,7 +455,7 @@ function createDeviceCard(device: SyncDevice): string {
         </div>
         ${
           !isThisDevice
-            ? `<button class="device-remove-btn" data-device-id="${escapeHtml(device.id)}" title="${escapeHtml(t('syncRemoveDevice'))}">
+            ? `<button class="device-remove-btn" data-device-id="${escapeHtml(device.id)}" data-device-name="${escapeHtml(device.name)}" title="${escapeHtml(t('syncRemoveDevice'))}" aria-label="${escapeHtml(t('syncRemoveDevice'))}">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <line x1="18" y1="6" x2="6" y2="18"></line>
                 <line x1="6" y1="6" x2="18" y2="18"></line>

@@ -12,11 +12,11 @@ import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { logger } from '../utils/logger';
 import { type SyncDeletion } from './merge';
+import { recordDeviceSighting } from './devices';
 
 const RECONNECT_DELAY = 5000;
 const MAX_RECONNECT_DELAY = 60000;
 const HEARTBEAT_INTERVAL = 300000; // 5 minutes - relays rate limit aggressively
-const SYNC_DEVICES_KEY = 'sync_devices';
 const MAX_DEBUG_LOGS = 200;
 const MAX_PROCESSED_EVENTS = 1000; // Track last N event IDs for replay protection
 
@@ -955,45 +955,18 @@ export class SyncService {
 
   private async updateRemoteDevice(msg: SyncMessage): Promise<void> {
     try {
-      const result = await chrome.storage.local.get(SYNC_DEVICES_KEY);
-      const chain = result[SYNC_DEVICES_KEY];
-      if (!chain) {
-        this.log('warn', 'device', 'No chain found in storage');
-        return;
-      }
-
-      const existingIndex = chain.devices.findIndex((d: SyncDevice) => d.id === msg.deviceId);
-
-      const deviceInfo = {
-        id: msg.deviceId,
-        name: msg.deviceName || `Device ${msg.deviceId.substring(0, 8)}`,
-        deviceType: msg.deviceType || 'Desktop',
-        publicKey: '',
-        createdAt: existingIndex >= 0 ? chain.devices[existingIndex].createdAt : msg.timestamp,
-        lastSeen: msg.timestamp,
-        isThisDevice: msg.deviceId === this.deviceId,
-      };
-
-      if (existingIndex >= 0) {
-        chain.devices[existingIndex] = {
-          ...chain.devices[existingIndex],
-          ...deviceInfo,
-          lastSeen: msg.timestamp,
-        };
-        this.log('debug', 'device', 'Updated existing device', {
-          deviceId: msg.deviceId.substring(0, 8),
-        });
-      } else if (msg.deviceId !== this.deviceId) {
-        chain.devices.push(deviceInfo);
+      const result = await recordDeviceSighting(msg, this.deviceId);
+      if (result === 'new') {
         this.log('info', 'device', 'Discovered NEW device!', {
           deviceId: msg.deviceId.substring(0, 8),
           deviceName: msg.deviceName,
           deviceType: msg.deviceType,
         });
+      } else if (result === 'seen') {
+        this.log('debug', 'device', 'Updated existing device', {
+          deviceId: msg.deviceId.substring(0, 8),
+        });
       }
-
-      await chrome.storage.local.set({ [SYNC_DEVICES_KEY]: chain });
-      this.log('debug', 'device', 'Saved device list', { deviceCount: chain.devices.length });
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       this.log('error', 'device', 'Failed to update remote device', { error: errorMessage });

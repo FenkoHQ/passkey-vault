@@ -132,3 +132,105 @@ describe('sync device list', () => {
     expect(list.querySelector('.device-name')!.textContent).toBe(HOSTILE);
   });
 });
+
+describe('removing a sync device', () => {
+  const chainInfo = (ids: string[]) => ({
+    success: true,
+    chainInfo: {
+      devices: ids.map((id) => ({
+        id,
+        name: id === 'laptop' ? 'Laptop' : 'Old phone',
+        deviceType: 'mobile',
+        lastSeen: 1,
+        isThisDevice: id === 'laptop',
+      })),
+    },
+  });
+  let listedIds: string[];
+  const sent = () =>
+    chromeMock.runtime.sendMessage.mock.calls.map(([message]: [Message]) => message.type);
+
+  beforeEach(async () => {
+    listedIds = ['laptop', 'phone'];
+    background = (message) => {
+      if (message.type === 'GET_SYNC_CHAIN_INFO') return chainInfo(listedIds);
+      if (message.type === 'REMOVE_SYNC_DEVICE') {
+        listedIds = listedIds.filter((id) => id !== message.deviceId);
+        return { success: true };
+      }
+      return { success: true };
+    };
+    await openTab('devices');
+    chromeMock.runtime.sendMessage.mockClear();
+  });
+
+  afterEach(() => {
+    for (const fn of [window.confirm, window.alert, console.error]) {
+      (fn as unknown as Partial<jest.SpyInstance>).mockRestore?.();
+    }
+  });
+
+  const removeButton = () =>
+    document.querySelector<HTMLButtonElement>('#devices-list .device-remove-btn')!;
+
+  it('offers removal for other devices only', () => {
+    const buttons = document.querySelectorAll<HTMLElement>('#devices-list .device-remove-btn');
+    expect([...buttons].map((b) => b.dataset.deviceId)).toEqual(['phone']);
+  });
+
+  it('says plainly that the device can still read the vault', async () => {
+    const confirm = jest.spyOn(window, 'confirm').mockReturnValue(false);
+
+    removeButton().click();
+    await flush();
+
+    const text = confirm.mock.calls[0][0] as string;
+    expect(text).toContain('Old phone');
+    expect(text).toContain('does not disconnect it');
+    expect(text).toContain('recovery phrase');
+    expect(text).toContain('can still read and change this vault');
+    expect(text).toContain('start a new sync chain');
+    expect(sent()).not.toContain('REMOVE_SYNC_DEVICE');
+  });
+
+  it('removes it and refreshes the list, leaving the chain alone if not asked', async () => {
+    const confirm = jest
+      .spyOn(window, 'confirm')
+      .mockReturnValueOnce(true)
+      .mockReturnValueOnce(false);
+
+    removeButton().click();
+    await flush();
+
+    expect(chromeMock.runtime.sendMessage).toHaveBeenCalledWith({
+      type: 'REMOVE_SYNC_DEVICE',
+      deviceId: 'phone',
+    });
+    expect(document.querySelectorAll('#devices-list .device-card')).toHaveLength(1);
+    expect(confirm.mock.calls[1][0]).toContain('Start a new sync chain now?');
+    expect(sent()).not.toContain('LEAVE_SYNC_CHAIN');
+  });
+
+  it('leaves the chain to start a new one when the user asks', async () => {
+    jest.spyOn(window, 'confirm').mockReturnValue(true);
+    jest.spyOn(console, 'error').mockImplementation(() => undefined); // jsdom: no navigation
+
+    removeButton().click();
+    await flush();
+
+    expect(sent()).toEqual(['REMOVE_SYNC_DEVICE', 'GET_SYNC_CHAIN_INFO', 'LEAVE_SYNC_CHAIN']);
+  });
+
+  it('reports a failed removal', async () => {
+    background = (message) =>
+      message.type === 'REMOVE_SYNC_DEVICE' ? { success: false, error: 'boom' } : {};
+    jest.spyOn(window, 'confirm').mockReturnValue(true);
+    const alert = jest.spyOn(window, 'alert').mockImplementation(() => undefined);
+
+    removeButton().click();
+    await flush();
+
+    expect(alert).toHaveBeenCalledWith(expect.stringContaining('boom'));
+    expect(sent()).not.toContain('LEAVE_SYNC_CHAIN');
+  });
+});
