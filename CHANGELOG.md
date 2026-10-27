@@ -112,6 +112,29 @@ now fixed:
   delegates WebAuthn, as in Chrome, so a third-party frame cannot put the
   vault's dialogs over the page.
 
+### Less left behind, and less for a page to reach
+
+The vault kept a log of every passkey you created or signed in with, naming
+the site, the passkey and the account, in the extension's ordinary storage.
+It did so whether or not debug logging was on, and with a PIN set that log
+sat outside the vault's encryption. The log is now kept only while console
+logging is turned on, only in memory, and is cleared when the vault locks; the
+log earlier versions saved is deleted when you update.
+
+A web page could make the vault fetch a Related Origin Requests file from any
+host name it chose, including addresses on your own network. The vault now
+only fetches from public Internet names, only for sites you let it handle,
+never while it is locked, and only a few times per site. Passkey site names
+are checked against the full Public Suffix List, as Chrome does, so a page on
+a shared host such as github.io can no longer create passkeys that would be
+offered on every other site there.
+
+"Remove device" in sync settings now works. It takes the device off the list
+for good, and says plainly that this does not cut it off: the device still
+has your recovery phrase. To cut it off, start a new sync chain and join only
+the devices you keep, which the page now offers to do. Device names and relay
+addresses on the sync Debug tab are shown as plain text.
+
 ## [0.12.0] - 2026-09-21
 
 ### Knowing a passkey by its site
