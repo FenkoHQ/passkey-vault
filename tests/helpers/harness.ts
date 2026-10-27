@@ -119,6 +119,7 @@ const CONTENT = '../../src/content/content';
 const INJECT = '../../src/content/webauthn-inject';
 const DIALOG_FRAME = '../../src/content/vault-dialog-frame';
 const LAUNCHER = '../../src/content/vault-launcher';
+const NOTICES = '../../src/content/page-notices';
 const SYNC_SERVICE = '../../src/sync/sync-service';
 
 export const EXTENSION_PAGE: MessageSender = {
@@ -210,17 +211,19 @@ export function setupVault(
     frameId: 0,
   });
 
-  // The in-page notices are bound when content.js loads, so install
-  // forwarding stubs that consult whatever `vault.user` holds at call time.
   const vault = {
     user,
     dialogs: [] as MountedDialog[],
     dialogMode: 'frame',
     launchers: [] as string[],
   } as Vault;
-  win.showPasskeyCreatedNotification = (...args: unknown[]) => vault.user.createdToast(...args);
-  win.showPasskeyUsedNotification = (...args: unknown[]) => vault.user.usedToast(...args);
-  win.showErrorNotification = (...args: unknown[]) => vault.user.errorToast(...args);
+  // The page's notices, bound when content.js loads: forward to whatever
+  // `vault.user` holds at call time.
+  jest.doMock(NOTICES, () => ({
+    showPasskeyCreatedNotification: (...args: unknown[]) => vault.user.createdToast(...args),
+    showPasskeyUsedNotification: (...args: unknown[]) => vault.user.usedToast(...args),
+    showErrorNotification: (...args: unknown[]) => vault.user.errorToast(...args),
+  }));
 
   const startWorker = () => {
     chrome.startWorker(() => {

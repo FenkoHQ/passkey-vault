@@ -9,7 +9,7 @@
 // disclose which sites the user holds credentials for.
 //
 // SECURITY: these icons are site-supplied and must never appear in a consent or
-// ceremony dialog (src/ui/passkey-ui.ts). Those dialogs render inside the
+// ceremony dialog (src/ui/vault-dialog.ts). Those dialogs show over the
 // calling page, so a logo there would let evil.com wear another brand's mark
 // while the user approves a credential. Vault listings are safe: the user opened
 // them, and the domain text sits right next to the image.

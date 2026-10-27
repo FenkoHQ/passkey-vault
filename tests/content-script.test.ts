@@ -24,12 +24,13 @@ const { mountDialogFrame } = require('../src/content/vault-dialog-frame') as {
   mountDialogFrame: jest.Mock;
 };
 
-const ui = {
+jest.mock('../src/content/page-notices', () => ({
   showPasskeyCreatedNotification: jest.fn(),
   showPasskeyUsedNotification: jest.fn(),
   showErrorNotification: jest.fn(),
-};
-Object.assign(window, ui);
+}));
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const ui = require('../src/content/page-notices') as Record<string, jest.Mock>;
 
 type BackgroundHandler = (message: { type: string; payload?: unknown }) => unknown;
 let background: BackgroundHandler = () => ({ success: true });

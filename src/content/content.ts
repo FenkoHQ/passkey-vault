@@ -12,6 +12,11 @@ import { describeFrame } from './frame';
 import { acceptsEs256 } from '../utils/algorithms';
 import { isRpIdValidForHost } from '../utils/rp-id';
 import { VaultDialogClient } from './vault-dialog-client';
+import {
+  showErrorNotification as _showErrorNotification,
+  showPasskeyCreatedNotification as _showPasskeyCreatedNotification,
+  showPasskeyUsedNotification as _showPasskeyUsedNotification,
+} from './page-notices';
 
 interface DomainRules {
   mode: 'disabled' | 'all' | 'allowlist' | 'blocklist';
@@ -26,19 +31,8 @@ interface DomainRules {
  */
 type RpIdResolution = { rpId: string } | { refused: true } | { foreign: true };
 
-interface WindowWithVault extends Window {
-  showPasskeyCreatedNotification: (userName: string, rpId: string) => void;
-  showPasskeyUsedNotification: (rpId: string) => void;
-  showErrorNotification: (title: string, message: string) => void;
-}
-
 /** How long a posted registration can still be taken back; the background allows as long. */
 const POSTED_REGISTRATION_MEMORY_MS = 10 * 60 * 1000;
-
-const vaultWindow = window as unknown as WindowWithVault;
-const _showPasskeyCreatedNotification = vaultWindow.showPasskeyCreatedNotification;
-const _showPasskeyUsedNotification = vaultWindow.showPasskeyUsedNotification;
-const _showErrorNotification = vaultWindow.showErrorNotification;
 
 class ContentScript {
   private isInjected = false;
@@ -72,7 +66,8 @@ class ContentScript {
    */
   private async initialize(): Promise<void> {
     try {
-      await initI18n();
+      // Translations only: the page's own <html> lang and dir stay as they are.
+      await initI18n({ applyToDocument: false });
 
       // Initialize logger first
       await logger.init();

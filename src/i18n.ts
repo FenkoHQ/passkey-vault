@@ -1504,12 +1504,21 @@ export async function setStoredLanguage(language: SupportedLanguage): Promise<vo
   await chrome.storage.local.set({ [LANGUAGE_STORAGE_KEY]: language });
 }
 
-export async function initI18n(): Promise<ResolvedLanguage> {
+/**
+ * Load the user's language. On the extension's own pages it also sets the
+ * document's lang and dir; a content script passes applyToDocument: false,
+ * since the document is the web page's.
+ */
+export async function initI18n(
+  options: { applyToDocument?: boolean } = {}
+): Promise<ResolvedLanguage> {
   const stored = await getStoredLanguage();
   currentLanguage =
     stored === 'auto' ? resolveLanguage(navigator.language) : resolveLanguage(stored);
-  document.documentElement.lang = currentLanguage.replace('_', '-');
-  document.documentElement.dir = isRtlLanguage(currentLanguage) ? 'rtl' : 'ltr';
+  if (options.applyToDocument !== false) {
+    document.documentElement.lang = currentLanguage.replace('_', '-');
+    document.documentElement.dir = isRtlLanguage(currentLanguage) ? 'rtl' : 'ltr';
+  }
   return currentLanguage;
 }
 

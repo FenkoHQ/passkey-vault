@@ -78,18 +78,7 @@ async function buildForTarget(browserTarget) {
       entryPoints: ['src/content/content.ts'],
       outfile: `${distDir}/content.js`,
     });
-
-    await esbuild.build({
-      ...commonOptions,
-      entryPoints: ['src/ui/passkey-ui.ts'],
-      outfile: `${distDir}/passkey-ui.js`,
-    });
-
-    const passkeyUiJs = fs.readFileSync(`${distDir}/passkey-ui.js`, 'utf8');
-    const contentJs = fs.readFileSync(`${distDir}/content.js`, 'utf8');
-    fs.writeFileSync(`${distDir}/content.js`, passkeyUiJs + '\n' + contentJs);
-    fs.unlinkSync(`${distDir}/passkey-ui.js`);
-    console.log('  ✅ content.js (bundled with passkey-ui)');
+    console.log('  ✅ content.js');
 
     await esbuild.build({
       ...commonOptions,
