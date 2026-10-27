@@ -35,7 +35,7 @@ before(async () => {
   );
   mobileCode = await bundle(
     'android/web/src/app.ts',
-    '\nrender = () => {}; export { AndroidSync, getPasskeys, setPasskeys, getTotpEntries, setTotpEntries, mergeNativeSnapshot, restoreFromBin, getSyncConfig, issueHotpCode };',
+    '\nrender = () => {}; export { AndroidSync, getPasskeys, setPasskeys, getTotpEntries, setTotpEntries, mergeNativeSnapshot, restoreFromBin, getSyncConfig, issueHotpCode, renderTotpItem, state };',
     'void boot().catch'
   );
 });
@@ -705,6 +705,38 @@ test('mobile HOTP next-code advances and persists the counter', () => {
   assert.equal(e.api.issueHotpCode('h'), '287082');
   assert.equal(e.api.getTotpEntries()[0].counter, 2);
   assert.equal(e.api.issueHotpCode('missing'), null);
+});
+
+test('mobile vault markup shows synced 2FA fields as text', () => {
+  // Synced entries are not normalised like imported ones, and any device
+  // holding the recovery phrase can publish them.
+  const e = env(mobileCode);
+  const hostile = '<img src=x onerror=alert(1)>';
+  const secretB64 = Buffer.from('12345678901234567890').toString('base64');
+  const hotp = {
+    id: 'h',
+    type: 'hotp',
+    secretB64,
+    algorithm: hostile,
+    digits: hostile,
+    counter: hostile,
+    createdAt: 1,
+  };
+  const totp = {
+    id: 't',
+    type: hostile,
+    secretB64,
+    algorithm: 'SHA1',
+    digits: 6,
+    period: 30,
+    createdAt: 1,
+  };
+  e.api.state.expanded.add('h');
+  e.api.state.expanded.add('t');
+  for (const markup of [e.api.renderTotpItem(hotp), e.api.renderTotpItem(totp)]) {
+    assert.doesNotMatch(markup, /<img/i);
+    assert.match(markup, /&lt;img/i);
+  }
 });
 
 test('a stalled sync request does not block a passkey lookup', async () => {

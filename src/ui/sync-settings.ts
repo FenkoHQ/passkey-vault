@@ -442,7 +442,8 @@ function formatDeviceType(deviceType: string): string {
     mobile: t('syncDeviceTypeMobile'),
     tablet: t('syncDeviceTypeTablet'),
   };
-  return typeMap[deviceType.toLowerCase()] || t('syncDeviceTypeUnknown');
+  // Reported by the other device: not necessarily a string.
+  return typeMap[String(deviceType ?? '').toLowerCase()] || t('syncDeviceTypeUnknown');
 }
 
 function getDeviceTypeIcon(deviceType: string): string {
@@ -457,7 +458,7 @@ function getDeviceTypeIcon(deviceType: string): string {
       '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="2" width="16" height="20" rx="2"></rect><line x1="12" y1="18" x2="12" y2="18"></line></svg>',
   };
 
-  return icons[deviceType.toLowerCase()] || icons.desktop;
+  return icons[String(deviceType ?? '').toLowerCase()] || icons.desktop;
 }
 
 function formatLastSeen(timestamp: number): string {
@@ -487,13 +488,14 @@ async function loadDebugInfo(): Promise<void> {
   const debugLogsEl = document.getElementById('debug-logs');
 
   try {
-    // Load debug info
+    // Device names, relay URLs and errors come from relays and other
+    // devices, so the panel is filled as text, never as markup.
     const infoResult = await chrome.runtime.sendMessage({ type: 'GET_SYNC_DEBUG_INFO' });
     if (debugInfoEl) {
       if (infoResult.success) {
-        debugInfoEl.innerHTML = `<pre>${formatDebugInfo(infoResult.debugInfo)}</pre>`;
+        showPre(debugInfoEl, formatDebugInfo(infoResult.debugInfo));
       } else {
-        debugInfoEl.innerHTML = `<pre class="error">${t('syncError')}: ${infoResult.error}</pre>`;
+        showPre(debugInfoEl, `${t('syncError')}: ${infoResult.error}`, 'error');
       }
     }
 
@@ -503,19 +505,28 @@ async function loadDebugInfo(): Promise<void> {
       if (logsResult.success) {
         debugLogsEl.innerHTML = formatDebugLogs(logsResult.logs);
       } else {
-        debugLogsEl.innerHTML = `<pre class="error">${t('syncError')}: ${logsResult.error}</pre>`;
+        showPre(debugLogsEl, `${t('syncError')}: ${logsResult.error}`, 'error');
       }
     }
   } catch (error) {
     if (debugInfoEl) {
-      debugInfoEl.innerHTML = `<pre class="error">${t('syncConnectionDebug')}: ${error}</pre>`;
+      showPre(debugInfoEl, `${t('syncConnectionDebug')}: ${error}`, 'error');
     }
   }
 }
 
-function formatDebugInfo(info: SyncDebugInfo): string {
-  const relayLines = (info.relays || []).map((r) => `  ${r.state.padEnd(12)} ${r.url}`);
+/** Replace an element's content with a <pre> holding `text` as text. */
+function showPre(container: HTMLElement, text: string, className = ''): void {
+  const pre = document.createElement('pre');
+  if (className) pre.className = className;
+  pre.textContent = text;
+  container.replaceChildren(pre);
+}
 
+function formatDebugInfo(info: SyncDebugInfo): string {
+  const relayLines = (info.relays || []).map((r) => `  ${String(r.state).padEnd(12)} ${r.url}`);
+
+  // Plain text: showPre() puts it in the page with textContent.
   const lines = [
     `Chain ID:        ${info.chainId || 'Not set'}`,
     `Device ID:       ${info.deviceId || 'Not set'}`,
@@ -535,6 +546,8 @@ function formatDebugInfo(info: SyncDebugInfo): string {
   return lines.join('\n');
 }
 
+const LOG_LEVELS = new Set(['info', 'warn', 'error', 'debug']);
+
 function formatDebugLogs(logs: DebugLogEntry[]): string {
   if (!logs || logs.length === 0) {
     return `<pre class="empty">${t('syncNoLogsYet')}</pre>`;
@@ -545,9 +558,9 @@ function formatDebugLogs(logs: DebugLogEntry[]): string {
     .reverse() // Newest first
     .map((log) => {
       const time = new Date(log.timestamp).toLocaleTimeString();
-      const levelClass = `log-${log.level}`;
+      const level = LOG_LEVELS.has(log.level) ? log.level : 'info';
       const dataStr = log.data ? ` ${JSON.stringify(log.data)}` : '';
-      return `<div class="log-entry ${levelClass}"><span class="log-time">${time}</span> <span class="log-category">[${log.category}]</span> <span class="log-msg">${escapeHtml(log.message)}</span><span class="log-data">${escapeHtml(dataStr)}</span></div>`;
+      return `<div class="log-entry log-${level}"><span class="log-time">${escapeHtml(time)}</span> <span class="log-category">[${escapeHtml(String(log.category))}]</span> <span class="log-msg">${escapeHtml(String(log.message))}</span><span class="log-data">${escapeHtml(dataStr)}</span></div>`;
     })
     .join('');
 

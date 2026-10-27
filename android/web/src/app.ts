@@ -1777,13 +1777,13 @@ function renderTotpItem(entry: StoredTotpEntry): string {
           <h3>${escapeHtml(entry.issuer || 'Unknown issuer')}</h3>
           <p class="muted">${escapeHtml(entry.account || '')}</p>
         </div>
-        <button class="code code-compact" data-copy="${escapeHtml(code)}">${code}</button>
+        <button class="code code-compact" data-copy="${escapeHtml(code)}">${escapeHtml(code)}</button>
       </div>
       <div class="progress"><div data-progress="${width}"></div></div>
       ${
         expanded
           ? `<div class="totp-details">
-        <p class="muted">${entry.type.toUpperCase()} &middot; ${entry.algorithm} &middot; ${entry.digits} digits &middot; ${entry.period}s period &middot; ${remaining}s left</p>
+        <p class="muted">${escapeHtml(String(entry.type || 'totp').toUpperCase())} &middot; ${escapeHtml(String(entry.algorithm))} &middot; ${escapeHtml(String(entry.digits))} digits &middot; ${escapeHtml(String(entry.period))}s period &middot; ${remaining}s left</p>
         <p class="muted">Added ${new Date(entry.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}</p>
         <button data-copy="${escapeHtml(code)}">Copy code</button>
       </div>`
@@ -1806,14 +1806,14 @@ function renderHotpItem(entry: StoredTotpEntry): string {
         </div>
         ${
           code
-            ? `<button class="code code-compact" data-copy="${escapeHtml(code)}">${code}</button>`
+            ? `<button class="code code-compact" data-copy="${escapeHtml(code)}">${escapeHtml(code)}</button>`
             : `<button class="code code-compact" data-hotp-next="${id}">Get code</button>`
         }
       </div>
       ${
         expanded
           ? `<div class="totp-details">
-        <p class="muted">HOTP &middot; ${entry.algorithm} &middot; ${entry.digits} digits &middot; counter ${entry.counter || 0}</p>
+        <p class="muted">HOTP &middot; ${escapeHtml(String(entry.algorithm))} &middot; ${escapeHtml(String(entry.digits))} digits &middot; counter ${escapeHtml(String(entry.counter || 0))}</p>
         <p class="muted">Added ${new Date(entry.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}</p>
         ${code ? `<button data-copy="${escapeHtml(code)}">Copy code</button>` : ''}
         <button data-hotp-next="${id}">Next code</button>
