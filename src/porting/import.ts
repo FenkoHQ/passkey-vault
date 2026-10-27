@@ -51,6 +51,7 @@ export interface StoredPasskeyRecord extends BackupFields {
   publicKey: string;
   createdAt: number;
   counter: number;
+  prfKey?: string;
 }
 
 export interface ExistingVault {
@@ -143,7 +144,7 @@ function toStoredTotp(entry: PortableOtp): StoredTotpEntry {
   secret.set(entry.secret);
 
   return {
-    id: crypto.randomUUID(),
+    id: entry.id || crypto.randomUUID(),
     type: entry.type,
     issuer: entry.issuer,
     account: entry.account,
@@ -152,7 +153,8 @@ function toStoredTotp(entry: PortableOtp): StoredTotpEntry {
     digits: entry.digits,
     period: entry.period,
     counter: entry.counter,
-    createdAt: Date.now(),
+    createdAt: entry.createdAt || Date.now(),
+    ...(entry.lastUsed && { lastUsed: entry.lastUsed }),
   };
 }
 
@@ -174,7 +176,7 @@ async function toStoredPasskey(passkey: PortablePasskey): Promise<StoredPasskeyR
   const credentialId = normalizeCredentialId(passkey.credentialId);
 
   const record: StoredPasskeyRecord = {
-    id: credentialId,
+    id: passkey.id || credentialId,
     credentialId,
     type: PASSKEY_TYPE,
     rpId: passkey.rpId,
@@ -188,6 +190,7 @@ async function toStoredPasskey(passkey: PortablePasskey): Promise<StoredPasskeyR
     publicKey,
     createdAt: passkey.createdAt || Date.now(),
     counter: passkey.counter || 0,
+    ...(passkey.prfKey && { prfKey: passkey.prfKey }),
   };
 
   if (passkey.backup === 'unknown') return record;
@@ -220,7 +223,8 @@ function backupRepairFor(
 /**
  * Turn parsed entries into vault records, dropping anything the vault already
  * holds. TOTP seeds have no stable id across apps, so they are matched on
- * issuer + account + secret rather than on id.
+ * issuer + account + secret; a Fenko backup does carry the ids, so those are
+ * matched too.
  */
 export async function materialize(
   parsed: ParsedImport,
@@ -236,6 +240,7 @@ export async function materialize(
   }
   const backupRepairs: BackupRepair[] = [];
   const knownOtp = new Set(existing.totpEntries.map(otpFingerprint));
+  const knownOtpIds = new Set(existing.totpEntries.map((entry) => entry.id).filter(Boolean));
 
   const passkeys: StoredPasskeyRecord[] = [];
   let duplicatePasskeys = 0;
@@ -243,7 +248,7 @@ export async function materialize(
   for (const candidate of parsed.passkeys) {
     try {
       const record = await toStoredPasskey(candidate);
-      const known = knownPasskeys.get(record.id);
+      const known = knownPasskeys.get(record.id) ?? knownPasskeys.get(record.credentialId);
       if (known) {
         duplicatePasskeys += 1;
         const repair = backupRepairFor(record, known);
@@ -253,6 +258,7 @@ export async function materialize(
         continue;
       }
       knownPasskeys.set(record.id, record);
+      knownPasskeys.set(record.credentialId, record);
       passkeys.push(record);
     } catch (error) {
       warnings.push(`${candidate.rpId || 'passkey'}: ${(error as Error).message}`);
@@ -265,11 +271,12 @@ export async function materialize(
   for (const candidate of parsed.otp) {
     const record = toStoredTotp(candidate);
     const fingerprint = otpFingerprint(record);
-    if (knownOtp.has(fingerprint)) {
+    if (knownOtp.has(fingerprint) || knownOtpIds.has(record.id)) {
       duplicateTotp += 1;
       continue;
     }
     knownOtp.add(fingerprint);
+    knownOtpIds.add(record.id);
     totpEntries.push(record);
   }
 

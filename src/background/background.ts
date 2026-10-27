@@ -69,6 +69,7 @@ import {
   saveTotpEntries,
   addTotpEntry as addTotpEntryStore,
   deleteTotpEntry as deleteTotpEntryStore,
+  issueHotpCode,
   entryToSecretBytes,
   generateTotpId,
   TOTP_STORAGE_KEY,
@@ -151,7 +152,11 @@ interface SyncChain {
   id: string;
   createdAt: number;
   devices: SyncDevice[];
-  seedHash: string;
+  /**
+   * Written by older builds only. Nothing reads it, and it put the seed in
+   * cleartext; stripCleartextChainSeed() removes it from PIN'd vaults.
+   */
+  seedHash?: string;
 }
 
 type MessagePayload = Record<string, unknown>;
@@ -167,6 +172,19 @@ interface ExtensionMessage {
   deviceId?: string;
 }
 
+/**
+ * The vault has a PIN and is locked. Responses carry `code: 'VAULT_LOCKED'`
+ * so the content script can tell this apart from an empty vault.
+ */
+class VaultLockedError extends Error {
+  readonly code = 'VAULT_LOCKED';
+
+  constructor() {
+    super('Secure storage is locked. Please unlock with master password.');
+    this.name = 'VaultLockedError';
+  }
+}
+
 class BackgroundService {
   private isInitialized: boolean;
   private sessionRestored: Promise<unknown>;
@@ -178,6 +196,7 @@ class BackgroundService {
     return result;
   }
   private syncStatus: SyncStatus;
+  private syncStatusLoaded: Promise<void>;
 
   constructor() {
     this.isInitialized = false;
@@ -190,6 +209,8 @@ class BackgroundService {
       localPasskeyCount: 0,
       syncedPasskeyCount: 0,
     };
+    // A restarted worker must build on the persisted status, not the defaults.
+    this.syncStatusLoaded = this.loadSyncStatus();
     // MV3: listeners must be attached synchronously at SW wake, before any
     // await — otherwise the first message after a cold start is dropped with
     // "Could not establish connection. Receiving end does not exist."
@@ -217,7 +238,7 @@ class BackgroundService {
       return (await secureStorage.getPasskeys()) as unknown as StoredPasskey[];
     }
     if (await secureStorage.isSetup()) {
-      throw new Error('Secure storage is locked. Please unlock with master password.');
+      throw new VaultLockedError();
     }
     const result = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
     return result[PASSKEY_STORAGE_KEY] || [];
@@ -229,7 +250,7 @@ class BackgroundService {
       return;
     }
     if (await secureStorage.isSetup()) {
-      throw new Error('Secure storage is locked. Please unlock with master password.');
+      throw new VaultLockedError();
     }
     await chrome.storage.local.set({ [PASSKEY_STORAGE_KEY]: passkeys });
   }
@@ -256,13 +277,19 @@ class BackgroundService {
       });
     }
 
+    // A missing raw key means the encrypted copy is the only one (a migrated
+    // vault), not that the vault is empty, so leave that store alone.
     const passkeysResult = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
     const passkeys: StoredPasskey[] = passkeysResult[PASSKEY_STORAGE_KEY] || [];
-    await secureStorage.storePasskeys(passkeys as unknown as Record<string, unknown>[]);
+    if (passkeysResult[PASSKEY_STORAGE_KEY] !== undefined) {
+      await secureStorage.storePasskeys(passkeys as unknown as Record<string, unknown>[]);
+    }
 
     const totpResult = await chrome.storage.local.get('totp_entries');
     const totpEntries: StoredTotpEntry[] = totpResult['totp_entries'] || [];
-    await secureStorage.storeTotpEntries(totpEntries as unknown as Record<string, unknown>[]);
+    if (totpResult['totp_entries'] !== undefined) {
+      await secureStorage.storeTotpEntries(totpEntries as unknown as Record<string, unknown>[]);
+    }
 
     if (passkeys.length > 0 || totpEntries.length > 0) {
       logger.info(
@@ -373,6 +400,49 @@ class BackgroundService {
     return Boolean(config?.enabled && config.chainId);
   }
 
+  /**
+   * Older builds also kept the sync seed in the cleartext `sync_devices` chain
+   * record, and PIN setup never stripped it. Strip it once the encrypted sync
+   * config is known to hold that seed, which needs the key, so stripping never
+   * drops the only copy. When the record is for the device's current chain
+   * and the encrypted config lacks the seed, the seed is moved there first.
+   * A record for any other chain is left alone. Run inside a vault job, after
+   * migrateLegacyRawStorage(); a no-op while locked or without a PIN.
+   */
+  private async stripCleartextChainSeed(): Promise<void> {
+    if (!secureStorage.isStorageUnlocked()) return;
+    const chain = (await chrome.storage.local.get(SYNC_DEVICES_KEY))[SYNC_DEVICES_KEY] as
+      | SyncChain
+      | null
+      | undefined;
+    if (!chain?.seedHash) return;
+
+    const stored = await secureStorage.getSyncConfig();
+    if (stored?.seedHash !== chain.seedHash) {
+      const config = (await chrome.storage.local.get(SYNC_CONFIG_KEY))[SYNC_CONFIG_KEY] as
+        | SyncConfig
+        | undefined;
+      const currentChain =
+        !!config?.chainId &&
+        config.chainId === chain.id &&
+        !config.seedHash &&
+        chain.seedHash.startsWith(chain.id);
+      if (!currentChain) return;
+      await secureStorage.storeSyncConfig({
+        chainId: config.chainId,
+        deviceId: config.deviceId || '',
+        deviceName: config.deviceName || '',
+        seedHash: chain.seedHash,
+        enabled: config.enabled || false,
+      });
+    }
+
+    const publicChain = { ...chain };
+    delete publicChain.seedHash;
+    await chrome.storage.local.set({ [SYNC_DEVICES_KEY]: publicChain });
+    logger.info('Removed the cleartext sync seed from the chain record');
+  }
+
   private async initialize(): Promise<void> {
     try {
       const saved = (await chrome.storage.local.get(SYNC_CONFIG_KEY))[SYNC_CONFIG_KEY];
@@ -424,7 +494,9 @@ class BackgroundService {
           config.deviceName || undefined,
           this.syncVaultAdapter()
         );
-        await this.updateSyncStatus({ connectionStatus: 'connected' });
+        await this.updateSyncStatus({
+          connectionStatus: syncService.getStatus().connected ? 'connected' : 'disconnected',
+        });
         logger.info('Sync service started');
       }
     } catch (error: unknown) {
@@ -481,10 +553,14 @@ class BackgroundService {
           if (JSON.stringify(current) !== JSON.stringify(snapshot)) {
             return;
           }
+          // A relay accepted the snapshot, also when the socket reconnected
+          // on its own after triggerSync had reported it disconnected.
           await this.updateSyncStatus({
             lastSyncSuccess: Date.now(),
             pendingChanges: 0,
             syncedPasskeyCount: current.passkeys.length,
+            connectionStatus: 'connected',
+            lastError: null,
           });
         }),
       mergeRemote: (remotePasskeys, remoteTotpEntries, sourceDeviceId, remoteDeletions = []) =>
@@ -527,7 +603,8 @@ class BackgroundService {
     } catch (error: unknown) {
       const message_str = error instanceof Error ? error.message : String(error);
       console.error('Message handling error:', error);
-      sendResponse({ success: false, error: message_str });
+      const code = error instanceof VaultLockedError ? error.code : undefined;
+      sendResponse({ success: false, error: message_str, ...(code && { code }) });
     }
   }
 
@@ -549,6 +626,7 @@ class BackgroundService {
       'ADD_TOTP_ENTRY',
       'DELETE_TOTP_ENTRY',
       'GENERATE_TOTP_CODE',
+      'NEXT_HOTP_CODE',
       'IMPORT_VAULT',
       'EXPORT_VAULT',
       'CLEAR_VAULT',
@@ -573,12 +651,9 @@ class BackgroundService {
       (await secureStorage.isSetup()) &&
       !secureStorage.isStorageUnlocked()
     ) {
-      throw new Error('Secure storage is locked. Please unlock with master password.');
+      throw new VaultLockedError();
     }
-    if (
-      upgradeBlockedTypes.has(type) &&
-      (await chrome.storage.local.get(UPGRADE_BACKUP_REQUIRED_KEY))[UPGRADE_BACKUP_REQUIRED_KEY]
-    ) {
+    if (upgradeBlockedTypes.has(type) && (await this.isUpgradeBackupRequired())) {
       throw new Error('Export an encrypted backup before changing this upgraded vault.');
     }
 
@@ -591,6 +666,7 @@ class BackgroundService {
       'ADD_TOTP_ENTRY',
       'DELETE_TOTP_ENTRY',
       'GENERATE_TOTP_CODE',
+      'NEXT_HOTP_CODE',
       'IMPORT_VAULT',
       'CLEAR_VAULT',
       'FACTORY_RESET',
@@ -640,6 +716,8 @@ class BackgroundService {
         return this.handleDeleteTotpEntry(payload || {});
       case 'GENERATE_TOTP_CODE':
         return this.handleGenerateTotpCode(payload || {});
+      case 'NEXT_HOTP_CODE':
+        return this.handleNextHotpCode(payload || {});
       case 'IMPORT_VAULT':
         return this.handleImportVault(payload || {});
       case 'EXPORT_VAULT':
@@ -1140,7 +1218,8 @@ class BackgroundService {
       };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
+      const code = error instanceof VaultLockedError ? error.code : undefined;
+      return { success: false, error: message, ...(code && { code }) };
     }
   }
 
@@ -1335,8 +1414,27 @@ class BackgroundService {
   }
 
   private async handleUpgradeBackupStatus(): Promise<unknown> {
+    return { success: true, required: await this.isUpgradeBackupRequired() };
+  }
+
+  /**
+   * The post-upgrade gate only protects entries that exist. Once the vault
+   * holds nothing to back up (emptied by a sync merge, say) the gate is moot,
+   * and keeping it would leave the vault read-only for good, because there is
+   * no backup to export that would clear it. While the vault is locked its
+   * contents are unknown, so the gate stays.
+   */
+  private async isUpgradeBackupRequired(): Promise<boolean> {
     const result = await chrome.storage.local.get(UPGRADE_BACKUP_REQUIRED_KEY);
-    return { success: true, required: result[UPGRADE_BACKUP_REQUIRED_KEY] === true };
+    if (result[UPGRADE_BACKUP_REQUIRED_KEY] !== true) return false;
+    try {
+      const [passkeys, totpEntries] = await Promise.all([this.loadPasskeys(), loadTotpEntries()]);
+      if (passkeys.length > 0 || totpEntries.length > 0) return true;
+    } catch {
+      return true;
+    }
+    await chrome.storage.local.remove(UPGRADE_BACKUP_REQUIRED_KEY);
+    return false;
   }
 
   private async handleCompleteUpgradeBackup(): Promise<unknown> {
@@ -1459,6 +1557,30 @@ class BackgroundService {
     }
   }
 
+  // An HOTP code is single-use, so issuing one advances the stored counter.
+  // GENERATE_TOTP_CODE stays a pure read and never consumes a counter value.
+  private async handleNextHotpCode(payload: MessagePayload): Promise<unknown> {
+    try {
+      const id = payload.id as string;
+      if (!id) return { success: false, error: 'Missing id' };
+      const issued = await issueHotpCode(id);
+      if (!issued) return { success: false, error: 'Entry not found' };
+      this.logSync('HOTP_COUNTER_ADVANCED', { id, counter: issued.entry.counter });
+      await this.incrementPendingChanges();
+      this.triggerSync();
+      return {
+        success: true,
+        code: issued.code,
+        counter: issued.counter,
+        entry: issued.entry,
+      };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error('Error issuing HOTP code:', error);
+      return { success: false, error: message };
+    }
+  }
+
   // ==================== SYNC OPERATIONS ====================
 
   private async createSyncChain(deviceName: string, wordCount: number): Promise<unknown> {
@@ -1489,20 +1611,13 @@ class BackgroundService {
       const chain: SyncChain = {
         id: chainId,
         createdAt: Date.now(),
-        seedHash: seedHashHex,
         devices: [newDevice],
       };
 
-      await chrome.storage.local.set({
-        [SYNC_CONFIG_KEY]: {
-          enabled: true,
-          chainId,
-          deviceId,
-          deviceName,
-          seedHash: seedHashHex,
-        },
-        [SYNC_DEVICES_KEY]: chain,
-      });
+      await this.saveSyncChain(
+        { enabled: true, chainId, deviceId, deviceName, seedHash: seedHashHex },
+        chain
+      );
 
       await syncService.initialize(
         chainId,
@@ -1552,7 +1667,6 @@ class BackgroundService {
       const chain: SyncChain = {
         id: chainId,
         createdAt: Date.now(),
-        seedHash: seedHashHex,
         devices: [newDevice],
       };
 
@@ -1564,10 +1678,7 @@ class BackgroundService {
         seedHash: seedHashHex,
       };
 
-      await chrome.storage.local.set({
-        [SYNC_CONFIG_KEY]: config,
-        [SYNC_DEVICES_KEY]: chain,
-      });
+      await this.saveSyncChain(config, chain);
 
       await syncService.initialize(
         chainId,
@@ -1587,19 +1698,52 @@ class BackgroundService {
     }
   }
 
+  /**
+   * Save a chain this device just created or joined. With a PIN set, the seed
+   * goes only into the encrypted store, which needs the vault unlocked, in the
+   * same storage write as the cleartext config that keeps every other field.
+   * Serialized with PIN setup and removal, which read both sync configs.
+   */
+  private saveSyncChain(config: SyncConfig, chain: SyncChain): Promise<void> {
+    return this.withVault(async () => {
+      if (!(await secureStorage.isSetup())) {
+        await chrome.storage.local.set({ [SYNC_CONFIG_KEY]: config, [SYNC_DEVICES_KEY]: chain });
+        return;
+      }
+      const publicConfig = { ...config };
+      delete publicConfig.seedHash;
+      await secureStorage.storeSyncConfig(
+        {
+          chainId: config.chainId,
+          deviceId: config.deviceId,
+          deviceName: config.deviceName,
+          seedHash: config.seedHash,
+          enabled: config.enabled,
+        },
+        { [SYNC_CONFIG_KEY]: publicConfig, [SYNC_DEVICES_KEY]: chain }
+      );
+    });
+  }
+
   private async leaveSyncChain(): Promise<unknown> {
     try {
       await syncService.disconnect();
 
-      await chrome.storage.local.set({
-        [SYNC_CONFIG_KEY]: {
-          enabled: false,
-          chainId: null,
-          deviceId: null,
-          deviceName: null,
-          seedHash: null,
-        },
-        [SYNC_DEVICES_KEY]: null,
+      // Serialized with PIN setup and removal, which read both sync configs.
+      await this.withVault(async () => {
+        await chrome.storage.local.set({
+          [SYNC_CONFIG_KEY]: {
+            enabled: false,
+            chainId: null,
+            deviceId: null,
+            deviceName: null,
+            seedHash: null,
+          },
+          [SYNC_DEVICES_KEY]: null,
+        });
+        // Removing the PIN would otherwise bring the left chain back from the
+        // encrypted copy.
+        await secureStorage.deleteSyncConfig();
       });
 
       this.logSync('SYNC_CHAIN_LEFT', {});
@@ -1675,14 +1819,10 @@ class BackgroundService {
       const config: SyncConfig = configResult[SYNC_CONFIG_KEY];
       const passkeys = await this.loadPasskeys();
 
-      const statusResult = await chrome.storage.local.get(SYNC_STATUS_KEY);
-      const persistedStatus = statusResult[SYNC_STATUS_KEY] || {};
-
-      this.syncStatus = {
-        ...this.syncStatus,
-        ...persistedStatus,
-        localPasskeyCount: passkeys.length,
-      };
+      // The in-memory status is loaded from storage at startup and is the only
+      // writer since; re-reading storage here could undo a concurrent update.
+      await this.syncStatusLoaded;
+      this.syncStatus = { ...this.syncStatus, localPasskeyCount: passkeys.length };
 
       const isEnabled = config?.enabled || false;
 
@@ -1709,16 +1849,36 @@ class BackgroundService {
     }
   }
 
-  private async updateSyncStatus(updates: Partial<SyncStatus>): Promise<void> {
-    this.syncStatus = { ...this.syncStatus, ...updates };
+  private async loadSyncStatus(): Promise<void> {
+    try {
+      const persisted = (await chrome.storage.local.get(SYNC_STATUS_KEY))[SYNC_STATUS_KEY];
+      if (persisted && typeof persisted === 'object') {
+        this.syncStatus = { ...this.syncStatus, ...persisted };
+      }
+    } catch (error) {
+      logger.error('Failed to load sync status:', error);
+    }
+  }
+
+  /**
+   * Every write goes through here once the persisted status is loaded. Pass a
+   * function to derive the update from the current status, so concurrent
+   * read-modify-write updates (pending change counts) are not lost.
+   */
+  private async updateSyncStatus(
+    updates: Partial<SyncStatus> | ((current: SyncStatus) => Partial<SyncStatus>)
+  ): Promise<void> {
+    await this.syncStatusLoaded;
+    const changes = typeof updates === 'function' ? updates(this.syncStatus) : updates;
+    this.syncStatus = { ...this.syncStatus, ...changes };
     await chrome.storage.local.set({ [SYNC_STATUS_KEY]: this.syncStatus });
-    this.logSync('SYNC_STATUS_UPDATE', updates);
+    this.logSync('SYNC_STATUS_UPDATE', changes);
   }
 
   private async incrementPendingChanges(): Promise<void> {
-    await this.updateSyncStatus({
-      pendingChanges: this.syncStatus.pendingChanges + 1,
-    });
+    await this.updateSyncStatus((current) => ({
+      pendingChanges: current.pendingChanges + 1,
+    }));
   }
 
   private logSync(action: string, details?: Record<string, unknown>): void {
@@ -1795,22 +1955,24 @@ class BackgroundService {
       pendingChanges: this.syncStatus.pendingChanges,
     });
 
-    await this.updateSyncStatus({
+    await this.updateSyncStatus((current) => ({
       lastSyncAttempt: Date.now(),
       connectionStatus: 'connecting',
-      pendingChanges: Math.max(1, this.syncStatus.pendingChanges),
-    });
+      pendingChanges: Math.max(1, current.pendingChanges),
+    }));
 
     try {
       const passkeys = await this.loadPasskeys();
 
       const syncStatus = syncService.getStatus();
       if (!syncStatus.connected) {
-        if (config.chainId && config.deviceId && config.seedHash) {
+        // A PIN-protected vault keeps the seed only in the encrypted store.
+        const seedHash = await this.resolveSyncSeedHash(config);
+        if (config.chainId && config.deviceId && seedHash) {
           await syncService.initialize(
             config.chainId,
             config.deviceId,
-            config.seedHash,
+            seedHash,
             config.deviceName || undefined,
             this.syncVaultAdapter()
           );
@@ -1822,6 +1984,17 @@ class BackgroundService {
         (await loadTotpEntries()) as SyncTotpEntry[]
       );
       await syncService.requestSync();
+
+      // Both calls return quietly when no relay is open, and initialize()
+      // gives up waiting after a grace period. Report what actually happened.
+      if (!syncService.getStatus().connected) {
+        await this.updateSyncStatus({
+          connectionStatus: 'disconnected',
+          localPasskeyCount: passkeys.length,
+        });
+        this.logSync('SYNC_NOT_CONNECTED', { passkeyCount: passkeys.length });
+        return;
+      }
 
       await this.updateSyncStatus({
         connectionStatus: 'connected',
@@ -1849,6 +2022,14 @@ class BackgroundService {
         return { success: false, error: 'PIN must be 4 to 12 digits' };
       }
 
+      // Runs serialized with the other vault jobs, so this cannot race a
+      // concurrent setup. On a configured vault initialize() would just unlock
+      // it, and the reconcile below would then overwrite the encrypted store
+      // with raw storage that the first setup already emptied.
+      if (await secureStorage.isSetup()) {
+        return { success: false, error: 'A PIN is already set' };
+      }
+
       const unlocked = await secureStorage.initialize(password);
       if (!unlocked) {
         return { success: false, error: 'Failed to initialize secure storage' };
@@ -1874,6 +2055,7 @@ class BackgroundService {
         delete publicConfig.seedHash;
         await chrome.storage.local.set({ [SYNC_CONFIG_KEY]: publicConfig });
       }
+      await this.stripCleartextChainSeed();
 
       return { success: true, message: 'Master password setup complete' };
     } catch (error: unknown) {
@@ -1895,6 +2077,7 @@ class BackgroundService {
         if (ready) {
           await this.migrateLegacyRawStorage();
           await this.repairStoredCredentialIds();
+          await this.stripCleartextChainSeed();
         }
         return ready;
       });
@@ -1950,18 +2133,30 @@ class BackgroundService {
       if (!currentPassword) {
         return { success: false, error: 'Current PIN is required' };
       }
-      const passkeys = await secureStorage.getPasskeys();
-      const totpEntries = await secureStorage.getTotpEntries();
-      const config = await secureStorage.getSyncConfig();
-      const removed = await secureStorage.removeMasterPassword(currentPassword);
+      // The cleartext copy is written before the encrypted vault is removed,
+      // so an interrupted removal always leaves at least one of them.
+      const removed = await secureStorage.removeMasterPassword(currentPassword, async (vault) => {
+        // Raw sync_config holds the live chain membership. The encrypted copy
+        // only gives back the seed it kept out of cleartext, and only for
+        // that same chain: it can be older than a leave or a join.
+        const live = (await chrome.storage.local.get(SYNC_CONFIG_KEY))[SYNC_CONFIG_KEY] as
+          | SyncConfig
+          | undefined;
+        const seedHash = vault.syncConfig?.seedHash;
+        const restoreSeed =
+          !live?.seedHash &&
+          !!live?.chainId &&
+          !!seedHash &&
+          vault.syncConfig.chainId === live.chainId;
+        await chrome.storage.local.set({
+          [PASSKEY_STORAGE_KEY]: vault.passkeys,
+          totp_entries: vault.totpEntries,
+          ...(restoreSeed ? { [SYNC_CONFIG_KEY]: { ...live, seedHash } } : {}),
+        });
+      });
       if (!removed) {
         return { success: false, error: 'Failed to remove PIN — check your current PIN' };
       }
-      await chrome.storage.local.set({
-        [PASSKEY_STORAGE_KEY]: passkeys,
-        totp_entries: totpEntries,
-        ...(config ? { [SYNC_CONFIG_KEY]: config } : {}),
-      });
       return { success: true, message: 'Master PIN removed' };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);

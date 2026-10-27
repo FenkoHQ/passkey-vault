@@ -21,6 +21,8 @@
     reject: (reason?: unknown) => void;
     timeoutId: number;
     nativeFallback?: () => Promise<Credential | null>;
+    /** Stop listening to the page's AbortSignal once the request settles. */
+    detachSignal: () => void;
   }
 
   interface PrfResults {
@@ -71,6 +73,8 @@
   // Store pending requests
   const pendingRequests = new Map<string, PendingRequest>();
 
+  const REQUEST_TIMEOUT_MS = 60000; // 60 seconds for user interaction
+
   // Listen for responses from content script
   window.addEventListener('message', (event) => {
     if (event.source !== window) return;
@@ -79,11 +83,13 @@
       const { requestId, result } = event.data;
 
       if (pendingRequests.has(requestId)) {
-        const { resolve, reject, timeoutId, nativeFallback } = pendingRequests.get(requestId)!;
+        const { resolve, reject, timeoutId, nativeFallback, detachSignal } =
+          pendingRequests.get(requestId)!;
         pendingRequests.delete(requestId);
         if (timeoutId) {
           clearTimeout(timeoutId);
         }
+        detachSignal();
 
         if (result.success) {
           const credential = result.credential ? buildCredential(result.credential) : null;
@@ -126,22 +132,22 @@
         throw new Error('navigator.credentials.create is not available');
       }
 
-      const REQUEST_TIMEOUT_MS = 60000; // 60 seconds for user interaction
       const publicKey = options.publicKey;
 
       return new Promise((resolve, reject) => {
         const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        const timeoutId = window.setTimeout(() => {
-          pendingRequests.delete(requestId);
-          reject(new DOMException('The operation timed out.', 'NotAllowedError'));
-        }, REQUEST_TIMEOUT_MS);
-
-        pendingRequests.set(requestId, {
-          resolve,
-          reject,
-          timeoutId,
-          nativeFallback: nativeCreate ? () => nativeCreate(options) : undefined,
-        });
+        const tracked = trackRequest(
+          requestId,
+          {
+            resolve,
+            reject,
+            nativeFallback: nativeCreate ? () => nativeCreate(options) : undefined,
+          },
+          options.signal
+        );
+        if (!tracked) {
+          return;
+        }
 
         // Serialize the options for message passing
         const serializablePayload = {
@@ -163,7 +169,7 @@
             })),
             authenticatorSelection: publicKey.authenticatorSelection,
             attestation: publicKey.attestation,
-            extensions: publicKey.extensions,
+            extensions: serializeExtensions(publicKey.extensions),
           },
           origin: window.location.origin,
         };
@@ -194,23 +200,23 @@
         throw new Error('navigator.credentials.get is not available');
       }
 
-      const REQUEST_TIMEOUT_MS = 60000; // 60 seconds for user interaction
       const publicKey = options.publicKey;
 
       try {
         return await new Promise((resolve, reject) => {
           const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          const timeoutId = window.setTimeout(() => {
-            pendingRequests.delete(requestId);
-            reject(new DOMException('The operation timed out.', 'NotAllowedError'));
-          }, REQUEST_TIMEOUT_MS);
-
-          pendingRequests.set(requestId, {
-            resolve,
-            reject,
-            timeoutId,
-            nativeFallback: nativeGet ? () => nativeGet(options) : undefined,
-          });
+          const tracked = trackRequest(
+            requestId,
+            {
+              resolve,
+              reject,
+              nativeFallback: nativeGet ? () => nativeGet(options) : undefined,
+            },
+            options.signal
+          );
+          if (!tracked) {
+            return;
+          }
 
           // Serialize the options for message passing
           const serializablePayload = {
@@ -224,7 +230,7 @@
                 transports: cred.transports,
               })),
               userVerification: publicKey.userVerification,
-              extensions: publicKey.extensions,
+              extensions: serializeExtensions(publicKey.extensions),
             },
             mediation: options.mediation,
             origin: window.location.origin,
@@ -246,7 +252,8 @@
         const blocksNativeFallback = Boolean(
           (e as { __passkeyVaultBlockNativeFallback?: boolean }).__passkeyVaultBlockNativeFallback
         );
-        if (blocksNativeFallback || !nativeGet) {
+        // A page that aborted its request wants no prompt at all.
+        if (blocksNativeFallback || options.signal?.aborted || !nativeGet) {
           throw e;
         }
 
@@ -273,6 +280,60 @@
         'Fenko Vault: navigator.credentials unavailable (non-secure context), skipping hook'
       );
     }
+  }
+
+  /**
+   * Register a request awaiting the content script, and stop it when it times
+   * out or the page aborts it through options.signal. Stopping tells the
+   * content script to cancel too, so its dialog closes and no passkey is
+   * created or signed after the page has stopped waiting. Neither outcome
+   * falls back to the native prompt: the user already ignored the vault's
+   * dialog, or the page no longer wants an answer. Returns false, with the
+   * promise rejected, when the signal was aborted before the request began.
+   */
+  function trackRequest(
+    requestId: string,
+    handlers: Pick<PendingRequest, 'resolve' | 'reject' | 'nativeFallback'>,
+    signal: AbortSignal | null | undefined
+  ): boolean {
+    if (signal?.aborted) {
+      handlers.reject(abortReason(signal));
+      return false;
+    }
+
+    const stop = (reason: unknown) => {
+      const pending = pendingRequests.get(requestId);
+      if (!pending) {
+        return;
+      }
+      pendingRequests.delete(requestId);
+      clearTimeout(pending.timeoutId);
+      pending.detachSignal();
+      window.postMessage(
+        { source: 'PASSKEY_VAULT_PAGE', type: 'PASSKEY_CANCEL_REQUEST', requestId },
+        '*'
+      );
+      handlers.reject(reason);
+    };
+
+    const onAbort = () => stop(abortReason(signal!));
+    const timeoutId = window.setTimeout(() => {
+      const error = new DOMException('The operation timed out.', 'NotAllowedError');
+      Object.defineProperty(error, '__passkeyVaultBlockNativeFallback', { value: true });
+      stop(error);
+    }, REQUEST_TIMEOUT_MS);
+    signal?.addEventListener('abort', onAbort, { once: true });
+
+    pendingRequests.set(requestId, {
+      ...handlers,
+      timeoutId,
+      detachSignal: () => signal?.removeEventListener('abort', onAbort),
+    });
+    return true;
+  }
+
+  function abortReason(signal: AbortSignal): unknown {
+    return signal.reason ?? new DOMException('The operation was aborted.', 'AbortError');
   }
 
   /**
@@ -444,6 +505,50 @@
     }
 
     return base;
+  }
+
+  /**
+   * Copy the extension inputs with every PRF salt encoded as base64url, like
+   * the challenge and credential IDs. The payload reaches the background
+   * through chrome.runtime.sendMessage, which Chrome serialises as JSON: a raw
+   * ArrayBuffer salt would arrive as `{}` and the PRF result would be silently
+   * dropped. The vault implements no other extension, so the rest pass as-is.
+   */
+  function serializeExtensions(
+    extensions: AuthenticationExtensionsClientInputs | undefined
+  ): Record<string, unknown> | undefined {
+    if (!extensions) {
+      return undefined;
+    }
+    const serialized: Record<string, unknown> = { ...extensions };
+    const prf = extensions.prf;
+    if (prf) {
+      const prfInputs: Record<string, unknown> = {};
+      if (prf.eval) {
+        prfInputs.eval = serializePrfValues(prf.eval);
+      }
+      if (prf.evalByCredential) {
+        const byCredential: Record<string, unknown> = {};
+        for (const [credentialId, values] of Object.entries(prf.evalByCredential)) {
+          byCredential[credentialId] = serializePrfValues(values);
+        }
+        prfInputs.evalByCredential = byCredential;
+      }
+      serialized.prf = prfInputs;
+    }
+    return serialized;
+  }
+
+  function serializePrfValues(values: AuthenticationExtensionsPRFValues): {
+    first?: string;
+    second?: string;
+  } {
+    const out: { first?: string; second?: string } = {};
+    const first = serializeBufferSource(values?.first);
+    const second = serializeBufferSource(values?.second);
+    if (first != null) out.first = first;
+    if (second != null) out.second = second;
+    return out;
   }
 
   /**

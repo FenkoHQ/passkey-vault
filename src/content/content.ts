@@ -30,8 +30,16 @@ type PasskeySelectorResult =
   | { action: 'passthrough' };
 
 interface WindowWithVault extends Window {
-  showPasskeySelector: (options: PasskeyOption[], rpId: string) => Promise<PasskeySelectorResult>;
-  showPasskeyCreateConfirm: (rpId: string, userName: string) => Promise<boolean>;
+  showPasskeySelector: (
+    options: PasskeyOption[],
+    rpId: string,
+    signal?: AbortSignal
+  ) => Promise<PasskeySelectorResult>;
+  showPasskeyCreateConfirm: (
+    rpId: string,
+    userName: string,
+    signal?: AbortSignal
+  ) => Promise<boolean>;
   showPasskeyCreatedNotification: (userName: string, rpId: string) => void;
   showPasskeyUsedNotification: (userName: string, rpId: string) => void;
   showErrorNotification: (title: string, message: string) => void;
@@ -48,6 +56,8 @@ class ContentScript {
   private isInjected = false;
   private originalCreate?: typeof navigator.credentials.create;
   private originalGet?: typeof navigator.credentials.get;
+  /** Page requests still being handled, so the page can cancel them. */
+  private inFlight = new Map<string, AbortController>();
 
   constructor() {
     this.initialize();
@@ -187,13 +197,38 @@ class ContentScript {
   }
 
   /**
-   * Handle messages from the page script
+   * Handle messages from the page script.
+   *
+   * The page cancels a request when it times out or the site aborts it.
+   * Cancelling closes the request's dialog and skips the background call, so
+   * a late click cannot create or sign with a passkey nobody is waiting for.
    */
   private async handlePageMessage(message: {
     type: string;
     payload: Record<string, unknown>;
     requestId: string;
   }): Promise<void> {
+    const { type, requestId } = message;
+    if (type === 'PASSKEY_CANCEL_REQUEST') {
+      this.inFlight.get(requestId)?.abort();
+      return;
+    }
+
+    const controller = new AbortController();
+    this.inFlight.set(requestId, controller);
+    try {
+      await this.handlePageRequest(message, controller.signal);
+    } finally {
+      if (this.inFlight.get(requestId) === controller) {
+        this.inFlight.delete(requestId);
+      }
+    }
+  }
+
+  private async handlePageRequest(
+    message: { type: string; payload: Record<string, unknown>; requestId: string },
+    signal: AbortSignal
+  ): Promise<void> {
     const { type, payload, requestId } = message;
 
     if (type === 'PASSKEY_CREATE_REQUEST') {
@@ -220,7 +255,10 @@ class ContentScript {
         // so a page cannot silently register an attacker-triggered credential.
         const createUser = (pk?.user as Record<string, string>) || {};
         const createUserName = createUser.displayName || createUser.name || t('commonUnknownUser');
-        const confirmed = await _showPasskeyCreateConfirm(rpId, createUserName);
+        const confirmed = await _showPasskeyCreateConfirm(rpId, createUserName, signal);
+        if (signal.aborted) {
+          return;
+        }
         if (!confirmed) {
           window.postMessage(
             {
@@ -321,6 +359,20 @@ class ContentScript {
           timestamp: Date.now(),
         });
 
+        // A locked vault cannot tell whether it holds a passkey for this site,
+        // so it must not be reported as "no passkey". Say it is locked, then
+        // follow the user's fallback setting: blocking the native prompt on
+        // every locked sign-in would also lock out their security keys.
+        if (!listResponse.success && listResponse.code === 'VAULT_LOCKED') {
+          _showErrorNotification(t('popupVaultLocked'), t('pageVaultLockedMsg'));
+          if (rules.passthroughOnNoPasskey !== false) {
+            this.postPassthroughResponse('PASSKEY_GET_RESPONSE', requestId, 'Vault is locked');
+          } else {
+            this.postBlockedResponse('PASSKEY_GET_RESPONSE', requestId, t('pageVaultLockedMsg'));
+          }
+          return;
+        }
+
         const passkeys = listResponse.passkeys as Record<string, unknown>[] | undefined;
 
         // If the RP specified allowCredentials, the server only accepts those
@@ -370,7 +422,10 @@ class ContentScript {
         });
 
         // Show passkey selector UI
-        const selectorResult = await _showPasskeySelector(passkeyOptions, rpId);
+        const selectorResult = await _showPasskeySelector(passkeyOptions, rpId, signal);
+        if (signal.aborted) {
+          return;
+        }
 
         if (selectorResult.action === 'passthrough') {
           this.postPassthroughResponse(
