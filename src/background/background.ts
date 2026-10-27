@@ -817,10 +817,14 @@ class BackgroundService {
       throw new Error('Export an encrypted backup before changing this upgraded vault.');
     }
     // A web page signs only with the passkey the user picked in the vault's
-    // dialog, for the request they approved there.
+    // dialog, and creates one only when the user confirmed it there, for
+    // the request they approved.
     if (message.requester && type === 'GET_PASSKEY') {
       const selectedPasskeyId = await this.dialogs.consumeApproval(message, 'get');
       message.payload = { ...message.payload, selectedPasskeyId };
+    }
+    if (message.requester && type === 'CREATE_PASSKEY') {
+      await this.dialogs.consumeApproval(message, 'create');
     }
 
     // Serialize read/modify/write operations. Lookups and relay waits stay independent.

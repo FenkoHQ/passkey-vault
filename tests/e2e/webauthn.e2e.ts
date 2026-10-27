@@ -113,7 +113,6 @@ async function create(
   json: unknown,
   options: { frame?: string; click?: boolean } = {}
 ): Promise<PageResult> {
-  const target = options.frame ? page.frameLocator(options.frame) : page;
   const host = options.frame ? page.frame({ url: /frame/ })! : page.mainFrame();
   const result = host.evaluate(async (input: any) => {
     try {
@@ -139,16 +138,14 @@ async function create(
     }
   }, json);
   if (options.click !== false) {
-    await Promise.race([
-      target
-        .locator('#pkv-create')
-        .click({ timeout: 8000 })
-        .catch(() => undefined),
-      result,
-    ]);
+    await Promise.race([clickInDialog(page, '#pkv-create').catch(() => undefined), result]);
   }
   return result;
 }
+
+/** Whether a vault dialog is on the page, in any of its frames. */
+const dialogOpen = (page: Page) =>
+  page.frames().some((frame) => frame.url().includes('/vault-dialog.html'));
 
 async function get(
   page: Page,
@@ -451,7 +448,7 @@ describe('ceremonies through the installed extension', () => {
 
     expect(outcome).toBe('AbortError');
     await page.waitForTimeout(500);
-    expect(await page.locator('#pkv-create').count()).toBe(0);
+    expect(dialogOpen(page)).toBe(false);
     const after = await page
       .context()
       .serviceWorkers()[0]
@@ -627,10 +624,10 @@ describe('cross-origin iframes follow the embedder’s permissions, as in Chrome
       },
       [ceremony, json] as [string, any]
     );
-    const dialog = (
-      ceremony === 'create'
-        ? page.frameLocator('iframe').locator('#pkv-create').click({ timeout: 4000 })
-        : clickInDialog(page, '#pkv-continue', 4000)
+    const dialog = clickInDialog(
+      page,
+      ceremony === 'create' ? '#pkv-create' : '#pkv-continue',
+      4000
     )
       .then(() => 'vault dialog')
       .catch(() => 'no dialog');

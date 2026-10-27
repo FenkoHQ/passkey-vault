@@ -27,11 +27,6 @@ interface DomainRules {
 type RpIdResolution = { rpId: string } | { refused: true } | { foreign: true };
 
 interface WindowWithVault extends Window {
-  showPasskeyCreateConfirm: (
-    rpId: string,
-    userName: string,
-    signal?: AbortSignal
-  ) => Promise<boolean>;
   showPasskeyCreatedNotification: (userName: string, rpId: string) => void;
   showPasskeyUsedNotification: (rpId: string) => void;
   showErrorNotification: (title: string, message: string) => void;
@@ -41,7 +36,6 @@ interface WindowWithVault extends Window {
 const POSTED_REGISTRATION_MEMORY_MS = 10 * 60 * 1000;
 
 const vaultWindow = window as unknown as WindowWithVault;
-const _showPasskeyCreateConfirm = vaultWindow.showPasskeyCreateConfirm;
 const _showPasskeyCreatedNotification = vaultWindow.showPasskeyCreatedNotification;
 const _showPasskeyUsedNotification = vaultWindow.showPasskeyUsedNotification;
 const _showErrorNotification = vaultWindow.showErrorNotification;
@@ -336,15 +330,25 @@ class ContentScript {
           return;
         }
 
-        // SECURITY: require an explicit user gesture before creating a passkey,
-        // so a page cannot silently register an attacker-triggered credential.
-        const createUser = (pk?.user as Record<string, string>) || {};
-        const createUserName = createUser.displayName || createUser.name || t('commonUnknownUser');
-        const confirmed = await _showPasskeyCreateConfirm(rpId, createUserName, signal);
+        // SECURITY: the user confirms every registration in the vault's own
+        // dialog, so a page cannot register a credential the user did not
+        // intend, silently or with a click it tricked them into. The
+        // background makes the passkey only for a request the dialog
+        // approved.
+        const dialog = await this.dialogs.run({
+          kind: 'create',
+          requestId,
+          payload,
+          conditional: false,
+          signal,
+        });
         if (signal.aborted) {
           return;
         }
-        if (!confirmed) {
+        if (dialog.status !== 'decided') {
+          throw new Error(t('pagePasskeyError'));
+        }
+        if (dialog.outcome !== 'approved') {
           window.postMessage(
             {
               source: 'PASSKEY_VAULT_CONTENT',

@@ -93,20 +93,22 @@ describe('parallel sign-ins with one passkey', () => {
 
 describe('parallel registrations', () => {
   it('keeps every passkey', async () => {
-    const results = await Promise.all(
-      Array.from({ length: 8 }, (_, i) =>
-        navigator.credentials.create({
-          publicKey: creationOptionsFromJSON(
-            registrationJSON({
-              rp: { name: 'Example', id: 'example.com' },
-              user: {
-                id: btoa(String(i)).replace(/=/g, ''),
-                name: `user${i}`,
-                displayName: `User ${i}`,
-              },
-            })
-          ),
-        })
+    const results = await overlapCeremonies(
+      Array.from(
+        { length: 8 },
+        (_, i) => () =>
+          navigator.credentials.create({
+            publicKey: creationOptionsFromJSON(
+              registrationJSON({
+                rp: { name: 'Example', id: 'example.com' },
+                user: {
+                  id: btoa(String(i)).replace(/=/g, ''),
+                  name: `user${i}`,
+                  displayName: `User ${i}`,
+                },
+              })
+            ),
+          })
       )
     );
 
@@ -162,25 +164,34 @@ describe('abort storm', () => {
           })
       );
 
-      const attempts = Array.from({ length: 30 }, () => {
+      // Requests arrive a few milliseconds apart, so some are confirmed,
+      // some aborted at any step, and some replaced by the next request's
+      // dialog before the user answered (the frame shows one at a time).
+      const attempts: Array<Promise<{ value?: unknown; error?: any }>> = [];
+      for (let i = 0; i < 30; i++) {
         const controller = new AbortController();
         setTimeout(() => controller.abort(), Math.floor(random() * 30));
-        return outcome(
-          navigator.credentials.create({
-            publicKey: creationOptionsFromJSON(
-              registrationJSON({ rp: { name: 'Example', id: 'example.com' } })
-            ),
-            signal: controller.signal,
-          })
+        attempts.push(
+          outcome(
+            navigator.credentials.create({
+              publicKey: creationOptionsFromJSON(
+                registrationJSON({ rp: { name: 'Example', id: 'example.com' } })
+              ),
+              signal: controller.signal,
+            })
+          )
         );
-      });
+        await new Promise((resolve) => setTimeout(resolve, Math.floor(random() * 25)));
+      }
       const settled = await Promise.all(attempts);
       await vault.settle();
 
       const created = settled.filter((s) => s.value).map((s) => (s.value as any).id);
-      const aborted = settled.filter((s) => s.error);
-      expect(created.length + aborted.length).toBe(30);
-      for (const failure of aborted) expect(failure.error.name).toBe('AbortError');
+      const failed = settled.filter((s) => s.error);
+      expect(created.length + failed.length).toBe(30);
+      for (const failure of failed) {
+        expect(['AbortError', 'NotAllowedError']).toContain(failure.error.name);
+      }
       // Every passkey in the vault went to the page, and every one the page got is in the vault.
       expect((await vault.passkeys()).map((p) => p.credentialId).sort()).toEqual(created.sort());
       void dialogs;

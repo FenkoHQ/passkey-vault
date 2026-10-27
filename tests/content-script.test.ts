@@ -24,7 +24,6 @@ const { mountDialogFrame } = require('../src/content/vault-dialog-frame') as {
 };
 
 const ui = {
-  showPasskeyCreateConfirm: jest.fn(),
   showPasskeyCreatedNotification: jest.fn(),
   showPasskeyUsedNotification: jest.fn(),
   showErrorNotification: jest.fn(),
@@ -177,17 +176,6 @@ describe('content script: page cancels an in-flight request', () => {
     );
   }
 
-  /** A dialog the test answers by hand, after the request was cancelled. */
-  function heldDialog<T>(mock: jest.Mock) {
-    let answer!: (value: T) => void;
-    let signal: AbortSignal | undefined;
-    mock.mockImplementation((...args: unknown[]) => {
-      signal = args[args.length - 1] as AbortSignal;
-      return new Promise<T>((resolve) => (answer = resolve));
-    });
-    return { answer: (value: T) => answer(value), signal: () => signal };
-  }
-
   let posted: unknown[];
   const record = (event: MessageEvent) => {
     if (event.data?.source === CONTENT_SOURCE) posted.push(event.data);
@@ -209,20 +197,29 @@ describe('content script: page cancels an in-flight request', () => {
   const sentTypes = () =>
     chromeMock.runtime.sendMessage.mock.calls.map(([message]: [{ type: string }]) => message.type);
 
-  it('closes the create dialog and never creates the passkey', async () => {
-    const dialog = heldDialog<boolean>(ui.showPasskeyCreateConfirm);
+  it('closes the create dialog, and a confirmation that arrives late never creates', async () => {
     const requestId = post('PASSKEY_CREATE_REQUEST', {
-      publicKey: { rp: { id: 'localhost' }, user: { name: 'alice' }, challenge: 'AQID' },
+      publicKey: {
+        rp: { id: 'localhost' },
+        user: { name: 'alice' },
+        challenge: 'AQID',
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+      },
     });
     await flush();
-    expect(dialog.signal()?.aborted).toBe(false);
+    expect(mountDialogFrame).toHaveBeenCalledWith({
+      token: 'token-1',
+      kind: 'create',
+      focus: true,
+    });
 
     cancel(requestId);
-    expect(dialog.signal()?.aborted).toBe(true);
     // The click that raced the cancel still loses.
-    dialog.answer(true);
+    dialogResult('dialog-1', 'approved');
     await flush();
 
+    expect(frame.unmount).toHaveBeenCalled();
+    expect(sentTypes()).toContain('PASSKEY_DIALOG_CANCEL');
     expect(sentTypes()).not.toContain('CREATE_PASSKEY');
     expect(ui.showPasskeyCreatedNotification).not.toHaveBeenCalled();
     expect(posted).toEqual([]);

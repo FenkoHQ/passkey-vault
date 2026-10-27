@@ -8,7 +8,7 @@
  *        │  chrome.runtime.sendMessage (JSON both ways)
  *   background ── key generation, signing, storage (in-memory chrome.storage)
  *        │  chrome.runtime messages, with the dialog page's own sender
- *   dialog page ── the picker (scripted: `vault.user`)
+ *   dialog page ── the picker and create confirmation (scripted: `vault.user`)
  *
  * Only the user is simulated. Where the content script would frame the
  * vault's dialog page, a scripted dialog speaks the real protocol to the
@@ -195,11 +195,9 @@ export function setupVault(
     frameId: 0,
   });
 
-  // The dialogs are bound when content.js loads, so install forwarding stubs
-  // that consult whatever `vault.user` holds at call time.
+  // The in-page notices are bound when content.js loads, so install
+  // forwarding stubs that consult whatever `vault.user` holds at call time.
   const vault = { user, dialogs: [] as MountedDialog[] } as Vault;
-  win.showPasskeyCreateConfirm = (rpId: string, userName: string, signal?: AbortSignal) =>
-    Promise.resolve(vault.user.confirmCreate(rpId, userName, signal));
   win.showPasskeyCreatedNotification = (...args: unknown[]) => vault.user.createdToast(...args);
   win.showPasskeyUsedNotification = (...args: unknown[]) => vault.user.usedToast(...args);
   win.showErrorNotification = (...args: unknown[]) => vault.user.errorToast(...args);
