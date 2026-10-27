@@ -36,6 +36,31 @@ Backup flags now belong to each passkey and sync with it to every device:
 - **Android and iOS** sign with each passkey's own flags too, and a sync from
   an older build cannot strip them.
 
+### Sites can no longer read or click the vault's dialogs
+
+The passkey picker and the "Create a passkey?" confirmation were drawn into
+the web page itself. Any script on a site could read every account name the
+picker listed for that site, then cancel the request, without the user
+clicking anything. A page could also make the dialog invisible and put a
+decoy under its buttons, so the user's own click signed in or registered a
+passkey they never saw.
+
+- **The dialogs are now part of the extension, not the page.** In Chrome they
+  appear in a frame the page cannot look into or script. The site learns only
+  what a sign-in returns to it, never the accounts the vault holds.
+- **Continue and Create take a click only once the dialog has been fully in
+  view for half a second.** If a site covers, fades or shrinks the dialog, the
+  buttons stay unavailable and the dialog offers to open in a window instead.
+  Cancel and Escape always work.
+- **On Firefox the dialog opens in a small window of its own**, which a site
+  cannot cover; Firefox cannot tell an in-page frame whether it is really
+  visible. For sign-ins a site offers in its login form (autofill), a small
+  card asks first, so a window never opens on its own.
+- **The "Signed in" notice names the site, not the account**, and the vault no
+  longer marks the site's page with your theme or language.
+- A compromised browser tab can no longer list a site's accounts, or sign in
+  or register a passkey without the user's confirmation in the dialog.
+
 ### Fixed
 
 - Passkeys imported from a Bitwarden JSON export now sign in (#17). Bitwarden
