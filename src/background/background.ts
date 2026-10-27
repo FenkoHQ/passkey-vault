@@ -60,6 +60,7 @@ import {
   getOrCreatePrfKey,
   computePrfResults,
   buildClientExtensionResults,
+  usablePrfInput,
 } from './prf';
 import {
   generateTotp as generateTotpCode,
@@ -916,18 +917,15 @@ class BackgroundService {
       const prfKeyBytes = crypto.getRandomValues(new Uint8Array(32));
       const prfKeyBase64 = arrayBufferToBase64URL(prfKeyBytes.buffer);
 
-      const prfInput = (options?.extensions as Record<string, unknown> | undefined)?.prf;
-      const prfEvalInput = selectPrfEval(
-        prfInput as Parameters<typeof selectPrfEval>[0],
-        credentialIdBase64
-      );
+      const extensions = options?.extensions as Record<string, unknown> | undefined;
+      const prfEvalInput = selectPrfEval(usablePrfInput(extensions, 'create'), credentialIdBase64);
       const prfResults = prfEvalInput
         ? await computePrfResults(prfKeyBytes.buffer, prfEvalInput)
         : null;
       // SECURITY: the PRF/hmac-secret output is a client-only secret. It is
       // returned to the page via clientExtensionResults (below), but must NOT
       // be embedded in authenticatorData, which is forwarded to the RP server.
-      const clientExtensionResults = buildClientExtensionResults(prfResults);
+      const clientExtensionResults = buildClientExtensionResults(extensions, 'create', prfResults);
 
       const clientDataJSONBytes = new TextEncoder().encode(
         serializeClientData({
@@ -1098,16 +1096,13 @@ class BackgroundService {
         })
       );
 
-      const prfInput = (options?.extensions as Record<string, unknown> | undefined)?.prf;
-      const prfEvalInput = selectPrfEval(
-        prfInput as Parameters<typeof selectPrfEval>[0],
-        passkey.id
-      );
+      const extensions = options?.extensions as Record<string, unknown> | undefined;
+      const prfEvalInput = selectPrfEval(usablePrfInput(extensions, 'get'), passkey.id);
       const prfKeyBuffer = await getOrCreatePrfKey(passkey);
       const prfResults = prfEvalInput ? await computePrfResults(prfKeyBuffer, prfEvalInput) : null;
       // SECURITY: keep the PRF secret out of the RP-bound authenticatorData;
       // it is returned only via clientExtensionResults.
-      const clientExtensionResults = buildClientExtensionResults(prfResults);
+      const clientExtensionResults = buildClientExtensionResults(extensions, 'get', prfResults);
 
       const flagSettings = await loadWebAuthnFlags();
       passkey.counter = (passkey.counter || 0) + 1;

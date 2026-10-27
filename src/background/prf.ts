@@ -158,24 +158,60 @@ async function hmacSha256(keyBytes: ArrayBuffer, data: ArrayBuffer): Promise<Arr
   return crypto.subtle.sign('HMAC', key, data);
 }
 
+export interface PrfInput {
+  eval?: PrfEvalInput;
+  evalByCredential?: Record<string, PrfEvalInput>;
+}
+
 /**
- * Build clientExtensionResults including PRF output if present.
+ * The prf input to act on, or null when the relying party did not ask for
+ * prf or the request must skip it: evalByCredential is an error at
+ * registration, and an extension whose processing errs is skipped
+ * (WebAuthn Level 3 §10.1.4, §5.1.3 step 13).
+ */
+export function usablePrfInput(
+  extensions: Record<string, unknown> | undefined,
+  ceremony: 'create' | 'get'
+): PrfInput | null {
+  const prf = extensions?.prf;
+  if (!prf || typeof prf !== 'object') return null;
+  if (ceremony === 'create' && (prf as PrfInput).evalByCredential !== undefined) return null;
+  return prf as PrfInput;
+}
+
+/**
+ * Client extension outputs for the extensions the relying party requested,
+ * and nothing it did not ask for (WebAuthn Level 3 §9.4):
+ *
+ *   credProps  registration only (§10.1.3); every vault passkey is
+ *              discoverable, so rk is true
+ *   prf        `enabled` is always reported at registration and never at
+ *              sign-in (§10.1.4); `results` only when an input was
+ *              evaluated, so a sign-in with no applicable input gets {}
  */
 export function buildClientExtensionResults(
+  extensions: Record<string, unknown> | undefined,
+  ceremony: 'create' | 'get',
   prfResults: PrfResults | null
 ): Record<string, unknown> {
-  const baseResults: Record<string, unknown> = { credProps: { rk: true } };
-  if (!prfResults?.results) return baseResults;
-
-  const encoded: { results: Record<string, string> } = { results: {} };
-  if (prfResults.results.first) {
-    encoded.results.first = arrayBufferToBase64URL(prfResults.results.first);
+  const results: Record<string, unknown> = {};
+  if (ceremony === 'create' && extensions?.credProps === true) {
+    results.credProps = { rk: true };
   }
-  if (prfResults.results.second) {
-    encoded.results.second = arrayBufferToBase64URL(prfResults.results.second);
+  if (usablePrfInput(extensions, ceremony)) {
+    const prf: Record<string, unknown> = ceremony === 'create' ? { enabled: true } : {};
+    if (prfResults?.results.first) {
+      const encoded: Record<string, string> = {
+        first: arrayBufferToBase64URL(prfResults.results.first),
+      };
+      if (prfResults.results.second) {
+        encoded.second = arrayBufferToBase64URL(prfResults.results.second);
+      }
+      prf.results = encoded;
+    }
+    results.prf = prf;
   }
-  if (encoded.results.first || encoded.results.second) baseResults.prf = encoded;
-  return baseResults;
+  return results;
 }
 
 /**

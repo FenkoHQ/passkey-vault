@@ -31,16 +31,19 @@
   }
 
   interface SerializedClientExtensionResults {
+    credProps?: { rk?: boolean };
     prf?: {
+      enabled?: boolean;
       results?: PrfResults;
     };
   }
 
   interface NormalizedClientExtensionResults {
-    credProps: { rk: boolean };
+    credProps?: { rk: boolean };
     prf?: {
-      results: {
-        first?: ArrayBuffer;
+      enabled?: boolean;
+      results?: {
+        first: ArrayBuffer;
         second?: ArrayBuffer;
       };
     };
@@ -400,7 +403,7 @@
         rawId: arrayBufferToBase64URL(rawId),
         type: raw.type,
         authenticatorAttachment: attachment,
-        clientExtensionResults: extensions,
+        clientExtensionResults: clientExtensionResultsJSON(extensions),
         response: isRegistration
           ? registrationResponseJSON(raw.response)
           : authenticationResponseJSON(raw.response),
@@ -511,29 +514,61 @@
   }
 
   /**
-   * Serialize a BufferSource (ArrayBuffer, TypedArray, DataView) to base64url string
+   * Client extension outputs as the background reported them, with PRF
+   * results as ArrayBuffers. Only what the background returned is exposed:
+   * it reports exactly the extensions the relying party requested.
    */
   function normalizeClientExtensionResults(
     results: SerializedClientExtensionResults | null | undefined
   ): NormalizedClientExtensionResults {
-    const base: NormalizedClientExtensionResults = { credProps: { rk: true } };
-    if (!results?.prf?.results) {
-      return base;
+    const normalized: NormalizedClientExtensionResults = {};
+    if (results?.credProps) {
+      normalized.credProps = { rk: results.credProps.rk === true };
     }
+    if (results?.prf) {
+      const prf: NonNullable<NormalizedClientExtensionResults['prf']> = {};
+      if (typeof results.prf.enabled === 'boolean') {
+        prf.enabled = results.prf.enabled;
+      }
+      if (results.prf.results?.first) {
+        prf.results = { first: base64ToArrayBuffer(results.prf.results.first) };
+        if (results.prf.results.second) {
+          prf.results.second = base64ToArrayBuffer(results.prf.results.second);
+        }
+      }
+      normalized.prf = prf;
+    }
+    return normalized;
+  }
 
-    const prfResults: { first?: ArrayBuffer; second?: ArrayBuffer } = {};
-    if (results.prf.results.first) {
-      prfResults.first = base64ToArrayBuffer(results.prf.results.first);
+  /**
+   * AuthenticationExtensionsClientOutputsJSON (WebAuthn Level 3 §5.1.8):
+   * the same outputs with PRF results as base64url. Left as ArrayBuffers,
+   * JSON.stringify would turn them into {} and lose them.
+   */
+  function clientExtensionResultsJSON(
+    results: NormalizedClientExtensionResults
+  ): Record<string, unknown> {
+    const json: Record<string, unknown> = {};
+    if (results.credProps) {
+      json.credProps = { ...results.credProps };
     }
-    if (results.prf.results.second) {
-      prfResults.second = base64ToArrayBuffer(results.prf.results.second);
+    if (results.prf) {
+      const prf: Record<string, unknown> = {};
+      if (results.prf.enabled !== undefined) {
+        prf.enabled = results.prf.enabled;
+      }
+      if (results.prf.results) {
+        prf.results = {
+          first: arrayBufferToBase64URL(results.prf.results.first),
+          ...(results.prf.results.second && {
+            second: arrayBufferToBase64URL(results.prf.results.second),
+          }),
+        };
+      }
+      json.prf = prf;
     }
-
-    if (prfResults.first || prfResults.second) {
-      base.prf = { results: prfResults };
-    }
-
-    return base;
+    return json;
   }
 
   /**
