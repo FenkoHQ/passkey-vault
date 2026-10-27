@@ -292,3 +292,43 @@ describe('removing the master PIN', () => {
     expect(storage.passkeys).toBeUndefined();
   });
 });
+
+describe('a wrong PIN on an unlocked vault', () => {
+  it('leaves the vault unlocked when removing the PIN', async () => {
+    storage.passkeys = [passkey];
+    const { send } = await loadBackground();
+    await send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+
+    const removed = await send({
+      type: 'REMOVE_MASTER_PASSWORD',
+      payload: { currentPassword: WRONG_PIN },
+    });
+
+    expect(removed.success).toBe(false);
+    expect((await send({ type: 'IS_SECURE_STORAGE_UNLOCKED' })).isUnlocked).toBe(true);
+    expect((await send({ type: 'LIST_PASSKEYS' })).passkeys).toEqual([passkey]);
+    expect(storage.passext_master_key_check).toBeDefined();
+  });
+
+  it('leaves the vault unlocked when unlocking again', async () => {
+    storage.passkeys = [passkey];
+    const { send } = await loadBackground();
+    await send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+
+    const unlock = await send({ type: 'UNLOCK_SECURE_STORAGE', payload: { password: WRONG_PIN } });
+
+    expect(unlock.success).toBe(false);
+    expect((await send({ type: 'IS_SECURE_STORAGE_UNLOCKED' })).isUnlocked).toBe(true);
+    expect((await send({ type: 'LIST_PASSKEYS' })).passkeys).toEqual([passkey]);
+  });
+
+  it('still refuses to unlock a locked vault', async () => {
+    storage.passkeys = [passkey];
+    const { send } = await loadBackground();
+    await send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+
+    expect(await unlocksWith(send, WRONG_PIN)).toBe(false);
+    expect((await send({ type: 'IS_SECURE_STORAGE_UNLOCKED' })).isUnlocked).toBe(false);
+    expect((await send({ type: 'LIST_PASSKEYS' })).success).toBe(false);
+  });
+});

@@ -118,52 +118,53 @@ export class SecureStorage {
    * This must be called before any other operations
    */
   async initialize(masterPassword: string): Promise<boolean> {
+    // The candidate key stays local until it has opened the check value. A
+    // wrong PIN then leaves an unlocked vault unlocked with its own key, and
+    // concurrent readers never decrypt with an unverified key.
+    let key: Uint8Array | null = null;
     try {
       // Load or create salt
+      let salt: Uint8Array;
       const saltResult = await chrome.storage.local.get(STORAGE_KEYS.ENCRYPTION_SALT);
       if (saltResult[STORAGE_KEYS.ENCRYPTION_SALT]) {
-        this.salt = base64ToUint8Array(saltResult[STORAGE_KEYS.ENCRYPTION_SALT]);
+        salt = base64ToUint8Array(saltResult[STORAGE_KEYS.ENCRYPTION_SALT]);
       } else {
         // First time setup - generate new salt
-        this.salt = randomBytes(ENCRYPTION_CONFIG.saltLength);
+        salt = randomBytes(ENCRYPTION_CONFIG.saltLength);
         await chrome.storage.local.set({
-          [STORAGE_KEYS.ENCRYPTION_SALT]: uint8ArrayToBase64(this.salt),
+          [STORAGE_KEYS.ENCRYPTION_SALT]: uint8ArrayToBase64(salt),
         });
       }
 
       // Derive encryption key
-      this.encryptionKey = await deriveKeyFromPassword(masterPassword, this.salt);
+      key = await deriveKeyFromPassword(masterPassword, salt);
 
       // Verify password is correct (if we have existing data)
       const checkResult = await chrome.storage.local.get(STORAGE_KEYS.MASTER_KEY_CHECK);
       if (checkResult[STORAGE_KEYS.MASTER_KEY_CHECK]) {
-        try {
-          const decrypted = decryptData(
-            checkResult[STORAGE_KEYS.MASTER_KEY_CHECK],
-            this.encryptionKey
-          );
-          if (decrypted !== 'passkey-vault-check') {
-            this.lock();
-            return false;
-          }
-        } catch {
-          this.lock();
+        if (!opensVault(checkResult[STORAGE_KEYS.MASTER_KEY_CHECK], key)) {
+          secureWipe(key);
           return false;
         }
       } else {
         // First time - store check value
-        const checkData = encryptData('passkey-vault-check', this.encryptionKey);
+        const checkData = encryptData('passkey-vault-check', key);
         await chrome.storage.local.set({
           [STORAGE_KEYS.MASTER_KEY_CHECK]: checkData,
         });
       }
 
+      if (this.encryptionKey) {
+        secureWipe(this.encryptionKey);
+      }
+      this.encryptionKey = key;
+      this.salt = salt;
       this.isUnlocked = true;
       this.resetAutoLock();
       return true;
     } catch (error) {
       console.error('SecureStorage initialization failed:', error);
-      this.lock();
+      if (key) secureWipe(key);
       return false;
     }
   }
@@ -479,8 +480,9 @@ export class SecureStorage {
     currentPassword: string,
     persistPlaintext: (vault: DecryptedVault) => Promise<void>
   ): Promise<boolean> {
-    const verified = await this.initialize(currentPassword);
-    if (!verified) {
+    // A side-effect-free check: initialize() here used to lock the vault on a
+    // mistyped PIN without disconnecting sync.
+    if (!(await this.verifyPassword(currentPassword))) {
       return false;
     }
     // Strict reads: a blob that fails to decrypt aborts the removal rather
