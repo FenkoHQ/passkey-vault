@@ -679,9 +679,10 @@
     const user = dictionary(required(options.user, 'user'), 'user');
     const rpId = optionalString(rp.id);
     const userId = bufferBytes(user.id, 'user.id');
-    // §5.1.3 step 5.
-    if (userId.byteLength < 1 || userId.byteLength > 64) {
-      throw new TypeError('user.id must be between 1 and 64 bytes.');
+    // §5.1.3 step 5 asks for 1 to 64 bytes. Chrome enforces only the maximum,
+    // and a page that works without the vault must keep working with it.
+    if (userId.byteLength > 64) {
+      throw new TypeError('User handle exceeds 64 bytes.');
     }
     const selection = dictionary(options.authenticatorSelection, 'authenticatorSelection');
     return {
