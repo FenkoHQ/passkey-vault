@@ -52,6 +52,12 @@ import {
   type BackupRepair,
 } from '../sync/backup-flags';
 import { verifyRelatedOrigin } from './related-origins';
+import {
+  appendWebAuthnLog,
+  clearWebAuthnLog,
+  readWebAuthnLog,
+  removeStoredWebAuthnLog,
+} from './webauthn-log';
 import { serializeClientData } from './client-data';
 import { acceptsEs256 } from '../utils/algorithms';
 import { isRpIdValidForHost } from '../utils/rp-id';
@@ -342,7 +348,10 @@ class BackgroundService {
     // MV3: listeners must be attached synchronously at SW wake, before any
     // await — otherwise the first message after a cold start is dropped with
     // "Could not establish connection. Receiving end does not exist."
-    secureStorage.onAutoLock = () => void syncService.disconnect();
+    secureStorage.onAutoLock = () => {
+      void syncService.disconnect();
+      void clearWebAuthnLog();
+    };
     // Messages wait for this, so a worker restarted by a request answers it
     // with the unlock the previous worker held.
     this.sessionRestored = secureStorage.restoreSession().catch((error) => {
@@ -578,7 +587,15 @@ class BackgroundService {
       }
       await logger.init();
       logger.info('Background service initializing...');
+      await removeStoredWebAuthnLog().catch((error) =>
+        logger.error('Failed to remove the stored WebAuthn log:', error)
+      );
       await this.sessionRestored;
+      // A session that expired while the worker was stopped locks without an
+      // auto-lock callback; the log goes with the unlock either way.
+      if ((await secureStorage.isSetup()) && !secureStorage.isStorageUnlocked()) {
+        await clearWebAuthnLog();
+      }
       await this.withVault(() => this.repairStoredCredentialIds());
       // Before anything else reads the Advanced toggles: from this build on
       // they only describe new passkeys, so record what they meant until now.
@@ -772,6 +789,8 @@ class BackgroundService {
       'FACTORY_RESET',
       'CHANGE_MASTER_PASSWORD',
       'REMOVE_MASTER_PASSWORD',
+      // Which sites were signed in to, and with which passkey.
+      'GET_WEBAUTHN_LOG',
     ]);
     const upgradeBlockedTypes = new Set([
       'CREATE_PASSKEY',
@@ -1124,7 +1143,6 @@ class BackgroundService {
       this.logWebAuthn('CREATE', 'info', `Created passkey for ${rpId}`, {
         rpId,
         credentialId: credentialIdBase64,
-        user: (user?.name as string) || '',
       });
       this.logSync('PASSKEY_CREATED', { id: credentialIdBase64, rpId });
       await this.noteVaultChange();
@@ -1294,7 +1312,6 @@ class BackgroundService {
       this.logWebAuthn('GET', 'info', `Signed assertion for ${rpId}`, {
         rpId,
         credentialId: passkey.id,
-        user: passkey.user?.name || '',
         backupEligible: backupFlags.backupEligible,
         backupState: backupFlags.backupState,
       });
@@ -1608,6 +1625,7 @@ class BackgroundService {
   private async handleFactoryReset(): Promise<unknown> {
     await syncService.disconnect();
     secureStorage.lock();
+    await clearWebAuthnLog();
     await chrome.storage.local.clear();
     return { success: true };
   }
@@ -2101,22 +2119,14 @@ class BackgroundService {
     logger.debug(`[SYNC] ${action}`, details || '');
   }
 
-  private async logWebAuthn(
+  /** Only with debug logging on, and only in memory: see webauthn-log.ts. */
+  private logWebAuthn(
     action: string,
     level: 'info' | 'warn' | 'error',
     message: string,
-    data?: unknown
+    data?: { rpId?: string; credentialId?: string; [key: string]: unknown }
   ): Promise<void> {
-    try {
-      const result = await chrome.storage.local.get('webauthn_log');
-      const logs: Array<Record<string, unknown>> = result.webauthn_log || [];
-      logs.push({ timestamp: Date.now(), level, category: action, message, data });
-      // Keep last 200 entries
-      if (logs.length > 200) logs.splice(0, logs.length - 200);
-      await chrome.storage.local.set({ webauthn_log: logs });
-    } catch {
-      // Don't let logging errors break operations
-    }
+    return appendWebAuthnLog({ level, category: action, message, data });
   }
 
   private async handleTriggerSync(): Promise<unknown> {
@@ -2333,6 +2343,7 @@ class BackgroundService {
     try {
       await syncService.disconnect();
       secureStorage.lock();
+      await clearWebAuthnLog();
       return { success: true, message: 'Secure storage locked' };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2452,6 +2463,7 @@ class BackgroundService {
     try {
       const { enabled } = payload;
       await logger.setDebugEnabled(enabled);
+      if (!enabled) await clearWebAuthnLog();
       logger.info(`Debug logging ${enabled ? 'enabled' : 'disabled'}`);
       return { success: true, enabled };
     } catch (error: unknown) {
@@ -2505,8 +2517,7 @@ class BackgroundService {
 
   private async handleGetWebAuthnLog(): Promise<unknown> {
     try {
-      const result = await chrome.storage.local.get('webauthn_log');
-      return { success: true, logs: result.webauthn_log || [] };
+      return { success: true, logs: await readWebAuthnLog() };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
@@ -2515,7 +2526,7 @@ class BackgroundService {
 
   private async handleClearWebAuthnLog(): Promise<unknown> {
     try {
-      await chrome.storage.local.set({ webauthn_log: [] });
+      await clearWebAuthnLog();
       return { success: true };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);

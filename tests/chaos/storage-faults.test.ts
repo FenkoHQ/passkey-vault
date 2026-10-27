@@ -4,8 +4,9 @@
  * Chaos: chrome.storage fails.
  *
  * chrome.storage.local rejects writes past its quota and can fail on I/O
- * errors. The vault's bookkeeping (sync status, the WebAuthn log) shares
- * that storage with the passkeys themselves.
+ * errors. The vault's bookkeeping (sync status, and the WebAuthn log in
+ * session storage when debug logging is on) can fail while the passkeys
+ * themselves are saved.
  *
  * Steady state: a passkey is returned to the site only if it was saved (or
  * the site would register a credential the vault cannot use), a saved
@@ -63,16 +64,31 @@ describe('the passkey cannot be saved', () => {
 });
 
 describe('bookkeeping fails after the passkey is saved', () => {
-  it.each([['sync_status'], ['webauthn_log']])(
-    'still hands the site the saved passkey when %s cannot be written',
-    async (key) => {
-      vault.chrome.faults.push({ op: 'set', match: writes(key), error: quota() });
+  it('still hands the site the saved passkey when sync_status cannot be written', async () => {
+    vault.chrome.faults.push({ op: 'set', match: writes('sync_status'), error: quota() });
 
-      const registration = await register();
+    const registration = await register();
 
-      expect((await vault.passkeys()).map((p) => p.credentialId)).toEqual([registration.record.id]);
-    }
-  );
+    expect((await vault.passkeys()).map((p) => p.credentialId)).toEqual([registration.record.id]);
+  });
+
+  it('still hands the site the saved passkey when the WebAuthn log cannot be written', async () => {
+    // The log is only kept with debug logging on, and only in session storage.
+    await vault.reset({ debug_logging_enabled: true });
+    vault.chrome.faults.push({
+      area: 'session',
+      op: 'set',
+      match: writes('webauthn_log'),
+      error: quota(),
+      times: 1,
+    });
+
+    const registration = await register();
+
+    expect((await vault.passkeys()).map((p) => p.credentialId)).toEqual([registration.record.id]);
+    // The write was attempted, and failed.
+    expect(vault.chrome.faults[0].times).toBe(0);
+  });
 
   it('still signs in when sync status cannot be written', async () => {
     const registration = await register();

@@ -306,7 +306,8 @@ const en: TranslationMap = {
   optionsDeveloperTitle: 'Developer Tools',
   optionsDeveloperDesc: 'Debugging, inspection, and diagnostic tools.',
   optionsConsoleLogging: 'Console Logging',
-  optionsConsoleLoggingDesc: 'Log WebAuthn operations and sync events to the browser console.',
+  optionsConsoleLoggingDesc:
+    'Log WebAuthn operations and sync events to the browser console, and record the WebAuthn event log below.',
   optionsStorageInspector: 'Storage Inspector',
   optionsStorageInspectorDesc: 'Raw contents of chrome.storage.local.',
   optionsStorageBytes: '{count} B',
@@ -317,7 +318,8 @@ const en: TranslationMap = {
   optionsSyncProtocolLog: 'Sync Protocol Log',
   optionsSyncProtocolLogDesc: 'Recent Nostr relay events and sync operations.',
   optionsWebAuthnEventLog: 'WebAuthn Event Log',
-  optionsWebAuthnEventLogDesc: 'Recent credential create/get operations.',
+  optionsWebAuthnEventLogDesc:
+    'Passkeys created and used in this browser session, recorded only while console logging is on. Kept in memory, never saved to disk, and cleared when the vault locks.',
   optionsExtensionInfo: 'Extension Info',
   optionsVersion: 'Version',
   optionsManifest: 'Manifest',
@@ -333,7 +335,8 @@ const en: TranslationMap = {
   optionsFactoryReset: 'Factory Reset',
   optionsFactoryResetDesc: 'Wipe everything — passkeys, settings, sync, master password.',
   optionsNoSyncLogs: 'No sync logs.',
-  optionsNoWebAuthnLogs: 'No WebAuthn events logged yet.',
+  optionsNoWebAuthnLogs: 'No WebAuthn events logged. Turn on console logging to record them.',
+  optionsWebAuthnLogLocked: 'Unlock the vault to see the WebAuthn event log.',
   optionsImportConfirm: 'This will overwrite ALL existing data. Are you sure?',
   optionsImportSuccess: 'Data imported. Reload the extension to apply changes.',
   optionsExportPlaintextWarning:

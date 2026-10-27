@@ -750,7 +750,8 @@
               </label>
             </div>
             <p class="card-hint" data-i18n="optionsConsoleLoggingDesc">
-              Log WebAuthn operations and sync events to the browser console.
+              Log WebAuthn operations and sync events to the browser console, and record the
+              WebAuthn event log below.
             </p>
           </div>
 
@@ -791,7 +792,8 @@
           <div class="card">
             <h3 data-i18n="optionsWebAuthnEventLog">WebAuthn Event Log</h3>
             <p class="card-hint" data-i18n="optionsWebAuthnEventLogDesc">
-              Recent credential create/get operations.
+              Passkeys created and used in this browser session, recorded only while console
+              logging is on. Kept in memory, never saved to disk, and cleared when the vault locks.
             </p>
             <div class="card-actions">
               <button id="refresh-webauthn-log-btn" class="btn btn-secondary btn-sm">
