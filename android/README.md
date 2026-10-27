@@ -42,7 +42,7 @@ Supported Android versions:
 - Delete protection: long-press an item, confirm, and it moves to a recycle bin in Tools for 7 days before permanent removal.
 - Pull-to-refresh on the vault triggers a sync.
 - Nostr sync matching the extension protocol. Default relays put `wss://vaultsync.fenko.nz` first.
-- Encrypted backup export/import in the same AES-256-GCM envelope the extension importer understands; raw JSON backup retained.
+- Encrypted backup export/import in the same format as the extension (`src/crypto/backup-crypto.ts`: AES-256-GCM, key from scrypt with its parameters in the file; older PBKDF2 backups still import); raw JSON backup retained.
 - Fenko branding: Saira font (bundled, SIL OFL), dark theme, adaptive launcher icon that follows the system light/dark theme.
 - About panel in Tools: open-source/no-warranty statement, privacy summary, and links to fenko.nz terms, privacy policy, and contact.
 

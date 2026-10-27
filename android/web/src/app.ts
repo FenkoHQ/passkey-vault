@@ -34,6 +34,14 @@ import {
   deriveEd25519Keypair,
 } from '../../../src/crypto/bip39';
 import { generateHotp, generateTotp, parseOtpauth, timeRemaining } from '../../../src/crypto/totp';
+import {
+  checkBackupPassword,
+  decryptBackup,
+  encryptBackup,
+  isEncryptedBackup,
+  MIN_BACKUP_PASSWORD_LENGTH,
+  UnsupportedBackupError,
+} from '../../../src/crypto/backup-crypto';
 
 declare const jsQR:
   | undefined
@@ -671,23 +679,6 @@ function issueHotpCode(id: string): string | null {
   return code;
 }
 
-async function deriveBackupKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
-  const material = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(password),
-    'PBKDF2',
-    false,
-    ['deriveKey']
-  );
-  return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: new Uint8Array(salt), iterations: 100000, hash: 'SHA-256' },
-    material,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  );
-}
-
 function canBiometric(): boolean {
   try {
     return window.AndroidBridge?.canUseBiometrics?.() === true;
@@ -753,6 +744,13 @@ async function exportBackup(): Promise<void> {
     setStatus('Backup passwords do not match.', 'bad');
     return;
   }
+  if (password && checkBackupPassword(password)) {
+    setStatus(
+      `Use a backup password of at least ${MIN_BACKUP_PASSWORD_LENGTH} characters, ideally four or more random words.`,
+      'bad'
+    );
+    return;
+  }
   state.exportPassword = '';
   state.exportPasswordConfirm = '';
   if (password) {
@@ -792,22 +790,12 @@ async function exportEncryptedVault(password: string): Promise<void> {
     syncDevices: loadJson<SyncChain | null>(SYNC_DEVICES_KEY, null),
     customRelays: getRelays(),
   };
-  const salt = crypto.getRandomValues(new Uint8Array(32));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveBackupKey(password, salt);
-  const encrypted = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
-    key,
-    new TextEncoder().encode(JSON.stringify(payload))
-  );
+  // The same format and KDF as the extension's backups (src/crypto/backup-format.ts).
   const backup = {
     encrypted: true,
     version: '1.0',
     exportedAt: new Date().toISOString(),
-    data: arrayBufferToBase64(encrypted),
-    iv: bytesToBase64(iv),
-    salt: bytesToBase64(salt),
-    algorithm: 'AES-256-GCM',
+    ...(await encryptBackup(JSON.stringify(payload), password)),
   };
   const json = JSON.stringify(backup, null, 2);
   copyText(json);
@@ -828,22 +816,21 @@ async function importVault(raw: string): Promise<void> {
     setStatus("That doesn't look like backup JSON.", 'bad');
     return;
   }
-  if (payload.encrypted === true && payload.data && payload.iv && payload.salt) {
+  if (isEncryptedBackup(payload)) {
     const password = state.importPassword;
     if (!password) {
       setStatus('This backup is encrypted — enter its password above.', 'bad');
       return;
     }
     try {
-      const key = await deriveBackupKey(password, base64ToBytes(payload.salt));
-      const decrypted = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: base64ToBytes(payload.iv) },
-        key,
-        base64ToBytes(payload.data)
+      payload = JSON.parse(await decryptBackup(payload, password));
+    } catch (error) {
+      setStatus(
+        error instanceof UnsupportedBackupError
+          ? 'This backup was made by a newer version of Fenko Vault. Update the app to import it.'
+          : 'Wrong password or corrupted backup.',
+        'bad'
       );
-      payload = JSON.parse(new TextDecoder().decode(decrypted));
-    } catch {
-      setStatus('Wrong password or corrupted backup.', 'bad');
       return;
     }
   }
@@ -1997,7 +1984,7 @@ function renderTools(): string {
       <div class="panel stack">
         <h2>Backup</h2>
         <h3>Export</h3>
-        <p class="muted">Set a password to export an encrypted backup, or leave it blank to export plain JSON. Exports copy to the clipboard and save to a file you choose.</p>
+        <p class="muted">Set a password of at least ${MIN_BACKUP_PASSWORD_LENGTH} characters to export an encrypted backup, or leave it blank to export plain JSON. Anyone with the file can guess its password offline, so use four or more random words. Exports copy to the clipboard and save to a file you choose.</p>
         <input type="password" id="export-password" placeholder="Backup password (optional)"
           autocomplete="new-password" autocapitalize="off" value="${escapeHtml(state.exportPassword)}" />
         <input type="password" id="export-password-confirm" placeholder="Confirm password"
