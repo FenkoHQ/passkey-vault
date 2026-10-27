@@ -22,6 +22,7 @@
     "zip:all": "npm run build:all && rm -f passkey-vault-chrome.zip passkey-vault-firefox.zip && cd dist && zip -r ../passkey-vault-chrome.zip . && cd ../dist-firefox && zip -r ../passkey-vault-firefox.zip .",
     "clean": "rm -rf dist dist-firefox",
     "version:bump": "node scripts/bump-version.js",
+    "update:psl": "node scripts/update-public-suffix-list.js",
     "capture": "node scripts/capture-assets.js all",
     "capture:screenshots": "node scripts/capture-assets.js screenshots",
     "capture:video": "node scripts/capture-assets.js video",

@@ -2,7 +2,9 @@
  * Which RP IDs a page may claim: the host, or one of its parents down to
  * the registrable domain (WebAuthn Level 3 §5.1.3 step 8). Checked against
  * a table of the cases browsers decide, and as a property against a small
- * reference implementation over generated hosts.
+ * reference implementation over generated hosts. The reference's suffixes
+ * are all in the Public Suffix List except "example", which the list does
+ * not know and so treats as a top-level suffix, as Chrome does.
  */
 
 import { isRpIdValidForHost } from '../../src/utils/rp-id';
@@ -38,6 +40,20 @@ describe('isRpIdValidForHost', () => {
     ['example.com', 'https://example.com', false],
     ['example.com', 'exa mple.com', false],
     ['sub.example.com', 'ex*mple.com', false],
+    // Public suffixes from the full list, private section included, as
+    // Chrome checks them.
+    ['foo.github.io', 'github.io', false],
+    ['a.foo.github.io', 'foo.github.io', true],
+    ['a.b.blogspot.com', 'blogspot.com', false],
+    ['shop.example.com.ar', 'com.ar', false],
+    ['shop.example.com.ar', 'example.com.ar', true],
+    ['www.example.gov.au', 'gov.au', false],
+    // Inside the page's own public suffix (up.railway.app is listed).
+    ['foo.up.railway.app', 'up.railway.app', false],
+    ['foo.up.railway.app', 'railway.app', false],
+    // A top-level domain the list does not know is a suffix of one label.
+    ['www.nas.lan', 'nas.lan', true],
+    ['www.nas.lan', 'lan', false],
   ])('host %s, RP ID %s -> %s', (host, rpId, expected) => {
     expect(isRpIdValidForHost(rpId, host)).toBe(expected);
   });

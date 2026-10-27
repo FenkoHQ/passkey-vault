@@ -209,7 +209,7 @@ const WEB_PAGE_MESSAGES = new Set([
   'DISCARD_REGISTRATION',
   'GET_PASSKEY',
   'LIST_PASSKEYS_FOR_RP',
-  'VERIFY_RELATED_ORIGIN',
+  'CHECK_RP_ID',
   'NEEDS_SITE_ICON',
   'SAVE_SITE_ICON',
   'ACTIVATE_UI',
@@ -230,10 +230,19 @@ function webOrigin(sender: chrome.runtime.MessageSender): string | null {
   }
 }
 
-/** Refuse an RP ID the sending origin may not use, as the content script does. */
+/**
+ * Whether a page on `origin` may use `rpId`: same-site by the Public Suffix
+ * List, or authorized by the RP's Related Origin Requests file. Decided here
+ * rather than in the content script, which would otherwise have to carry the
+ * whole suffix list into every page.
+ */
+async function mayUseRpId(rpId: string, origin: string): Promise<boolean> {
+  return isRpIdValidForHost(rpId, new URL(origin).hostname) || verifyRelatedOrigin(rpId, origin);
+}
+
+/** Refuse an RP ID the sending origin may not use. */
 async function requireRpIdFor(rpId: string, origin: string): Promise<void> {
-  if (isRpIdValidForHost(rpId, new URL(origin).hostname)) return;
-  if (await verifyRelatedOrigin(rpId, origin)) return;
+  if (await mayUseRpId(rpId, origin)) return;
   throw new Error(`RP ID ${rpId} is not valid for ${origin}`);
 }
 
@@ -294,7 +303,8 @@ async function bindToWebPage(
         throw new Error('A page may only supply its own site icon');
       }
       break;
-    case 'VERIFY_RELATED_ORIGIN':
+    case 'CHECK_RP_ID':
+      // Answered for the origin Chrome reports, not one the page names.
       payload.origin = origin;
       break;
   }
@@ -857,8 +867,8 @@ class BackgroundService {
         return this.handleListPasskeys();
       case 'LIST_PASSKEYS_FOR_RP':
         return this.handleListPasskeysForRp(payload || {});
-      case 'VERIFY_RELATED_ORIGIN':
-        return this.handleVerifyRelatedOrigin(payload || {});
+      case 'CHECK_RP_ID':
+        return this.handleCheckRpId(payload || {});
       case 'NEEDS_SITE_ICON':
         return this.handleNeedsSiteIcon(payload || {});
       case 'SAVE_SITE_ICON':
@@ -1443,15 +1453,15 @@ class BackgroundService {
     }
   }
 
-  // WebAuthn Related Origin Requests: the content script asks whether an origin
-  // that is not same-site with the requested RP ID is nonetheless authorized by
-  // the RP's /.well-known/webauthn file. Done here (not in the content script)
-  // so the fetch has host permissions and isn't blocked by the page's CSP.
-  private async handleVerifyRelatedOrigin(payload: MessagePayload): Promise<unknown> {
+  /**
+   * Whether the requesting page may use an RP ID: the content script asks
+   * before it offers the vault, and leaves the request to the browser when
+   * the answer is no. CREATE_PASSKEY and LIST_PASSKEYS_FOR_RP check again.
+   */
+  private async handleCheckRpId(payload: MessagePayload): Promise<unknown> {
     const rpId = typeof payload.rpId === 'string' ? payload.rpId : '';
     const origin = typeof payload.origin === 'string' ? payload.origin : '';
-    const authorized = await verifyRelatedOrigin(rpId, origin);
-    return { authorized };
+    return { allowed: await mayUseRpId(rpId, origin) };
   }
 
   private async handleNeedsSiteIcon(payload: MessagePayload): Promise<unknown> {

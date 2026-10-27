@@ -26,8 +26,10 @@ let background: BackgroundHandler = () => ({ success: true });
 let domainRules: Record<string, unknown> = {};
 
 const chromeMock = (window as unknown as { chrome: Record<string, any> }).chrome;
+// The background decides which RP IDs the page may use; these tests are about
+// what happens after it says yes.
 chromeMock.runtime.sendMessage.mockImplementation(async (message: { type: string }) =>
-  background(message)
+  message.type === 'CHECK_RP_ID' ? { allowed: true } : background(message)
 );
 chromeMock.storage.local.get.mockImplementation(async (key: string) =>
   key === 'domain_rules' ? { domain_rules: domainRules } : {}

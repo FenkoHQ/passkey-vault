@@ -10,7 +10,6 @@ import { logger } from '../utils/logger';
 import { readPageIcon } from '../site-icons/page-capture';
 import { describeFrame } from './frame';
 import { acceptsEs256 } from '../utils/algorithms';
-import { isRpIdValidForHost } from '../utils/rp-id';
 
 interface PasskeyOption {
   id: string;
@@ -213,13 +212,11 @@ class ContentScript {
     const pkRp = (pk?.rp as Record<string, string>) || {};
     const requested = String(pk?.rpId ?? pkRp.id ?? trueHost);
 
-    if (isRpIdValidForHost(requested, trueHost)) {
-      return { rpId: requested };
-    }
-    // Not same-site — the RP may still authorize this origin via Related Origin
-    // Requests. The background worker fetches the RP's /.well-known/webauthn
-    // file (it has host permissions and isn't subject to the page's CSP).
-    if (await this.isRelatedOriginAuthorized(requested, trueOrigin)) {
+    // Same-site by the Public Suffix List, or authorized by the RP's Related
+    // Origin Requests file (WebAuthn L3 §5.11). The background decides both:
+    // it holds the suffix list, which is too big to load into every page,
+    // and fetches /.well-known/webauthn outside the page's CSP.
+    if (await this.mayUseRpId(requested)) {
       return { rpId: requested };
     }
     // Not an error: the browser decides, and throws SecurityError if it must.
@@ -253,13 +250,11 @@ class ContentScript {
     return policy.allowsFeature(feature);
   }
 
-  private async isRelatedOriginAuthorized(rpId: string, origin: string): Promise<boolean> {
+  /** Asked of the background, which answers for this frame's real origin. */
+  private async mayUseRpId(rpId: string): Promise<boolean> {
     try {
-      const res = await this.sendMessage({
-        type: 'VERIFY_RELATED_ORIGIN',
-        payload: { rpId, origin },
-      });
-      return res?.authorized === true;
+      const res = await this.sendMessage({ type: 'CHECK_RP_ID', payload: { rpId } });
+      return res?.allowed === true;
     } catch {
       return false;
     }

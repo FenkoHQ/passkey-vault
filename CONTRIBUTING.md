@@ -53,6 +53,7 @@ npm run test:e2e:webauthn # Run WebAuthn ceremonies through the built extension 
 npm run lint             # Run ESLint
 npm run typecheck        # TypeScript check
 npm run version:bump     # Sync version across all manifests (run before tagging)
+npm run update:psl       # Regenerate src/utils/public-suffix-list.ts from publicsuffix.org
 npm run capture          # Re-generate screenshots and demo video
 ```
 
