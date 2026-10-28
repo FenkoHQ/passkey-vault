@@ -33,7 +33,7 @@ import {
   LEGACY_CLEANUP_KEY,
   deleteLegacyEvents,
   nextLegacyCleanup,
-  pendingLegacyCleanup,
+  startLegacyCleanup,
 } from '../../../src/sync/legacy-chain';
 import * as secp256k1 from '@noble/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
@@ -1626,7 +1626,12 @@ async function bootSync(keys?: ChainKeys): Promise<void> {
  */
 function adoptChainId(config: SyncConfig, chainId: string): SyncConfig {
   const legacy = legacyChainId(config.seedHash || '');
-  saveJson(LEGACY_CLEANUP_KEY, pendingLegacyCleanup(chainId, config.deviceId || ''));
+  const cleanup = startLegacyCleanup(
+    loadJson(LEGACY_CLEANUP_KEY, null),
+    chainId,
+    config.deviceId || ''
+  );
+  if (cleanup) saveJson(LEGACY_CLEANUP_KEY, cleanup);
   const chain = loadJson<SyncChain | null>(SYNC_DEVICES_KEY, null);
   if (chain?.id === legacy) saveJson(SYNC_DEVICES_KEY, { ...chain, id: chainId });
   const stored = getSyncConfig();

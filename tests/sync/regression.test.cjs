@@ -1579,6 +1579,40 @@ test('an extension on a v4 chain moves to its v5 chain ID once, everywhere it is
   await browser.sync.disconnect();
 });
 
+test('a running extension retries storing its v5 chain ID without starting over', async () => {
+  const relay = fakeRelay();
+  const clock = sharedClock();
+  const browser = extensionDevice(relay, clock);
+  const adopt = browser.owner.adoptSyncChainId;
+  let failures = 1;
+  browser.owner.adoptSyncChainId = async function (...args) {
+    if (failures-- > 0) throw new Error('storage quota exceeded');
+    return adopt.apply(this, args);
+  };
+  await browser.owner.initializeSyncService();
+  await pumpUntil(clock, [browser], cleanedUp(browser), 'the v4 cleanup never finished');
+  assert.equal(browser.storage.get('sync_config').chainId, LEGACY_CHAIN_ID);
+  assert.equal(browser.sync.getStatus().chainId, config.chainId);
+
+  let derivations = 0;
+  const derive = browser.sync.deriveKeys.bind(browser.sync);
+  browser.sync.deriveKeys = (seedHash) => {
+    derivations++;
+    return derive(seedHash);
+  };
+  const sockets = relay.sockets.size;
+  const deletions = relay.deletions.length;
+  await browser.owner.initializeSyncService();
+  await pump(clock, [browser], () => false, 2);
+  assert.equal(browser.storage.get('sync_config').chainId, config.chainId);
+  assert.equal(browser.storage.get('sync_devices').id, config.chainId);
+  assert.equal(derivations, 0);
+  assert.equal(relay.sockets.size, sockets);
+  assert.equal(relay.deletions.length, deletions);
+  assert.equal(browser.storage.get('sync_legacy_cleanup').done, true);
+  await browser.sync.disconnect();
+});
+
 test('an extension whose stored chain belongs to another seed refuses to sync', async () => {
   const relay = fakeRelay();
   const clock = sharedClock();

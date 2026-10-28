@@ -16,7 +16,7 @@ import {
   LEGACY_CLEANUP_KEY,
   deleteLegacyEvents,
   nextLegacyCleanup,
-  pendingLegacyCleanup,
+  startLegacyCleanup,
 } from './legacy-chain';
 
 const RECONNECT_DELAY = 5000;
@@ -353,7 +353,12 @@ export class SyncService {
       wipeChainKeys(keys);
       return this.pendingInit.promise;
     }
-    if (!this.pendingInit && this.seedHash === seedHash && this.isConnected) {
+    if (
+      !this.pendingInit &&
+      this.seedHash === seedHash &&
+      this.chainId === chainId &&
+      this.isConnected
+    ) {
       this.log('info', 'init', 'Already initialized for this chain');
       wipeChainKeys(keys);
       return;
@@ -383,10 +388,27 @@ export class SyncService {
     deviceName?: string,
     keys?: ChainKeys
   ): Promise<void> {
-    if (generation !== this.initGeneration || (this.seedHash === seedHash && this.isConnected)) {
-      if (generation === this.initGeneration) {
-        this.log('info', 'init', 'Already initialized for this chain');
+    if (generation !== this.initGeneration) {
+      wipeChainKeys(keys);
+      return;
+    }
+    if (
+      this.seedHash === seedHash &&
+      this.chainId &&
+      storedChainId !== this.chainId &&
+      storedChainId === legacyChainId(seedHash)
+    ) {
+      // Running on the v5 ID while the config still holds the v4 one: an
+      // earlier attempt to store it failed. Retry that, nothing else.
+      await this.adoptChainId(this.chainId, storedChainId);
+      if (generation !== this.initGeneration) {
+        wipeChainKeys(keys);
+        return;
       }
+      storedChainId = this.chainId;
+    }
+    if (this.seedHash === seedHash && this.chainId === storedChainId && this.isConnected) {
+      this.log('info', 'init', 'Already initialized for this chain');
       wipeChainKeys(keys);
       return;
     }
@@ -394,6 +416,7 @@ export class SyncService {
     // Same chain, relays still retrying in the background: reconnect them now
     // instead of replacing them, which would orphan their sockets and timers.
     if (
+      this.chainId === storedChainId &&
       this.deviceId === deviceId &&
       this.seedHash === seedHash &&
       this.encryptionKey &&
@@ -474,9 +497,9 @@ export class SyncService {
       chainId: chainId.substring(0, 8) + '...',
     });
     try {
-      await chrome.storage.local.set({
-        [LEGACY_CLEANUP_KEY]: pendingLegacyCleanup(chainId, this.deviceId!),
-      });
+      const stored = (await chrome.storage.local.get(LEGACY_CLEANUP_KEY))[LEGACY_CLEANUP_KEY];
+      const cleanup = startLegacyCleanup(stored, chainId, this.deviceId!);
+      if (cleanup) await chrome.storage.local.set({ [LEGACY_CLEANUP_KEY]: cleanup });
       await this.vaultAdapter?.saveChainId?.(chainId, storedChainId);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);

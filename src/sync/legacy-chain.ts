@@ -50,7 +50,17 @@ export interface SignedEvent {
   sig: string;
 }
 
-export function pendingLegacyCleanup(chainId: string, deviceId: string): LegacyCleanup {
+/**
+ * The record to store when a device moves to `chainId`, or null when this
+ * move is already recorded (a retried move must not restart a finished one).
+ */
+export function startLegacyCleanup(
+  stored: unknown,
+  chainId: string,
+  deviceId: string
+): LegacyCleanup | null {
+  const record = stored as Partial<LegacyCleanup> | null | undefined;
+  if (record?.chainId === chainId && record.deviceId === deviceId) return null;
   return { chainId, deviceId, attempts: 0, done: false };
 }
 
