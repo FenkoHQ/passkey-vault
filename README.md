@@ -127,9 +127,9 @@ Cross-device sync is optional and off by default. When you enable it, your devic
 
 **Setup.** Enabling sync generates a BIP-39 seed phrase (the "sync chain"). You type that phrase into your other devices; every device holding the phrase is on the chain. The phrase never leaves your devices.
 
-**Key derivation.** From the seed, each device derives two things with PBKDF2 (100k iterations, SHA-256): an AES-256-GCM key for encrypting sync payloads, and a secp256k1 keypair for signing Nostr events. Different chains derive different keys.
+**Key derivation.** Each device hashes the phrase (SHA-256) and runs that through scrypt (N=2^17, r=8, p=1: 128 MiB), then HKDF-SHA256 splits the result into three: the chain ID that relays see, an AES-256-GCM key for encrypting sync payloads, and a secp256k1 keypair for signing Nostr events. Different chains derive different keys, and checking a guessed phrase against a chain ID seen on a relay costs a full scrypt. The exact construction is in [`src/sync/chain-keys.ts`](src/sync/chain-keys.ts), pinned by test vectors in [`tests/sync/chain-keys.test.ts`](tests/sync/chain-keys.test.ts).
 
-**Transport.** Sync messages are standard Nostr events (NIP-01): kind `30078` (application data) with a `d` tag of `pksync-<chainId>`, signed with BIP340 Schnorr signatures. The event content is AES-GCM ciphertext. A relay — or anyone watching one — sees ciphertext, the chain tag, and event timing. Passkey IDs, relying-party domains, device names, and counts of what you store are all inside the encrypted payload.
+**Transport.** Sync messages are standard Nostr events (NIP-01): kind `30078` (application data) with a `d` tag of `pksync-v5-<chainId>`, signed with BIP340 Schnorr signatures. The event content is AES-GCM ciphertext. A relay — or anyone watching one — sees ciphertext, the chain tag, and event timing. Passkey IDs, relying-party domains, device names, and counts of what you store are all inside the encrypted payload.
 
 **What gets synced.** Passkeys (including private keys — that's the point of sync) and TOTP entries. Merging is additive: a device adds entries it doesn't have and updates ones with a newer creation time. Sync never deletes local data.
 

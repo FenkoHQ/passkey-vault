@@ -13,7 +13,7 @@
  *
  * The chain ID is public: it is in the tags of every event on the relays. The
  * memory-hard step sits in front of it so that testing a guessed phrase
- * against it costs a full scrypt, as much as guessing a vault PIN. Protocol v4
+ * against it costs a full scrypt: 128 MiB and a few hundred ms. Protocol v4
  * published hex(seedHash).slice(0, 32), which a guess could be checked
  * against with one SHA-256 (see legacyChainId).
  *
@@ -27,7 +27,7 @@ import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
 import { SYNC_KEY_PREFIX } from './protocol';
 
-/** Same cost as the vault PIN's KDF: 128 MiB, a few hundred ms per derivation. */
+/** OWASP's scrypt recommendation for password storage. */
 export const CHAIN_SCRYPT = { N: 2 ** 17, r: 8, p: 1 } as const;
 
 const ROOT_SALT = `${SYNC_KEY_PREFIX}/root`;

@@ -6,6 +6,18 @@ All notable changes to Passkey Vault are documented here. The format follows
 
 ## [Unreleased]
 
+### Sync moves to a new chain identity
+
+Update every device in your sync chain. Sync now runs under a new chain
+identity, and each device moves to it by itself the first time the update
+starts (a PIN-protected extension, on its first unlock). There is no recovery
+phrase to type again and nothing to export or import.
+
+Updated devices stop syncing with devices still on an older version. Those
+keep reporting sync as connected, but changes no longer pass between the two
+groups. Nothing is lost meanwhile: each device keeps its own changes and
+deletions, and shares them as soon as the other device has updated too.
+
 ### Imported passkeys sign in where they used to
 
 A passkey imported from Bitwarden failed on Teleport with nothing more than
@@ -104,6 +116,13 @@ now fixed:
 
 ### Security
 
+- Anyone watching a public relay could check a guess at a sync recovery
+  phrase with one SHA-256: the chain ID in every sync event was the first half
+  of the phrase's hash, and a phrase typed in by hand can be weak. The chain
+  ID and both sync keys now come from scrypt (128 MiB per guess). After moving
+  to the new chain, each device asks the relays to delete the events it
+  published under the old ID. Relays may ignore that or keep copies, so a weak
+  phrase used for sync before this update is best replaced by a new chain.
 - The background only answers web pages' requests for the ceremony itself,
   bound to the page's real origin as Chrome reports it. A browser exploit in a
   web page could otherwise have asked it to export the vault, wipe it, or sign

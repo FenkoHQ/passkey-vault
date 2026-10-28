@@ -54,7 +54,7 @@ async function encryptsLike(key: CryptoKey, rawKeyHex: string): Promise<boolean>
 describe('sync chain keys', () => {
   jest.setTimeout(30000);
 
-  it('uses the vault KDF cost', () => {
+  it('uses the OWASP scrypt cost', () => {
     expect(CHAIN_SCRYPT).toEqual({ N: 2 ** 17, r: 8, p: 1 });
   });
 
