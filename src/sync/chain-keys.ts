@@ -86,3 +86,14 @@ export function wipeChainKeys(keys: ChainKeys | null | undefined): void {
 export function legacyChainId(seedHash: string): string {
   return seedHash.slice(0, CHAIN_ID_LENGTH);
 }
+
+/**
+ * Whether `chainId` is the chain this seed derives, under v4 or v5. The v5
+ * check runs scrypt, so call it only off the hot path.
+ */
+export async function isChainIdOfSeed(chainId: string, seedHash: string): Promise<boolean> {
+  if (chainId === legacyChainId(seedHash)) return true;
+  const keys = await deriveChainKeys(seedHash);
+  wipeChainKeys(keys);
+  return keys.chainId === chainId;
+}

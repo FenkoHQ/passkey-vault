@@ -7,7 +7,12 @@ import {
   type SyncDeletion,
 } from '../sync/merge';
 import { repairCredentialIds, toBase64Url } from '../sync/credential-ids';
-import { deriveChainKeys, wipeChainKeys, type ChainKeys } from '../sync/chain-keys';
+import {
+  deriveChainKeys,
+  isChainIdOfSeed,
+  wipeChainKeys,
+  type ChainKeys,
+} from '../sync/chain-keys';
 import { LEGACY_CLEANUP_KEY } from '../sync/protocol';
 import {
   generateMnemonic,
@@ -534,7 +539,8 @@ class BackgroundService {
    * record, and PIN setup never stripped it. Strip it once the encrypted sync
    * config is known to hold that seed, which needs the key, so stripping never
    * drops the only copy. When the record is for the device's current chain
-   * and the encrypted config lacks the seed, the seed is moved there first.
+   * (its v4 or v5 ID) and the encrypted config lacks the seed, the seed is
+   * moved there first.
    * A record for any other chain is left alone. Run inside a vault job, after
    * migrateLegacyRawStorage(); a no-op while locked or without a PIN.
    */
@@ -555,7 +561,7 @@ class BackgroundService {
         !!config?.chainId &&
         config.chainId === chain.id &&
         !config.seedHash &&
-        chain.seedHash.startsWith(chain.id);
+        (await isChainIdOfSeed(chain.id, chain.seedHash));
       if (!currentChain) return;
       await secureStorage.storeSyncConfig({
         chainId: config.chainId,

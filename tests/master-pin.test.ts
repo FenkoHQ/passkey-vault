@@ -7,6 +7,7 @@
 
 import { createHash } from 'crypto';
 import { generateMnemonic, mnemonicToBytes } from '../src/crypto/bip39';
+import { deriveChainKeys } from '../src/sync/chain-keys';
 
 jest.mock('../src/sync/sync-service', () => ({
   syncService: {
@@ -614,6 +615,25 @@ describe('the cleartext seed older builds left in the chain record', () => {
       chainA.deviceName,
       expect.anything()
     );
+  });
+
+  it('moves the seed into the encrypted config for a chain already on its v5 ID', async () => {
+    const v5Chain: SyncConfigData = {
+      ...chainA,
+      chainId: (await deriveChainKeys(chainA.seedHash as string)).chainId,
+    };
+    const { send, secure } = await loadBackground();
+    await send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+    await send({ type: 'LOCK_SECURE_STORAGE' });
+    const publicConfig: SyncConfigData = { ...v5Chain };
+    delete publicConfig.seedHash;
+    storage.sync_config = publicConfig;
+    storage.sync_devices = recordFor(v5Chain);
+
+    expect(await unlocksWith(send, PIN)).toBe(true);
+
+    expect((await secure.getSyncConfig())?.seedHash).toBe(chainA.seedHash);
+    expect((storage.sync_devices as ChainRecord).seedHash).toBeUndefined();
   });
 
   it('is left alone while locked and for a chain the device is not on', async () => {
