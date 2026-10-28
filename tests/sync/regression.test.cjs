@@ -2,8 +2,48 @@ const { test, before } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
-const { webcrypto } = require('node:crypto');
+const nodeCrypto = require('node:crypto');
+const { webcrypto } = nodeCrypto;
 const esbuild = require('esbuild');
+const { scryptAsync } = require('@noble/hashes/scrypt');
+
+// Each chain key derivation is a 128 MiB scrypt. The bundles below get the
+// same noble scrypt with the same parameters, memoized across the whole run
+// so the suite pays once per seed; tests/sync/chain-keys.test.ts pins the
+// unmemoized derivation.
+const scrypts = new Map();
+async function memoScrypt(password, salt, options) {
+  const key = [Buffer.from(password).toString('hex'), Buffer.from(salt).toString('hex')]
+    .concat(JSON.stringify(options))
+    .join(':');
+  if (!scrypts.has(key)) scrypts.set(key, scryptAsync(password, salt, options));
+  return new Uint8Array(await scrypts.get(key));
+}
+const memoScryptPlugin = {
+  name: 'memo-scrypt',
+  setup(build) {
+    build.onResolve({ filter: /^@noble\/hashes\/scrypt(\.js)?$/ }, () => ({
+      path: 'scrypt',
+      namespace: 'memo-scrypt',
+    }));
+    build.onLoad({ filter: /.*/, namespace: 'memo-scrypt' }, () => ({
+      contents: 'export const scryptAsync = (...args) => globalThis.__memoScrypt(...args);',
+      loader: 'js',
+    }));
+  },
+};
+
+// The v5 chain ID, computed here with Node's own scrypt and HKDF.
+function chainIdOf(seedHash) {
+  const root = nodeCrypto.scryptSync(seedHash, 'pkvault-sync-v5/root', 32, {
+    N: 2 ** 17,
+    r: 8,
+    p: 1,
+    maxmem: 256 * 1024 * 1024,
+  });
+  const id = nodeCrypto.hkdfSync('sha256', root, Buffer.alloc(0), 'pkvault-sync-v5/chain-id', 16);
+  return Buffer.from(id).toString('hex');
+}
 
 let browserCode, mobileCode, backgroundCode, storageCode;
 before(async () => {
@@ -20,6 +60,7 @@ before(async () => {
       },
       bundle: true,
       write: false,
+      plugins: [memoScryptPlugin],
       format: 'iife',
       globalName: 'testExports',
       define: { __APP_VERSION__: '"test"' },
@@ -48,6 +89,7 @@ function env(code) {
   const storage = new Map();
   const timers = new Map();
   const context = vm.createContext({
+    __memoScrypt: memoScrypt,
     crypto: webcrypto,
     TextEncoder,
     TextDecoder,
@@ -87,9 +129,12 @@ function env(code) {
   vm.runInContext(code, context);
   return { context, storage, timers, api: context.testExports };
 }
+// What protocol v4 published for config.seedHash: its first 32 hex digits.
+const LEGACY_CHAIN_ID = 'ab'.repeat(16);
 const config = {
   enabled: true,
-  chainId: 'ab'.repeat(16),
+  // Pinned in tests/sync/chain-keys.test.ts
+  chainId: '707571ea9119f5dd95a71a1b0429ae48',
   seedHash: 'ab'.repeat(32),
   deviceId: 'mobile',
   syncSalt: 'cd'.repeat(32),
@@ -474,11 +519,15 @@ test('both readers reject unsupported bundle versions', async () => {
   }
 });
 
-test('sync v4 cannot publish into legacy relay namespaces or use legacy keys', async () => {
+test('sync v5 cannot publish into legacy relay namespaces or use legacy keys', async () => {
   const { s } = await browser();
+  assert.equal(chainIdOf(config.seedHash), config.chainId);
   for (const type of ['update', 'response', 'announce', 'request']) {
     const event = await s.createNostrEvent('test', type);
-    assert.ok(event.tags.find((t) => t[0] === 'd')[1].startsWith('pksync-v4-'));
+    for (const [, value] of event.tags) {
+      assert.ok(!value.includes(LEGACY_CHAIN_ID), `${type} event leaks the v4 chain ID`);
+    }
+    assert.ok(event.tags.find((t) => t[0] === 'd')[1].startsWith(`pksync-v5-${config.chainId}`));
   }
 });
 
@@ -575,7 +624,7 @@ test('initializing another chain closes the previous relay sockets', async () =>
   const { s, live, settle } = unreachableRelays();
   await settle(s.initialize(config.chainId, 'browser', config.seedHash));
   const previous = live();
-  await settle(s.initialize('cd'.repeat(16), 'browser', 'cd'.repeat(32)));
+  await settle(s.initialize(chainIdOf('cd'.repeat(32)), 'browser', 'cd'.repeat(32)));
   assert.ok(
     previous.every((ws) => ws.closed),
     'sockets of the previous chain stayed open'

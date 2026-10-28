@@ -8,7 +8,6 @@ import { cleanSyncConfig } from '../../../src/sync/config';
 import {
   NOSTR_EVENT_KIND,
   SYNC_BUNDLE_VERSION,
-  SYNC_KEY_PREFIX,
   SYNC_EVENT_PREFIX,
   SYNC_SEND_INTERVAL_MS,
   SYNC_HEARTBEAT_MS,
@@ -24,6 +23,18 @@ import {
   type SyncDeletion,
 } from '../../../src/sync/merge';
 import { repairCredentialIds } from '../../../src/sync/credential-ids';
+import {
+  deriveChainKeys,
+  legacyChainId,
+  wipeChainKeys,
+  type ChainKeys,
+} from '../../../src/sync/chain-keys';
+import {
+  LEGACY_CLEANUP_KEY,
+  deleteLegacyEvents,
+  nextLegacyCleanup,
+  pendingLegacyCleanup,
+} from '../../../src/sync/legacy-chain';
 import * as secp256k1 from '@noble/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
@@ -938,7 +949,11 @@ class AndroidSync {
   public connected = false;
   public lastError = '';
 
-  constructor(private config: SyncConfig) {}
+  /** `keys`, just derived for this config's seed, saves a second scrypt; they are wiped here. */
+  constructor(
+    private config: SyncConfig,
+    private keys: ChainKeys | null = null
+  ) {}
 
   async start(): Promise<void> {
     this.stopped = false;
@@ -947,10 +962,56 @@ class AndroidSync {
       !this.config.chainId ||
       !this.config.deviceId ||
       !this.config.seedHash
-    )
+    ) {
+      wipeChainKeys(this.keys);
+      this.keys = null;
       return;
-    await this.deriveKeys();
+    }
+    // A sync failure must not stop the app from opening (boot awaits this).
+    let chainId: string;
+    try {
+      chainId = await this.deriveKeys();
+    } catch (error) {
+      this.lastError = `Sync could not start: ${String(error)}`;
+      setStatus(this.lastError, 'bad');
+      return;
+    }
+    if (this.stopped) {
+      this.wipeKeys();
+      return;
+    }
+    if (chainId !== this.config.chainId) {
+      // Only the v4 ID of this same seed is replaced; anything else means the
+      // stored config and seed disagree.
+      if (this.config.chainId !== legacyChainId(this.config.seedHash)) {
+        this.wipeKeys();
+        this.lastError =
+          'The stored sync chain does not match its recovery phrase. Leave and join again.';
+        setStatus(this.lastError, 'bad');
+        return;
+      }
+      this.config = adoptChainId(this.config, chainId);
+    }
     this.connect();
+    void this.cleanUpLegacyChain().catch((error) => console.warn('Legacy cleanup failed', error));
+  }
+
+  /**
+   * Ask the relays to drop this device's v4 events (see legacy-chain.ts),
+   * beside sync and never in its way. The attempt is counted before it starts.
+   */
+  private async cleanUpLegacyChain(): Promise<void> {
+    const { chainId, deviceId, seedHash } = this.config;
+    const next = nextLegacyCleanup(loadJson(LEGACY_CLEANUP_KEY, null), chainId, deviceId);
+    if (!next || !seedHash || !deviceId) return;
+    saveJson(LEGACY_CLEANUP_KEY, next);
+    const accepted = await deleteLegacyEvents({
+      seedHash,
+      deviceId,
+      relays: getRelays(),
+      log: (message, data) => console.warn(message, data || ''),
+    });
+    if (accepted > 0) saveJson(LEGACY_CLEANUP_KEY, { ...next, done: true });
   }
 
   stop(): void {
@@ -973,33 +1034,30 @@ class AndroidSync {
     this.ws?.close();
     this.ws = null;
     this.connected = false;
+    this.wipeKeys();
   }
 
-  private async deriveKeys(): Promise<void> {
-    const encoder = new TextEncoder();
-    const keyMaterial = await crypto.subtle.importKey(
-      'raw',
-      encoder.encode(this.config.seedHash || ''),
-      'PBKDF2',
-      false,
-      ['deriveKey', 'deriveBits']
-    );
-    const encryptionSalt = encoder.encode(`${SYNC_KEY_PREFIX}-${this.config.chainId}-enc`);
-    const nostrSalt = encoder.encode(`${SYNC_KEY_PREFIX}-${this.config.chainId}-nostr`);
-    this.encryptionKey = await crypto.subtle.deriveKey(
-      { name: 'PBKDF2', salt: encryptionSalt, iterations: 100000, hash: 'SHA-256' },
-      keyMaterial,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt', 'decrypt']
-    );
-    const bits = await crypto.subtle.deriveBits(
-      { name: 'PBKDF2', salt: nostrSalt, iterations: 100000, hash: 'SHA-256' },
-      keyMaterial,
-      256
-    );
-    this.nostrPrivateKey = new Uint8Array(bits);
-    this.nostrPublicKey = bytesToHex(secp256k1.schnorr.getPublicKey(this.nostrPrivateKey));
+  /** Derive (or take the given) chain keys for the config's seed; returns their chain ID. */
+  private async deriveKeys(): Promise<string> {
+    const keys = this.keys ?? (await deriveChainKeys(this.config.seedHash || ''));
+    this.keys = null;
+    try {
+      this.nostrPublicKey = bytesToHex(secp256k1.schnorr.getPublicKey(keys.nostrPrivateKey));
+    } catch (error) {
+      wipeChainKeys(keys);
+      throw error;
+    }
+    this.encryptionKey = keys.encryptionKey;
+    this.nostrPrivateKey = keys.nostrPrivateKey;
+    return keys.chainId;
+  }
+
+  private wipeKeys(): void {
+    this.nostrPrivateKey?.fill(0);
+    this.nostrPrivateKey = null;
+    this.encryptionKey = null;
+    wipeChainKeys(this.keys);
+    this.keys = null;
   }
 
   private connect(): void {
@@ -1514,7 +1572,8 @@ async function configureSync(
   const seedBytes = mnemonicToBytes(mnemonic);
   const keypair = await deriveEd25519Keypair(seedBytes);
   const seedHash = await sha256Hex(seedBytes);
-  const chainId = seedHash.slice(0, 32);
+  const keys = await deriveChainKeys(seedHash);
+  const chainId = keys.chainId;
   const deviceId = uuid();
   const publicKey = bytesToHex(keypair.publicKey);
   const device: SyncDevice = {
@@ -1541,18 +1600,40 @@ async function configureSync(
   };
   setSyncConfig(config);
   saveJson(SYNC_DEVICES_KEY, chain);
-  await bootSync();
+  await bootSync(keys);
   if (created) await state.sync?.broadcastUpdate();
 }
 
-async function bootSync(): Promise<void> {
+async function bootSync(keys?: ChainKeys): Promise<void> {
   state.sync?.stop();
   state.sync = null;
   const config = getSyncConfig();
   if (config.enabled) {
-    state.sync = new AndroidSync(config);
+    state.sync = new AndroidSync(config, keys);
     await state.sync.start();
+  } else {
+    wipeChainKeys(keys);
   }
+}
+
+/**
+ * Sync protocol v5 replaced the chain ID, which v4 took straight from the
+ * seed (see sync/chain-keys.ts). Rewrite every stored copy that still holds
+ * this seed's v4 ID. The config goes last: its v4 ID is what starts this, so
+ * an interrupted run is finished by the next start. Before it, the cleanup of
+ * the v4 relay events is recorded, since once the new ID is stored nothing
+ * else says they are still there. Returns the config to sync with.
+ */
+function adoptChainId(config: SyncConfig, chainId: string): SyncConfig {
+  const legacy = legacyChainId(config.seedHash || '');
+  saveJson(LEGACY_CLEANUP_KEY, pendingLegacyCleanup(chainId, config.deviceId || ''));
+  const chain = loadJson<SyncChain | null>(SYNC_DEVICES_KEY, null);
+  if (chain?.id === legacy) saveJson(SYNC_DEVICES_KEY, { ...chain, id: chainId });
+  const stored = getSyncConfig();
+  if (stored.chainId === legacy && stored.seedHash === config.seedHash) {
+    setSyncConfig({ ...stored, chainId });
+  }
+  return { ...config, chainId };
 }
 
 function leaveSync(): void {
@@ -1566,6 +1647,7 @@ function leaveSync(): void {
     seedHash: null,
   });
   localStorage.removeItem(SYNC_DEVICES_KEY);
+  localStorage.removeItem(LEGACY_CLEANUP_KEY);
   pendingMnemonic = null;
   setStatus('Sync disabled.');
   render();

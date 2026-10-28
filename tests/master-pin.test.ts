@@ -5,7 +5,8 @@
  * service is stubbed.
  */
 
-import { generateMnemonic } from '../src/crypto/bip39';
+import { createHash } from 'crypto';
+import { generateMnemonic, mnemonicToBytes } from '../src/crypto/bip39';
 
 jest.mock('../src/sync/sync-service', () => ({
   syncService: {
@@ -27,6 +28,10 @@ type SyncServiceModule = { syncService: Record<string, jest.Mock> };
 
 const PIN = '1234';
 const WRONG_PIN = '0000';
+
+/** The seed every device on the phrase's chain stores. */
+const seedOf = (mnemonic: string): string =>
+  createHash('sha256').update(mnemonicToBytes(mnemonic)).digest('hex');
 
 type SyncConfigData = {
   enabled: boolean;
@@ -402,7 +407,7 @@ describe('the sync config when the PIN is removed', () => {
     const config = storage.sync_config as SyncConfigData;
     expect(config.enabled).toBe(true);
     expect(config.chainId).toBe(chainB);
-    expect(config.seedHash?.startsWith(chainB as string)).toBe(true);
+    expect(config.seedHash).toBe(seedOf(mnemonic));
   });
 });
 
@@ -435,7 +440,8 @@ describe('creating or joining a sync chain on a PIN-protected vault', () => {
       created.deviceId,
       encrypted?.seedHash,
       'Laptop',
-      expect.anything()
+      expect.anything(),
+      expect.objectContaining({ chainId: created.chainId })
     );
   });
 
@@ -481,7 +487,9 @@ describe('creating or joining a sync chain on a PIN-protected vault', () => {
     expect(created.success).toBe(true);
     const config = storage.sync_config as SyncConfigData;
     expect(config.chainId).toBe(created.chainId);
-    expect(config.seedHash?.startsWith(created.chainId as string)).toBe(true);
+    expect(config.seedHash).toBe(seedOf(created.mnemonic as string));
+    // Protocol v5: the public chain ID is no longer a prefix of the seed.
+    expect(config.seedHash?.startsWith(created.chainId as string)).toBe(false);
   });
 });
 
