@@ -411,6 +411,66 @@ describe('the sync config when the PIN is removed', () => {
   });
 });
 
+describe('moving a PIN-protected chain to its v5 chain ID', () => {
+  const v5 = 'f'.repeat(32);
+
+  /** Unlock a PIN'd vault on chainA, a v4 chain, and return the adapter sync got. */
+  async function unlockedOnChainA() {
+    storage.passkeys = [passkey];
+    storage.sync_config = { ...chainA };
+    storage.sync_devices = { id: chainA.chainId, createdAt: 1, devices: [] };
+    const background = await loadBackground();
+    await background.send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+    await background.send({ type: 'LOCK_SECURE_STORAGE' });
+    background.sync.initialize.mockClear();
+    await background.send({ type: 'UNLOCK_SECURE_STORAGE', payload: { password: PIN } });
+    expect(background.sync.initialize).toHaveBeenCalledWith(
+      chainA.chainId,
+      chainA.deviceId,
+      chainA.seedHash,
+      chainA.deviceName,
+      expect.anything()
+    );
+    const adapter = background.sync.initialize.mock.calls[0][4] as {
+      saveChainId(chainId: string, legacyChainId: string): Promise<void>;
+    };
+    return { ...background, adapter };
+  }
+
+  it('rewrites the raw and encrypted configs and the device list in one write', async () => {
+    const { send, secure, adapter } = await unlockedOnChainA();
+    const set = chrome.storage.local.set as jest.Mock;
+    set.mockClear();
+
+    await adapter.saveChainId(v5, chainA.chainId as string);
+
+    expect(set).toHaveBeenCalledTimes(1);
+    expect(storage.sync_config).toEqual({ ...chainA, chainId: v5, seedHash: undefined });
+    expect((storage.sync_devices as { id: string }).id).toBe(v5);
+    expect(await secure.getSyncConfig()).toMatchObject({ chainId: v5, seedHash: chainA.seedHash });
+
+    // Done once: a second call finds nothing left on the v4 ID.
+    set.mockClear();
+    await adapter.saveChainId(v5, chainA.chainId as string);
+    expect(set).not.toHaveBeenCalled();
+
+    // The two configs still agree, so removing the PIN gives the seed back.
+    await send({ type: 'REMOVE_MASTER_PASSWORD', payload: { currentPassword: PIN } });
+    expect(storage.sync_config).toEqual({ ...chainA, chainId: v5 });
+  });
+
+  it('leaves copies that hold another chain alone', async () => {
+    const { secure, adapter } = await unlockedOnChainA();
+    storage.sync_devices = { id: 'b'.repeat(32), createdAt: 1, devices: [] };
+
+    await adapter.saveChainId(v5, 'c'.repeat(32));
+
+    expect((storage.sync_config as SyncConfigData).chainId).toBe(chainA.chainId);
+    expect((storage.sync_devices as { id: string }).id).toBe('b'.repeat(32));
+    expect((await secure.getSyncConfig())?.chainId).toBe(chainA.chainId);
+  });
+});
+
 describe('creating or joining a sync chain on a PIN-protected vault', () => {
   /** Everything outside the encrypted store, as it would sit on disk. */
   const cleartext = (): string =>

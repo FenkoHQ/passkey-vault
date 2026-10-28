@@ -71,7 +71,7 @@ before(async () => {
   storageCode = await bundle('src/crypto/secure-storage.ts', '\nexport { deriveKeyFromPassword };');
   backgroundCode = await bundle(
     'src/background/background.ts',
-    '\nexport { BackgroundService };',
+    '\nexport { BackgroundService, syncService };',
     'new BackgroundService();'
   );
   mobileCode = await bundle(
@@ -1307,4 +1307,443 @@ test('the per-passkey switch sets both flags, marks the choice and bumps the rev
   assert.equal(record.backupState, true);
   assert.equal(record.backupSource, 'manual');
   assert.ok(record.updatedAt > 5);
+});
+
+// ==================== PROTOCOL v5 CHAIN MIGRATION ====================
+
+// The v4 signing key, computed the way v4 did, independently of legacy-chain.ts.
+async function legacyNostr(seedHash) {
+  const secp = await import('@noble/secp256k1');
+  const encoder = new TextEncoder();
+  const material = await webcrypto.subtle.importKey(
+    'raw',
+    encoder.encode(seedHash),
+    'PBKDF2',
+    false,
+    ['deriveBits']
+  );
+  const bits = await webcrypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: encoder.encode(`pkvault-sync-v4-${seedHash.slice(0, 32)}-nostr`),
+      iterations: 100000,
+      hash: 'SHA-256',
+    },
+    material,
+    256
+  );
+  const key = new Uint8Array(bits);
+  return { secp, key, pubkey: Buffer.from(secp.schnorr.getPublicKey(key)).toString('hex') };
+}
+
+async function legacyEvent(legacy, address, createdAt) {
+  const tags = [
+    ['d', address],
+    ['h', LEGACY_CHAIN_ID],
+  ];
+  const data = [0, legacy.pubkey, createdAt, 30078, tags, 'v4 ciphertext'];
+  const hash = nodeCrypto.createHash('sha256').update(JSON.stringify(data)).digest();
+  const sig = await legacy.secp.schnorr.signAsync(hash, legacy.key);
+  return {
+    id: hash.toString('hex'),
+    pubkey: legacy.pubkey,
+    created_at: createdAt,
+    kind: 30078,
+    tags,
+    content: 'v4 ciphertext',
+    sig: Buffer.from(sig).toString('hex'),
+  };
+}
+
+// One Nostr relay shared by every client in a test: keeps the newest event per
+// (pubkey, kind, d tag), serves filters, and honours NIP-09 deletions by
+// address and by ID from the same author. Frames are delivered on later
+// ticks, like a network.
+function fakeRelay() {
+  const stored = new Map();
+  const deletions = [];
+  const sockets = new Set();
+  const tick = (fn) => setImmediate(fn);
+  const address = (event) =>
+    `${event.kind}:${event.pubkey}:${event.tags.find((t) => t[0] === 'd')?.[1] ?? ''}`;
+  const matches = (filter, event) =>
+    (!filter.kinds || filter.kinds.includes(event.kind)) &&
+    (!filter.authors || filter.authors.includes(event.pubkey)) &&
+    (!filter.since || event.created_at >= filter.since) &&
+    Object.entries(filter)
+      .filter(([key]) => key.startsWith('#'))
+      .every(([key, values]) =>
+        event.tags.some((t) => t[0] === key.slice(1) && values.includes(t[1]))
+      );
+  const deliver = (socket, frame) =>
+    tick(() => socket.readyState === 1 && socket.onmessage?.({ data: JSON.stringify(frame) }));
+  function publish(event) {
+    if (event.kind === 5) {
+      deletions.push(event);
+      for (const [key, existing] of stored) {
+        const named = event.tags.some(
+          (t) => (t[0] === 'a' && t[1] === key) || (t[0] === 'e' && t[1] === existing.id)
+        );
+        if (named && existing.pubkey === event.pubkey && existing.created_at <= event.created_at) {
+          stored.delete(key);
+        }
+      }
+      return;
+    }
+    const current = stored.get(address(event));
+    if (!current || current.created_at <= event.created_at) stored.set(address(event), event);
+  }
+  function receive(socket, frame) {
+    if (frame[0] === 'EVENT') {
+      publish(frame[1]);
+      deliver(socket, ['OK', frame[1].id, true, '']);
+      for (const peer of sockets) {
+        for (const [id, filters] of peer.subs) {
+          if (filters.some((filter) => matches(filter, frame[1]))) {
+            deliver(peer, ['EVENT', id, frame[1]]);
+          }
+        }
+      }
+    } else if (frame[0] === 'REQ') {
+      const [, id, ...filters] = frame;
+      socket.subs.set(id, filters);
+      for (const event of stored.values()) {
+        if (filters.some((filter) => matches(filter, event))) deliver(socket, ['EVENT', id, event]);
+      }
+      deliver(socket, ['EOSE', id]);
+    } else if (frame[0] === 'CLOSE') {
+      socket.subs.delete(frame[1]);
+    }
+  }
+  class Socket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    constructor(url) {
+      this.url = url;
+      this.readyState = 0;
+      this.subs = new Map();
+      sockets.add(this);
+      tick(() => {
+        if (this.readyState !== 0) return;
+        this.readyState = 1;
+        this.onopen?.();
+      });
+    }
+    send(frame) {
+      tick(() => receive(this, JSON.parse(frame)));
+    }
+    close() {
+      if (this.readyState === 3) return;
+      this.readyState = 3;
+      sockets.delete(this);
+      tick(() => this.onclose?.({ code: 1000, reason: '' }));
+    }
+  }
+  const has = (event) => [...stored.values()].some((e) => e.id === event.id);
+  return { Socket, stored, deletions, sockets, publish, has };
+}
+
+const RELAY = 'wss://relay.test';
+
+// A clock every client shares, so relay `since` filters and rate limits agree.
+function sharedClock() {
+  const clock = { now: Date.now() };
+  clock.install = (context) => {
+    context.Date = class extends Date {
+      static now() {
+        return clock.now;
+      }
+    };
+  };
+  return clock;
+}
+
+// Let frames cross the relay, then move time on and run what the clients
+// scheduled: deferred sends and retries. Each round also yields real time,
+// since key derivation runs on Node's thread pool. Stops early once `done`
+// holds. The cleanup's own deadline (15 s) is left alone; the relay always
+// answers it first.
+async function pump(clock, envs, done = () => false, rounds = 12) {
+  for (let round = 0; round < rounds && !done(); round++) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    for (let i = 0; i < 30; i++) await new Promise((resolve) => setImmediate(resolve));
+    clock.now += 11000;
+    for (const e of envs) {
+      for (const [id, timer] of [...e.timers]) {
+        if (timer.delay <= 12000) {
+          e.timers.delete(id);
+          timer.fn();
+        }
+      }
+    }
+  }
+}
+
+/** Pump until `condition` holds, failing the test if it never does. */
+async function pumpUntil(clock, envs, condition, message) {
+  await pump(clock, envs, condition, 100);
+  assert.ok(condition(), message);
+}
+
+const cleanedUp = (e) => () => {
+  const raw = e.storage.get('sync_legacy_cleanup');
+  return (typeof raw === 'string' ? JSON.parse(raw) : raw)?.done === true;
+};
+
+function extensionDevice(relay, clock, { passkeys = [], deletions = [] } = {}) {
+  const e = env(backgroundCode);
+  clock.install(e.context);
+  e.context.WebSocket = relay.Socket;
+  e.storage.set('custom_relays', [RELAY]);
+  e.storage.set('sync_config', {
+    enabled: true,
+    chainId: LEGACY_CHAIN_ID,
+    deviceId: 'browser',
+    deviceName: 'Laptop',
+    seedHash: config.seedHash,
+  });
+  e.storage.set('sync_devices', { id: LEGACY_CHAIN_ID, createdAt: 1, devices: [] });
+  e.storage.set('sync_deletions', deletions);
+  const owner = Object.create(e.api.BackgroundService.prototype);
+  owner.vaultJobs = Promise.resolve();
+  owner.syncStatus = { pendingChanges: 0, lastError: null };
+  let records = passkeys;
+  owner.loadPasskeys = async () => records;
+  owner.savePasskeys = async (value) => {
+    records = value;
+  };
+  quietOwner(owner);
+  return { ...e, owner, sync: e.api.syncService, passkeys: () => records };
+}
+
+function mobileDevice(relay, clock, { passkeys = [], deletions = [] } = {}) {
+  const e = env(mobileCode);
+  clock.install(e.context);
+  e.context.WebSocket = relay.Socket;
+  e.storage.set('custom_relays', JSON.stringify([RELAY]));
+  e.storage.set(
+    'sync_config',
+    JSON.stringify({
+      enabled: true,
+      chainId: LEGACY_CHAIN_ID,
+      deviceId: 'mobile',
+      deviceName: 'Phone',
+      seedHash: config.seedHash,
+    })
+  );
+  e.storage.set(
+    'sync_devices',
+    JSON.stringify({ id: LEGACY_CHAIN_ID, createdAt: 1, seedHash: config.seedHash, devices: [] })
+  );
+  e.storage.set('sync_deletions', JSON.stringify(deletions));
+  e.api.setPasskeys(passkeys);
+  return { ...e, start: () => new e.api.AndroidSync(e.api.getSyncConfig()).start() };
+}
+
+const ids = (records) => plain(records.map((record) => record.id).sort());
+
+test('an extension on a v4 chain moves to its v5 chain ID once, everywhere it is stored', async () => {
+  const relay = fakeRelay();
+  const clock = sharedClock();
+  const browser = extensionDevice(relay, clock);
+  await browser.owner.initializeSyncService();
+  await pumpUntil(clock, [browser], cleanedUp(browser), 'the v4 cleanup never finished');
+
+  assert.equal(browser.storage.get('sync_config').chainId, config.chainId);
+  assert.equal(browser.storage.get('sync_config').seedHash, config.seedHash);
+  assert.equal(browser.storage.get('sync_devices').id, config.chainId);
+  assert.equal(browser.sync.getStatus().chainId, config.chainId);
+  assert.ok(!JSON.stringify([...browser.storage.values()]).includes(`"${LEGACY_CHAIN_ID}"`));
+  const cleanup = browser.storage.get('sync_legacy_cleanup');
+  assert.deepEqual(plain(cleanup), {
+    chainId: config.chainId,
+    deviceId: 'browser',
+    attempts: 1,
+    done: true,
+  });
+
+  // A later start finds nothing to move and nothing to clean up.
+  const writes = [];
+  const set = browser.context.chrome.storage.local.set;
+  browser.context.chrome.storage.local.set = async (items) => {
+    writes.push(...Object.keys(items));
+    return set(items);
+  };
+  await browser.sync.disconnect();
+  const before = relay.deletions.length;
+  await browser.owner.initializeSyncService();
+  await pump(clock, [browser], () => false, 4);
+  assert.ok(!writes.includes('sync_config') && !writes.includes('sync_devices'));
+  assert.ok(!writes.includes('sync_legacy_cleanup'));
+  assert.equal(relay.deletions.length, before);
+  await browser.sync.disconnect();
+});
+
+test('an extension whose stored chain belongs to another seed refuses to sync', async () => {
+  const relay = fakeRelay();
+  const clock = sharedClock();
+  const browser = extensionDevice(relay, clock);
+  browser.storage.set('sync_config', {
+    ...browser.storage.get('sync_config'),
+    chainId: 'cd'.repeat(16),
+  });
+  await browser.owner.initializeSyncService();
+  assert.match(browser.storage.get('sync_status').lastError, /does not match/);
+  assert.equal(browser.storage.get('sync_config').chainId, 'cd'.repeat(16));
+  assert.equal(relay.sockets.size, 0);
+  assert.equal(browser.sync.getStatus().chainId, null);
+});
+
+test('the mobile app moves its v4 chain to the v5 ID once, finishing an interrupted move', async () => {
+  const relay = fakeRelay();
+  const clock = sharedClock();
+  const phone = mobileDevice(relay, clock);
+  // An earlier start stopped after rewriting only the device list.
+  phone.storage.set(
+    'sync_devices',
+    JSON.stringify({ ...JSON.parse(phone.storage.get('sync_devices')), id: config.chainId })
+  );
+  await phone.start();
+  await pumpUntil(clock, [phone], cleanedUp(phone), 'the v4 cleanup never finished');
+
+  assert.equal(phone.api.getSyncConfig().chainId, config.chainId);
+  assert.equal(phone.api.getSyncConfig().seedHash, config.seedHash);
+  assert.equal(JSON.parse(phone.storage.get('sync_devices')).id, config.chainId);
+  assert.deepEqual(JSON.parse(phone.storage.get('sync_legacy_cleanup')), {
+    chainId: config.chainId,
+    deviceId: 'mobile',
+    attempts: 1,
+    done: true,
+  });
+
+  const deletions = relay.deletions.length;
+  const stored = phone.storage.get('sync_config');
+  await phone.start();
+  await pump(clock, [phone], () => false, 4);
+  assert.equal(phone.storage.get('sync_config'), stored);
+  assert.equal(relay.deletions.length, deletions);
+});
+
+test('the mobile app reports a chain that does not match its phrase instead of failing to open', async () => {
+  const relay = fakeRelay();
+  const phone = mobileDevice(relay, sharedClock());
+  phone.storage.set(
+    'sync_config',
+    JSON.stringify({ ...phone.api.getSyncConfig(), chainId: 'cd'.repeat(16) })
+  );
+  const sync = new phone.api.AndroidSync(phone.api.getSyncConfig());
+  await sync.start();
+  assert.match(sync.lastError, /does not match/);
+  assert.equal(sync.nostrPrivateKey, null);
+  assert.equal(relay.sockets.size, 0);
+});
+
+test('devices that move to v5 hours apart converge without losing changes or deletions', async () => {
+  const relay = fakeRelay();
+  const clock = sharedClock();
+  const legacy = await legacyNostr(config.seedHash);
+  const v4 = `pksync-v4-${LEGACY_CHAIN_ID}`;
+  const then = Math.floor(clock.now / 1000) - 600;
+  const old = {
+    shared: await legacyEvent(legacy, v4, then),
+    browser: [
+      await legacyEvent(legacy, `${v4}-browser-update-0`, then),
+      await legacyEvent(legacy, `${v4}-browser-update-1`, then),
+      await legacyEvent(legacy, `${v4}-browser-response-0`, then),
+    ],
+    mobile: await legacyEvent(legacy, `${v4}-mobile-update-0`, then),
+  };
+  for (const event of [old.shared, ...old.browser, old.mobile]) relay.publish(event);
+
+  // Both devices synced p1 on v4. While only the laptop had updated, the
+  // laptop added p2 and the phone, still on the old build, added p3 and
+  // deleted p1. None of that crossed between them.
+  const p1 = { ...passkey, id: 'p1', credentialId: 'p1', createdAt: 1 };
+  const p2 = { ...passkey, id: 'p2', credentialId: 'p2', createdAt: 2 };
+  const p3 = { ...passkey, id: 'p3', credentialId: 'p3', createdAt: 3 };
+  const deletion = { kind: 'passkey', id: 'p1', deletedAt: 10 };
+  const browser = extensionDevice(relay, clock, { passkeys: [p1, p2] });
+  const phone = mobileDevice(relay, clock, { passkeys: [p3], deletions: [deletion] });
+
+  // The laptop updates, publishes on v5 and asks for its own v4 events to go.
+  await browser.owner.initializeSyncService();
+  await pumpUntil(clock, [browser], cleanedUp(browser), "the laptop's v4 cleanup never finished");
+  await pump(clock, [browser], () => false, 4);
+  assert.ok(!relay.has(old.shared));
+  assert.ok(old.browser.every((event) => !relay.has(event)));
+  assert.ok(relay.has(old.mobile), "the laptop must not delete the phone's v4 snapshot");
+  const [laptopDeletion] = relay.deletions;
+  assert.equal(laptopDeletion.kind, 5);
+  assert.equal(laptopDeletion.pubkey, legacy.pubkey);
+  const hash = nodeCrypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify([
+        0,
+        laptopDeletion.pubkey,
+        laptopDeletion.created_at,
+        5,
+        laptopDeletion.tags,
+        laptopDeletion.content,
+      ])
+    )
+    .digest();
+  assert.equal(laptopDeletion.id, hash.toString('hex'));
+  assert.ok(
+    await legacy.secp.schnorr.verifyAsync(
+      Buffer.from(laptopDeletion.sig, 'hex'),
+      hash,
+      Buffer.from(legacy.pubkey, 'hex')
+    )
+  );
+  const named = (kind) =>
+    plain(
+      laptopDeletion.tags
+        .filter((t) => t[0] === kind)
+        .map((t) => t[1])
+        .sort()
+    );
+  assert.deepEqual(
+    named('a'),
+    [v4, ...old.browser.map((event) => event.tags[0][1])]
+      .map((address) => `30078:${legacy.pubkey}:${address}`)
+      .sort()
+  );
+  assert.deepEqual(named('e'), [old.shared.id, ...old.browser.map((event) => event.id)].sort());
+  assert.deepEqual(plain(laptopDeletion.tags.at(-1)), ['k', '30078']);
+  for (const [, value] of [...relay.stored.values()].flatMap((event) => event.tags)) {
+    if (value.startsWith('pksync-v5')) assert.ok(!value.includes(LEGACY_CHAIN_ID));
+  }
+
+  // The laptop goes offline. Two hours later, past the relays' presence
+  // lookback, the phone updates and finds only the laptop's kept snapshot.
+  await browser.sync.disconnect();
+  clock.now += 2 * 60 * 60 * 1000;
+  await phone.start();
+  await pumpUntil(
+    clock,
+    [phone],
+    () => cleanedUp(phone)() && ids(phone.api.getPasskeys()).join() === 'p2,p3',
+    'the phone never caught up'
+  );
+  await pump(clock, [phone], () => false, 4);
+  assert.equal(phone.api.getSyncConfig().chainId, config.chainId);
+  assert.ok(!relay.has(old.mobile));
+  assert.deepEqual(ids(phone.api.getPasskeys()), ['p2', 'p3']);
+
+  // Two more hours on, the laptop comes back and picks up the phone's changes.
+  clock.now += 2 * 60 * 60 * 1000;
+  await browser.owner.initializeSyncService();
+  await pumpUntil(
+    clock,
+    [browser, phone],
+    () => ids(browser.passkeys()).join() === 'p2,p3',
+    'the laptop never caught up'
+  );
+  await pump(clock, [browser, phone], () => false, 4);
+  assert.deepEqual(ids(browser.passkeys()), ['p2', 'p3']);
+  assert.deepEqual(ids(phone.api.getPasskeys()), ['p2', 'p3']);
+  assert.deepEqual(plain(browser.storage.get('sync_deletions').map((d) => d.id)), ['p1']);
+  assert.equal([...relay.stored.values()].filter((e) => e.pubkey === legacy.pubkey).length, 0);
+  await browser.sync.disconnect();
 });
