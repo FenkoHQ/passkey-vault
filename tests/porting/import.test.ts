@@ -69,7 +69,10 @@ describe('materialising an import', () => {
   });
 
   it('skips passkeys already in the vault and reports how many', async () => {
-    const csv = ['rpId,userName,credentialId,privateKey', `github.com,ali,Y3JlZC1pZA,${pkcs8}`].join('\n');
+    const csv = [
+      'rpId,userName,credentialId,privateKey',
+      `github.com,ali,Y3JlZC1pZA,${pkcs8}`,
+    ].join('\n');
     const ready = await materialize(parseImport('p.csv', csv), {
       passkeys: [{ id: 'Y3JlZC1pZA' }],
       totpEntries: [],
@@ -176,5 +179,137 @@ describe('the native backup format', () => {
 
   it('refuses a file no parser recognises', () => {
     expect(() => parseImport('notes.txt', 'just some text')).toThrow(/Unrecognised file/);
+  });
+});
+
+describe('backup flags on imported passkeys', () => {
+  const ON = { backupEligible: true, backupState: true };
+  const OFF = { backupEligible: false, backupState: false };
+
+  function bitwardenFile(): string {
+    const pkcs8Base64Url = pkcs8.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return JSON.stringify({
+      encrypted: false,
+      folders: [],
+      items: [
+        {
+          type: 1,
+          name: 'Teleport',
+          login: {
+            username: 'colin',
+            fido2Credentials: [
+              {
+                credentialId: 'Y3JlZC1pZA',
+                keyType: 'public-key',
+                keyAlgorithm: 'ECDSA',
+                keyCurve: 'P-256',
+                keyValue: pkcs8Base64Url,
+                rpId: 'tele.example.com',
+                userHandle: 'dXNlcg',
+                userName: 'colin',
+                counter: '0',
+                discoverable: 'true',
+                creationDate: '2026-01-02T03:04:05.000Z',
+              },
+            ],
+          },
+        },
+      ],
+    });
+  }
+
+  function stored(extra: Record<string, unknown>) {
+    return { id: 'Y3JlZC1pZA', rpId: 'tele.example.com', publicKey: rawPublicKey, ...extra };
+  }
+
+  it('imports a passkey from another manager as a synced passkey', async () => {
+    const ready = await materialize(parseImport('bitwarden.json', bitwardenFile()), EMPTY_VAULT);
+    expect(ready.passkeys[0]).toMatchObject({ ...ON, backupSource: 'imported' });
+    expect(ready.backupRepairs).toEqual([]);
+  });
+
+  it('fixes a passkey imported before flags existed when the file is imported again', async () => {
+    const ready = await materialize(parseImport('bitwarden.json', bitwardenFile()), {
+      passkeys: [stored({ ...OFF, backupSource: 'legacy' })],
+      totpEntries: [],
+    });
+
+    expect(ready.passkeys).toHaveLength(0);
+    expect(ready.duplicatePasskeys).toBe(1);
+    expect(ready.backupRepairs).toEqual([
+      { id: 'Y3JlZC1pZA', rpId: 'tele.example.com', publicKey: rawPublicKey, ...ON },
+    ]);
+  });
+
+  it('leaves a passkey the user set by hand, or one whose key does not match', async () => {
+    for (const existing of [
+      stored({ ...OFF, backupSource: 'manual' }),
+      stored({ ...OFF, backupSource: 'created' }),
+      stored({ ...OFF, backupSource: 'legacy', publicKey: 'someone-else' }),
+      stored({ ...ON, backupSource: 'legacy' }),
+    ]) {
+      const ready = await materialize(parseImport('bitwarden.json', bitwardenFile()), {
+        passkeys: [existing],
+        totpEntries: [],
+      });
+      expect(ready.backupRepairs).toEqual([]);
+    }
+  });
+
+  function nativeExport(extra: Record<string, unknown>): string {
+    return buildExport('fenko-json', {
+      passkeys: [
+        {
+          id: 'Y3JlZC1pZA',
+          credentialId: 'Y3JlZC1pZA',
+          type: 'public-key',
+          rpId: 'tele.example.com',
+          origin: 'https://tele.example.com',
+          user: { id: 'dXNlcg', name: 'colin', displayName: 'colin' },
+          privateKey: pkcs8,
+          publicKey: rawPublicKey,
+          createdAt: 1750000000000,
+          counter: 3,
+          ...extra,
+        },
+      ],
+      totpEntries: [],
+    }).content;
+  }
+
+  it('keeps the flags a Fenko backup recorded, including device-bound ones', async () => {
+    const ready = await materialize(
+      parseImport('fenko.json', nativeExport({ ...OFF, backupSource: 'created' })),
+      EMPTY_VAULT
+    );
+    expect(ready.passkeys[0]).toMatchObject({ ...OFF, backupSource: 'created' });
+  });
+
+  it('does not assume a pre-flags Fenko backup holds synced passkeys', async () => {
+    const ready = await materialize(parseImport('fenko.json', nativeExport({})), {
+      passkeys: [stored({ ...OFF, backupSource: 'legacy' })],
+      totpEntries: [],
+    });
+    expect(ready.backupRepairs).toEqual([]);
+
+    const fresh = await materialize(parseImport('fenko.json', nativeExport({})), EMPTY_VAULT);
+    expect(fresh.passkeys[0].backupEligible).toBeUndefined();
+  });
+
+  it('round-trips the flags through the passkey CSV', async () => {
+    const source = await materialize(
+      parseImport('fenko.json', nativeExport({ ...OFF, backupSource: 'created' })),
+      EMPTY_VAULT
+    );
+    const csv = buildExport('passkey-csv', { passkeys: source.passkeys, totpEntries: [] });
+    const ready = await materialize(parseImport(csv.fileName, csv.content), EMPTY_VAULT);
+
+    expect(ready.passkeys[0]).toMatchObject({ ...OFF, backupSource: 'imported' });
+  });
+
+  it('treats blank CSV flag cells as a passkey from another manager', async () => {
+    const csv = passkeyCsvTemplate().replace('MIGHAgEAMBMGByqGSM49AgEG...', pkcs8);
+    const ready = await materialize(parseImport('template.csv', csv), EMPTY_VAULT);
+    expect(ready.passkeys[0]).toMatchObject({ ...ON, backupSource: 'imported' });
   });
 });

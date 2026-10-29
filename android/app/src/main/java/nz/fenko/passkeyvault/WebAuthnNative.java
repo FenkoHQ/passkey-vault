@@ -76,6 +76,11 @@ final class WebAuthnNative {
         record.publicKey = Base64.encodeToString(publicKeyRaw, Base64.NO_WRAP);
         record.createdAt = System.currentTimeMillis();
         record.counter = 0;
+        // The vault syncs its passkeys, so a new one is backup eligible. BE is
+        // fixed for the credential's life; BS stays off until it is backed up.
+        record.backupEligible = true;
+        record.backupState = false;
+        record.backupSource = "created";
         record.source = new JSONObject();
         return record;
     }
@@ -96,7 +101,7 @@ final class WebAuthnNative {
         byte[] credentialId = base64UrlDecode(passkey.credentialId);
         byte[] publicKeyRaw = Base64.decode(passkey.publicKey, Base64.DEFAULT);
         byte[] coseKey = cosePublicKey(publicKeyRaw);
-        byte[] authData = authenticatorData(passkey.rpId, credentialId, coseKey, true, 0, userVerified);
+        byte[] authData = authenticatorData(passkey.rpId, credentialId, coseKey, true, 0, userVerified, backupFlags(passkey));
         byte[] attestationObject = attestationObject(authData);
         byte[] clientData = clientDataJson("webauthn.create", challenge, finalOrigin(origin, passkey.rpId));
 
@@ -142,7 +147,7 @@ final class WebAuthnNative {
         String challenge = ProviderVaultStore.challengeFromRequestJson(requestJson);
         passkey.counter += 1;
 
-        byte[] authData = authenticatorData(passkey.rpId, null, null, false, passkey.counter, userVerified);
+        byte[] authData = authenticatorData(passkey.rpId, null, null, false, passkey.counter, userVerified, backupFlags(passkey));
         byte[] clientData = clientDataJson("webauthn.get", challenge, finalOrigin(origin, passkey.rpId));
         // Browsers build their own clientDataJSON and pass its hash; the signature
         // must cover that hash or the RP-side verification fails.
@@ -198,17 +203,30 @@ final class WebAuthnNative {
         return clientData.toString().getBytes(StandardCharsets.UTF_8);
     }
 
+    /**
+     * BE (0x08) and BS (0x10) from the passkey's own record. Relying parties
+     * such as Teleport store BE and reject a sign-in that changes it, so these
+     * must match what the passkey was created or imported with. A record from
+     * before per-credential flags signs with neither, as this app always did.
+     */
+    static int backupFlags(ProviderVaultStore.PasskeyRecord passkey) {
+        if (!Boolean.TRUE.equals(passkey.backupEligible)) return 0;
+        return Boolean.TRUE.equals(passkey.backupState) ? 0x18 : 0x08;
+    }
+
     private static byte[] authenticatorData(
             String rpId,
             byte[] credentialId,
             byte[] cosePublicKey,
             boolean includeAttestedCredentialData,
             long counter,
-            boolean userVerified) throws Exception {
+            boolean userVerified,
+            int backupFlags) throws Exception {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         out.write(sha256(rpId.getBytes(StandardCharsets.UTF_8)));
         int flags = includeAttestedCredentialData ? 0x41 : 0x01;
         if (userVerified) flags |= 0x04;
+        flags |= backupFlags;
         out.write(flags);
         out.write(ByteBuffer.allocate(4).putInt((int) counter).array());
         if (includeAttestedCredentialData) {

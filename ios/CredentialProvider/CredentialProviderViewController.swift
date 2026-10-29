@@ -87,7 +87,8 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                 updated.counter += 1
                 let authData = WebAuthn.authenticatorData(
                     rpId: updated.rpId, credentialId: nil, cosePublicKey: nil,
-                    includeAttestedCredentialData: false, counter: updated.counter)
+                    includeAttestedCredentialData: false, counter: updated.counter,
+                    backupFlags: updated.backupFlagBits)
                 let signature = try WebAuthn.assertionSignature(
                     privateKeyPKCS8B64: updated.privateKey,
                     authenticatorData: authData, clientDataHash: clientDataHash)
@@ -118,13 +119,17 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             throw WebAuthnError.badPublicKey
         }
         let cose = try WebAuthn.cosePublicKey(rawPublicKey: publicKeyRaw)
+        // The vault syncs its passkeys, so a new one is backup eligible. BE is
+        // fixed for the credential's life; BS stays off until it is backed up.
+        let backupFlags: UInt8 = 0x08
         let authData = WebAuthn.authenticatorData(
             rpId: identity.relyingPartyIdentifier,
             credentialId: credentialIDBytes, cosePublicKey: cose,
-            includeAttestedCredentialData: true, counter: 0)
+            includeAttestedCredentialData: true, counter: 0,
+            backupFlags: backupFlags)
         let attestationObject = WebAuthn.attestationObject(authData: authData)
 
-        let record = PasskeyRecord(
+        var record = PasskeyRecord(
             id: Base64URL.encode(credentialIDBytes),
             credentialId: Base64URL.encode(credentialIDBytes),
             rpId: identity.relyingPartyIdentifier,
@@ -136,6 +141,9 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             publicKey: keys.publicKey,
             createdAt: Date().timeIntervalSince1970 * 1000,
             counter: 0)
+        record.backupEligible = true
+        record.backupState = false
+        record.backupSource = "created"
         vault.upsert(record)
 
         return ASPasskeyRegistrationCredential(

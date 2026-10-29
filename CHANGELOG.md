@@ -24,6 +24,35 @@ All notable changes to Passkey Vault are documented here. The format follows
 - Challenges, user IDs and credential IDs passed as a view onto a larger
   buffer (for example from `subarray()`) were serialised with the whole
   backing buffer instead of just the view's bytes.
+### Imported passkeys sign in where they used to
+
+A passkey imported from Bitwarden failed on Teleport with nothing more than
+"invalid credentials". Sites built on go-webauthn, Teleport among them, store a
+passkey's backup eligible (BE) flag the first time it signs in and reject any
+later sign-in that changes it. Bitwarden, 1Password, iCloud Keychain and Google
+all report their passkeys as synced (BE and BS set), while the vault signed
+every passkey with one vault-wide setting that defaulted to off. Turning the
+Advanced toggles on fixed those passkeys, and would then have broken every
+passkey the vault created with them off.
+
+Backup flags now belong to each passkey and sync with it to every device:
+
+- **Imports** come in as synced passkeys, since every manager the vault imports
+  from syncs them. A Fenko backup keeps the flags each passkey had.
+- **Importing the same file again** fixes passkeys imported before this change.
+  Only their backup flags move, and only when the credential id, site and key
+  all match. Passkeys created in the vault, or set by hand, are left alone.
+- **Each passkey has a "Synced passkey" switch** in its details, for the rare
+  site that still disagrees.
+- **Existing passkeys keep signing exactly as before.** On upgrade the vault
+  records the flags it was using on every passkey, so nothing changes for a
+  site that already stored them. Unlocking finishes this for PIN-protected
+  vaults.
+- **New passkeys are backup eligible by default**, because the vault syncs
+  them. They are reported as backed up once sync is set up. The Advanced
+  toggles now apply only to passkeys created after a change.
+- **Android and iOS** sign with each passkey's own flags too, and a sync from
+  an older build cannot strip them.
 
 ## [0.12.0] - 2026-09-21
 

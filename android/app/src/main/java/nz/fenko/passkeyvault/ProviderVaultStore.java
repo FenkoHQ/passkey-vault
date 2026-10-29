@@ -126,6 +126,19 @@ final class ProviderVaultStore {
         }
     }
 
+    /**
+     * A copy written by a build that predates per-credential backup flags must
+     * not erase them: keep the other copy's flags when the winner has none.
+     * Mirrors carryBackupFields() in src/sync/backup-flags.ts.
+     */
+    private static void carryBackupFields(JSONObject winner, JSONObject other) throws JSONException {
+        if (other == null || winner.opt("backupEligible") instanceof Boolean) { return; }
+        if (!(other.opt("backupEligible") instanceof Boolean)) { return; }
+        winner.put("backupEligible", other.getBoolean("backupEligible"));
+        winner.put("backupState", other.optBoolean("backupState", false));
+        if (other.has("backupSource")) { winner.put("backupSource", other.get("backupSource")); }
+    }
+
     private static String mergeEntries(String local, String incoming, JSONArray deletions, String kind) {
         Map<String, JSONObject> records = new LinkedHashMap<>();
         try {
@@ -141,6 +154,7 @@ final class ProviderVaultStore {
                     double currentVersion = current == null ? -1 : current.optDouble("updatedAt", current.optDouble("createdAt"));
                     JSONObject winner = current == null || version > currentVersion ||
                             (version == currentVersion && recordOrder(item).compareTo(recordOrder(current)) > 0) ? item : current;
+                    carryBackupFields(winner, winner == item ? current : item);
                     winner.put("counter", counter);
                     records.put(id, winner);
                 }
@@ -409,6 +423,11 @@ final class ProviderVaultStore {
         String publicKey;
         long createdAt;
         long counter;
+        // Per-credential WebAuthn backup flags (see src/sync/backup-flags.ts).
+        // Null on a record from before they existed: sign as this app always has.
+        Boolean backupEligible;
+        Boolean backupState;
+        String backupSource;
         JSONObject source;
 
         static PasskeyRecord fromJson(JSONObject json) {
@@ -432,6 +451,11 @@ final class ProviderVaultStore {
             record.publicKey = json.optString("publicKey", "");
             record.createdAt = json.optLong("createdAt", System.currentTimeMillis());
             record.counter = json.optLong("counter", 0);
+            if (json.opt("backupEligible") instanceof Boolean) {
+                record.backupEligible = json.optBoolean("backupEligible");
+                record.backupState = record.backupEligible && json.optBoolean("backupState", false);
+                record.backupSource = json.optString("backupSource", null);
+            }
             record.source = new JSONObject();
             try {
                 record.source = new JSONObject(json.toString());
@@ -459,6 +483,11 @@ final class ProviderVaultStore {
                 json.put("publicKey", publicKey);
                 json.put("createdAt", createdAt);
                 json.put("counter", counter);
+                if (backupEligible != null) {
+                    json.put("backupEligible", backupEligible.booleanValue());
+                    json.put("backupState", backupEligible.booleanValue() && Boolean.TRUE.equals(backupState));
+                    if (backupSource != null) json.put("backupSource", backupSource);
+                }
             } catch (JSONException ignored) {
             }
             return json;
