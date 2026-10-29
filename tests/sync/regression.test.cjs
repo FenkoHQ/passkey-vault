@@ -690,6 +690,71 @@ test('acknowledging presence cannot hide an exhausted snapshot', async () => {
   assert.ok(s.getStatus().lastError, 'presence ACK is not a snapshot ACK');
 });
 
+const BITWARDEN_GUID = '674880d4-06ed-1af1-e8dd-2d901d9dbd3d';
+const DECODED_ID = 'Z0iA1AbtGvHo3S2QHZ29PQ';
+const bitwardenImport = { ...passkey, id: BITWARDEN_GUID, credentialId: BITWARDEN_GUID };
+
+// Arrays built inside the VM fail deepStrictEqual against this realm's arrays.
+const plain = (value) => JSON.parse(JSON.stringify(value));
+
+function quietOwner(owner) {
+  Object.assign(owner, {
+    logSync() {},
+    logWebAuthn() {},
+    incrementPendingChanges: async () => {},
+    triggerSync: async () => {},
+  });
+}
+
+test('Bitwarden credential IDs are re-keyed and the repair converges on mobile', async () => {
+  const { b, owner, mobile, m } = await clients();
+  quietOwner(owner);
+  await owner.savePasskeys([bitwardenImport]);
+  mobile.api.setPasskeys([bitwardenImport]);
+
+  await owner.repairStoredCredentialIds();
+  const snapshot = await b.s.vaultAdapter.getSnapshot();
+  assert.deepEqual(plain(snapshot.passkeys.map((entry) => [entry.id, entry.credentialId])), [
+    [DECODED_ID, DECODED_ID],
+  ]);
+  assert.deepEqual(plain(snapshot.deletions.map((entry) => entry.id)), [BITWARDEN_GUID]);
+
+  m.mergeVault(snapshot.passkeys, [], 'browser', snapshot.deletions);
+  assert.deepEqual(plain(mobile.api.getPasskeys().map((entry) => [entry.id, entry.privateKey])), [
+    [DECODED_ID, passkey.privateKey],
+  ]);
+});
+
+test('browser re-keys Bitwarden IDs a peer on an older build still sends', async () => {
+  const { owner } = await clients();
+  quietOwner(owner);
+  await owner.syncVaultAdapter().mergeRemote([bitwardenImport], [], 'old-peer', []);
+  assert.deepEqual(plain((await owner.loadPasskeys()).map((entry) => entry.id)), [DECODED_ID]);
+});
+
+test('browser refuses a new passkey only when the site excludes a stored one', async () => {
+  const { owner } = await clients();
+  quietOwner(owner);
+  await owner.savePasskeys([{ ...passkey, id: DECODED_ID, credentialId: DECODED_ID }]);
+  const register = (excludeCredentials) =>
+    owner.handleCreatePasskey({
+      publicKey: {
+        rp: { id: 'example.com', name: 'Example' },
+        rpId: 'example.com',
+        user: { id: 'dXNlcg', name: 'ali', displayName: 'Ali' },
+        challenge: 'AAAA',
+        excludeCredentials,
+      },
+      origin: 'https://example.com',
+    });
+
+  const second = await register([{ id: 'b3RoZXI', type: 'public-key' }]);
+  assert.equal(second.success, true, second.error);
+  const excluded = await register([{ id: DECODED_ID, type: 'public-key' }]);
+  assert.equal(excluded.name, 'InvalidStateError');
+  assert.equal((await owner.loadPasskeys()).length, 2);
+});
+
 async function backgroundWithVault(records, stored = {}) {
   const e = env(backgroundCode);
   const values = new Map(Object.entries(stored));

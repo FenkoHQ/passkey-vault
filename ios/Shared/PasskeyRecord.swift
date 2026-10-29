@@ -59,7 +59,7 @@ struct PasskeyRecord: Codable {
         let user = obj["user"] as? [String: Any]
         var record = PasskeyRecord(
             id: (obj["id"] as? String) ?? credentialId,
-            credentialId: credentialId,
+            credentialId: StoredCredentialID.credentialId(credentialId),
             rpId: rpId,
             origin: (obj["origin"] as? String) ?? "https://\(rpId)",
             userId: user?["id"] as? String,

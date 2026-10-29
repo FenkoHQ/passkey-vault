@@ -6,6 +6,24 @@ All notable changes to Passkey Vault are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- Passkeys imported from a Bitwarden JSON export now sign in (#17). Bitwarden
+  writes credential IDs as GUIDs, or with a `b64.` prefix, and the importer
+  stored those strings as they were, so the vault never matched a site's
+  `allowCredentials` and signed with an ID the site had never issued. The
+  importer now decodes them, and vaults that already hold such passkeys are
+  repaired on startup, on unlock and after each sync. The repair replaces each
+  bad ID with the decoded one and syncs a deletion record for the old ID, so
+  every device ends up with the same corrected passkey, including devices not
+  yet updated. The Android and iOS passkey providers also decode such IDs
+  when they read the vault, so they sign in before the app has been opened.
+- Registering a second passkey on a site that already had one failed with
+  "already registered". The vault now refuses only a credential the site lists
+  in `excludeCredentials`, so one site can hold several accounts.
+- Challenges, user IDs and credential IDs passed as a view onto a larger
+  buffer (for example from `subarray()`) were serialised with the whole
+  backing buffer instead of just the view's bytes.
 ### Imported passkeys sign in where they used to
 
 A passkey imported from Bitwarden failed on Teleport with nothing more than

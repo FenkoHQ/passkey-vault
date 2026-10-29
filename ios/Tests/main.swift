@@ -67,4 +67,19 @@ for fixture in fixtures {
         }
     }
 }
+let idFixturesURL = URL(fileURLWithPath: CommandLine.arguments[1])
+    .deletingLastPathComponent().appendingPathComponent("credential-id-fixtures.json")
+let idFixtures = try JSONSerialization.jsonObject(with: Data(contentsOf: idFixturesURL)) as! [[String: String]]
+for fixture in idFixtures {
+    let stored = fixture["stored"]!, expected = fixture["credentialId"]!
+    require(StoredCredentialID.credentialId(stored) == expected, fixture["name"]!)
+    var imported = record
+    imported["id"] = stored
+    imported["credentialId"] = stored
+    let passkey = PasskeyRecord.fromJSON(imported)!
+    require(passkey.credentialId == expected && passkey.id == stored, "load must decode \(fixture["name"]!)")
+    vault.resetVault()
+    defaults.set(json([imported]), forKey: "passkeys")
+    require(vault.findPasskey(credentialId: expected)?.id == stored, "lookup by decoded ID: \(fixture["name"]!)")
+}
 print("iOS native snapshot merge: PASS")

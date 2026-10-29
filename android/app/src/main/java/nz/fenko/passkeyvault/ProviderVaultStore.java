@@ -4,10 +4,12 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Bundle;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -19,6 +21,9 @@ final class ProviderVaultStore {
     private static final String SYNC_CONFIG = "sync_config";
     private static final String SYNC_DEVICES = "sync_devices";
     private static final String CUSTOM_RELAYS = "custom_relays";
+    private static final Pattern BITWARDEN_GUID =
+            Pattern.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+    private static final String BITWARDEN_B64_PREFIX = "b64.";
 
     private ProviderVaultStore() {}
 
@@ -263,6 +268,28 @@ final class ProviderVaultStore {
         }
     }
 
+    /**
+     * The credential ID a relying party knows for a stored ID. Bitwarden exports
+     * write 16-byte IDs as GUIDs and other lengths as "b64." + base64url; the web
+     * app re-keys such records when it next runs, so until then read them here.
+     * Mirrors decodeBitwardenCredentialId in src/sync/credential-ids.ts.
+     */
+    static String credentialIdFromStored(String stored) {
+        String value = stored.trim();
+        if (value.startsWith(BITWARDEN_B64_PREFIX)) {
+            String encoded = value.substring(BITWARDEN_B64_PREFIX.length())
+                    .replace('+', '-').replace('/', '_').replaceAll("=+$", "");
+            return encoded.length() == 0 ? stored : encoded;
+        }
+        if (!BITWARDEN_GUID.matcher(value).matches()) return stored;
+        String hex = value.replace("-", "");
+        byte[] bytes = new byte[hex.length() / 2];
+        for (int i = 0; i < bytes.length; i++) {
+            bytes[i] = (byte) Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+        }
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    }
+
     static String userIdFromCreateRequest(String requestJson) {
         try {
             JSONObject user = new JSONObject(requestJson).optJSONObject("user");
@@ -414,7 +441,7 @@ final class ProviderVaultStore {
             JSONObject user = json.optJSONObject("user");
             PasskeyRecord record = new PasskeyRecord();
             record.id = json.optString("id", credentialId);
-            record.credentialId = credentialId;
+            record.credentialId = credentialIdFromStored(credentialId);
             record.rpId = rpId;
             record.origin = json.optString("origin", "https://" + rpId);
             record.userId = user == null ? null : user.optString("id", null);
