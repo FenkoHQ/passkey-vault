@@ -6,53 +6,27 @@ All notable changes to Passkey Vault are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-10-29
+
 ### Fixed
 
-- Passkeys imported from a Bitwarden JSON export now sign in (#17). Bitwarden
-  writes credential IDs as GUIDs, or with a `b64.` prefix, and the importer
-  stored those strings as they were, so the vault never matched a site's
-  `allowCredentials` and signed with an ID the site had never issued. The
-  importer now decodes them, and vaults that already hold such passkeys are
-  repaired on startup, on unlock and after each sync. The repair replaces each
-  bad ID with the decoded one and syncs a deletion record for the old ID, so
-  every device ends up with the same corrected passkey, including devices not
-  yet updated. The Android and iOS passkey providers also decode such IDs
-  when they read the vault, so they sign in before the app has been opened.
-- Registering a second passkey on a site that already had one failed with
-  "already registered". The vault now refuses only a credential the site lists
-  in `excludeCredentials`, so one site can hold several accounts.
-- Challenges, user IDs and credential IDs passed as a view onto a larger
-  buffer (for example from `subarray()`) were serialised with the whole
-  backing buffer instead of just the view's bytes.
-### Imported passkeys sign in where they used to
+- Bitwarden passkeys imported from JSON now use the credential IDs sites expect
+  in the browser, on Android, and on iOS. Earlier imports are repaired when the
+  vault starts, unlocks, or syncs.
+- Imported passkeys now keep their own synced state across devices. If a site
+  still rejects a passkey imported before this release, import the original
+  file again to update that state. Existing vault-created passkeys keep their
+  previous sign-in behavior.
+- Multiple accounts on one site can each register a passkey.
+- WebAuthn requests containing a view of a larger buffer now use only the
+  requested bytes.
 
-A passkey imported from Bitwarden failed on Teleport with nothing more than
-"invalid credentials". Sites built on go-webauthn, Teleport among them, store a
-passkey's backup eligible (BE) flag the first time it signs in and reject any
-later sign-in that changes it. Bitwarden, 1Password, iCloud Keychain and Google
-all report their passkeys as synced (BE and BS set), while the vault signed
-every passkey with one vault-wide setting that defaulted to off. Turning the
-Advanced toggles on fixed those passkeys, and would then have broken every
-passkey the vault created with them off.
+### Changed
 
-Backup flags now belong to each passkey and sync with it to every device:
-
-- **Imports** come in as synced passkeys, since every manager the vault imports
-  from syncs them. A Fenko backup keeps the flags each passkey had.
-- **Importing the same file again** fixes passkeys imported before this change.
-  Only their backup flags move, and only when the credential id, site and key
-  all match. Passkeys created in the vault, or set by hand, are left alone.
-- **Each passkey has a "Synced passkey" switch** in its details, for the rare
-  site that still disagrees.
-- **Existing passkeys keep signing exactly as before.** On upgrade the vault
-  records the flags it was using on every passkey, so nothing changes for a
-  site that already stored them. Unlocking finishes this for PIN-protected
-  vaults.
-- **New passkeys are backup eligible by default**, because the vault syncs
-  them. They are reported as backed up once sync is set up. The Advanced
-  toggles now apply only to passkeys created after a change.
-- **Android and iOS** sign with each passkey's own flags too, and a sync from
-  an older build cannot strip them.
+- Passkey details now offer a "Synced passkey" switch for sites that need a
+  different setting. New passkeys are backup eligible, and report as backed up
+  once sync is configured.
+- Import now reports when it updates or repairs a passkey.
 
 ## [0.12.0] - 2026-09-21
 
