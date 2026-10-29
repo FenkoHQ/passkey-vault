@@ -4,6 +4,8 @@
  * then materialises them into vault records.
  */
 
+import type { BackupFlags, BackupSource } from '../sync/backup-flags';
+
 export type OtpType = 'totp' | 'hotp';
 export type OtpAlgorithm = 'SHA1' | 'SHA256' | 'SHA512';
 
@@ -17,6 +19,13 @@ export interface PortableOtp {
   digits: number;
   period: number;
   counter: number;
+  /**
+   * Set only by Fenko's own backup parser, so a restore keeps the record's
+   * identity (sync and deletion tombstones key on it) and timestamps.
+   */
+  id?: string;
+  createdAt?: number;
+  lastUsed?: number;
 }
 
 /**
@@ -36,6 +45,21 @@ export interface PortablePasskey {
   privateKey: unknown;
   counter: number;
   createdAt: number;
+  /**
+   * Backup flags the file recorded for this passkey. Absent when the format
+   * does not record them: the passkey came from a manager that syncs it, so
+   * it is imported as a synced passkey. 'unknown' marks a Fenko backup made
+   * before passkeys carried their own flags; those keep signing as before.
+   */
+  backup?: { flags: BackupFlags; source: BackupSource } | 'unknown';
+  /**
+   * Set only by Fenko's own backup parser. `id` keeps the record's sync
+   * identity; `prfKey` is the random WebAuthn PRF secret minted at
+   * registration, which cannot be re-derived, so losing it changes every PRF
+   * output the site sees.
+   */
+  id?: string;
+  prfKey?: string;
 }
 
 /** What a parser hands back: everything it understood plus what it skipped. */

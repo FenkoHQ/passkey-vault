@@ -28,6 +28,9 @@ import { resolveSiteIcon } from '../site-icons';
     createdAt?: number | string;
     counter?: number;
     lastUsed?: number | string;
+    backupEligible?: boolean;
+    backupState?: boolean;
+    backupSource?: string;
     [key: string]: unknown;
   }
 
@@ -75,6 +78,7 @@ import { resolveSiteIcon } from '../site-icons';
   const filters = { passkeys: true, totp: true };
   let totpTickInterval: number | null = null;
   const codeCache = new Map<string, { code: string; expiresAt: number }>();
+  const hotpRequests = new Map<string, Promise<string | undefined>>();
   const VAULT_FILTERS_KEY = 'vault_filters';
 
   // Initialize popup when DOM is loaded
@@ -735,6 +739,16 @@ import { resolveSiteIcon } from '../site-icons';
           <span class="label">${t('popupKeyId')}</span>
           <span class="value">${popupEscapeHtml(credentialIdShort)}</span>
         </div>
+        <div class="passkey-backup">
+          <label class="passkey-backup-row">
+            <span class="passkey-backup-title">${t('popupSyncedPasskey')}</span>
+            <span class="mini-toggle">
+              <input type="checkbox" class="passkey-backup-toggle" />
+              <span class="mini-toggle-slider"></span>
+            </span>
+          </label>
+          <div class="passkey-backup-hint"></div>
+        </div>
         <div class="passkey-details-actions">
           <button class="btn btn-secondary btn-sm passkey-copy" title="${popupEscapeHtml(t('popupCopyClipboard'))}">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -756,6 +770,8 @@ import { resolveSiteIcon } from '../site-icons';
       copyPasskeyToClipboard(passkey, copyBtn);
     });
 
+    setupBackupToggle(div, passkey);
+
     const expandBtn = div.querySelector('.expand-btn') as HTMLButtonElement;
     const details = div.querySelector('.passkey-details') as HTMLElement;
     expandBtn.addEventListener('click', (e) => {
@@ -772,6 +788,58 @@ import { resolveSiteIcon } from '../site-icons';
     });
 
     return div;
+  }
+
+  /** Where this passkey's backup flags came from, in words. */
+  function backupSourceText(passkey: PopupPasskey): string {
+    switch (passkey.backupSource) {
+      case 'imported':
+        return t('popupBackupImported');
+      case 'created':
+        return t('popupBackupCreated');
+      case 'manual':
+        return t('popupBackupManual');
+      default:
+        return t('popupBackupLegacy');
+    }
+  }
+
+  /**
+   * The "Synced passkey" switch. Sites built on go-webauthn (Teleport, and
+   * others) store whether a passkey is synced and reject a sign-in that
+   * disagrees, so this has to match the app that created the passkey.
+   */
+  function setupBackupToggle(div: HTMLElement, passkey: PopupPasskey): void {
+    const toggle = div.querySelector('.passkey-backup-toggle') as HTMLInputElement;
+    const hint = div.querySelector('.passkey-backup-hint') as HTMLElement;
+    const paint = () => {
+      toggle.checked = passkey.backupEligible === true;
+      hint.textContent = `${backupSourceText(passkey)} ${t('popupBackupHelp')}`;
+    };
+    paint();
+    // Legacy records have no flags of their own until the background stamps
+    // them; leave the switch off-limits rather than guess what they sign with.
+    toggle.disabled = typeof passkey.backupEligible !== 'boolean';
+
+    toggle.addEventListener('click', (e) => e.stopPropagation());
+    toggle.addEventListener('change', async () => {
+      const synced = toggle.checked;
+      toggle.disabled = true;
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: 'SET_PASSKEY_BACKUP',
+          payload: { credentialId: passkey.id, synced },
+        });
+        if (!response?.success) throw new Error(response?.error || 'Update failed');
+        Object.assign(passkey, response.passkey);
+        showNotification(t('popupBackupSaved'));
+      } catch (error) {
+        showNotification(t('popupBackupFailed', { error: (error as Error).message }), 'error');
+      } finally {
+        paint();
+        toggle.disabled = typeof passkey.backupEligible !== 'boolean';
+      }
+    });
   }
 
   /**
@@ -886,13 +954,12 @@ import { resolveSiteIcon } from '../site-icons';
         throw new Error(passkeyResult.error || totpResult.error || 'Failed to load vault');
       }
       const passkeys = (passkeyResult.passkeys || []) as PopupPasskey[];
+      const totpEntries = (totpResult.entries || []) as unknown[];
 
-      if (passkeys.length === 0) {
+      if (passkeys.length === 0 && totpEntries.length === 0) {
         showNotification(t('popupNoPasskeysExport'), 'error');
         return;
       }
-
-      const totpEntries = (totpResult.entries || []) as unknown[];
 
       const exportData = {
         version: EXPORT_VERSION,
@@ -1081,15 +1148,30 @@ import { resolveSiteIcon } from '../site-icons';
         created.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       : t('commonUnknown');
 
-    const detailRow = (label: string, value: string): string => `
+    const detailRow = (label: string, value: string, valueClass = ''): string => `
       <div class="passkey-detail-row">
         <span class="label">${popupEscapeHtml(label)}</span>
-        <span class="value">${popupEscapeHtml(value)}</span>
+        <span class="value ${valueClass}">${popupEscapeHtml(value)}</span>
       </div>`;
-    const periodRow =
-      entry.type === 'hotp'
-        ? detailRow(t('popupTotpCounter'), String(entry.counter ?? 0))
-        : detailRow(t('popupTotpPeriod'), `${entry.period || 30}s`);
+    const isHotp = entry.type === 'hotp';
+    const periodRow = isHotp
+      ? detailRow(t('popupTotpCounter'), String(entry.counter ?? 0), 'hotp-counter')
+      : detailRow(t('popupTotpPeriod'), `${entry.period || 30}s`);
+    // HOTP codes are single-use and never expire, so they are issued on an
+    // explicit click instead of on the ticker, and have no countdown bar.
+    const nextButton = isHotp
+      ? `<button class="hotp-next" title="${popupEscapeHtml(t('popupHotpNextCode'))}">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+            </button>`
+      : '';
+    const progressTrack = isHotp
+      ? ''
+      : `<div class="totp-progress-track">
+          <div class="totp-progress"></div>
+        </div>`;
 
     div.innerHTML = `
       <div class="vault-item-icon vault-item-icon--totp" title="${popupEscapeHtml(t('popupTabTotp'))}">
@@ -1105,7 +1187,8 @@ import { resolveSiteIcon } from '../site-icons';
             ${accountLabel ? `<div class="totp-account">${popupEscapeHtml(accountLabel)}</div>` : ''}
           </div>
           <div class="totp-code-wrap">
-            <div class="totp-code" data-id="${popupEscapeHtml(entry.id)}" title="${popupEscapeHtml(t('popupTotpClickToCopy'))}">••••••</div>
+            <div class="totp-code" data-id="${popupEscapeHtml(entry.id)}" title="${popupEscapeHtml(t(isHotp ? 'popupHotpGetCode' : 'popupTotpClickToCopy'))}">••••••</div>
+            ${nextButton}
             <button class="expand-btn" title="${popupEscapeHtml(t('popupDetails'))}">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="6 9 12 15 18 9"></polyline>
@@ -1114,9 +1197,7 @@ import { resolveSiteIcon } from '../site-icons';
             <button class="totp-delete" data-id="${popupEscapeHtml(entry.id)}" title="${popupEscapeHtml(t('commonDelete'))}">${popupEscapeHtml(t('popupDel'))}</button>
           </div>
         </div>
-        <div class="totp-progress-track">
-          <div class="totp-progress"></div>
-        </div>
+        ${progressTrack}
         <div class="passkey-details totp-details">
           ${entry.issuer ? detailRow(t('popupTotpIssuer'), entry.issuer) : ''}
           ${entry.account ? detailRow(t('popupTotpAccount'), entry.account) : ''}
@@ -1130,7 +1211,15 @@ import { resolveSiteIcon } from '../site-icons';
     `;
 
     const codeEl = div.querySelector('.totp-code') as HTMLElement;
-    codeEl.addEventListener('click', () => copyCodeToClipboard(entry.id, codeEl));
+    codeEl.addEventListener('click', () => copyCodeToClipboard(entry, codeEl));
+
+    const nextBtn = div.querySelector('.hotp-next') as HTMLButtonElement | null;
+    nextBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      void issueNextHotpCode(entry, div).then((code) => {
+        if (code) void writeCodeToClipboard(code, codeEl);
+      });
+    });
 
     const expandBtn = div.querySelector('.expand-btn') as HTMLButtonElement;
     const details = div.querySelector('.totp-details') as HTMLElement;
@@ -1154,6 +1243,12 @@ import { resolveSiteIcon } from '../site-icons';
     if (!filters.totp || allTotpEntries.length === 0) return;
     const now = Date.now();
     for (const entry of allTotpEntries) {
+      if (entry.type === 'hotp') {
+        // Never issue HOTP codes from the ticker: each one consumes a counter.
+        const issued = codeCache.get(entry.id);
+        if (issued) paintCode(entry, issued.code, now);
+        continue;
+      }
       const period = entry.period || 30;
       const expiresAt = Math.ceil(now / (period * 1000)) * (period * 1000);
       const cached = codeCache.get(entry.id);
@@ -1185,6 +1280,10 @@ import { resolveSiteIcon } from '../site-icons';
     ) as HTMLElement | null;
     if (!el) return;
     el.textContent = formatCodeDisplay(code, entry.digits);
+    if (entry.type === 'hotp') {
+      el.title = t('popupTotpClickToCopy');
+      return;
+    }
     const period = entry.period || 30;
     const remaining = period - (Math.floor(now / 1000) % period);
     el.classList.remove('expiring', 'expired');
@@ -1231,15 +1330,59 @@ import { resolveSiteIcon } from '../site-icons';
     }, 1000);
   }
 
+  // Issue the next HOTP code (advancing and persisting the counter in the
+  // background), show it and keep it until the popup closes. Re-copying the
+  // shown code does not consume another counter value, and a second click
+  // while a request is in flight shares it instead of burning another value.
+  function issueNextHotpCode(
+    entry: PopupTotpEntry,
+    itemEl: HTMLElement
+  ): Promise<string | undefined> {
+    const pending = hotpRequests.get(entry.id);
+    if (pending) return pending;
+    const request = requestNextHotpCode(entry, itemEl).finally(() => hotpRequests.delete(entry.id));
+    hotpRequests.set(entry.id, request);
+    return request;
+  }
+
+  async function requestNextHotpCode(
+    entry: PopupTotpEntry,
+    itemEl: HTMLElement
+  ): Promise<string | undefined> {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'NEXT_HOTP_CODE',
+        payload: { id: entry.id },
+      });
+      if (!response?.success) {
+        showNotification(response?.error || t('popupFailedCopy'), 'error');
+        return undefined;
+      }
+      entry.counter = response.entry.counter;
+      codeCache.set(entry.id, { code: response.code, expiresAt: Infinity });
+      paintCode(entry, response.code, Date.now());
+      const counterEl = itemEl.querySelector('.hotp-counter');
+      if (counterEl) counterEl.textContent = String(entry.counter);
+      return response.code as string;
+    } catch (error) {
+      console.error('Failed to issue HOTP code:', error);
+      paintCodeError(entry);
+      return undefined;
+    }
+  }
+
   async function copyCodeToClipboard(
-    id: string,
+    entry: PopupTotpEntry,
     codeEl: HTMLElement,
     btnEl?: HTMLButtonElement
   ): Promise<void> {
+    const id = entry.id;
     let code: string | undefined;
     const cached = codeCache.get(id);
     if (cached && cached.expiresAt > Date.now()) {
       code = cached.code;
+    } else if (entry.type === 'hotp') {
+      code = await issueNextHotpCode(entry, codeEl.closest('.totp-item') as HTMLElement);
     } else {
       const response = await chrome.runtime.sendMessage({
         type: 'GENERATE_TOTP_CODE',
@@ -1250,6 +1393,14 @@ import { resolveSiteIcon } from '../site-icons';
       }
     }
     if (!code) return;
+    await writeCodeToClipboard(code, codeEl, btnEl);
+  }
+
+  async function writeCodeToClipboard(
+    code: string,
+    codeEl: HTMLElement,
+    btnEl?: HTMLButtonElement
+  ): Promise<void> {
     try {
       await navigator.clipboard.writeText(code);
       const target = btnEl || codeEl;

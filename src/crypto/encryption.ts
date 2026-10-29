@@ -2,6 +2,7 @@ import { pbkdf2 } from '@noble/hashes/pbkdf2';
 import { sha256 } from '@noble/hashes/sha256';
 import { gcm } from '@noble/ciphers/aes';
 import { randomBytes } from '@noble/hashes/utils';
+import { uint8ArrayToBase64 } from '../utils/base64';
 
 /**
  * Encryption utilities for Fenko Vault
@@ -60,8 +61,8 @@ export async function encrypt(
   const encrypted = cipher.encrypt(new TextEncoder().encode(data));
 
   return {
-    data: btoa(String.fromCharCode(...encrypted)),
-    iv: btoa(String.fromCharCode(...initVector)),
+    data: uint8ArrayToBase64(encrypted),
+    iv: uint8ArrayToBase64(initVector),
     salt: '', // Salt is handled at key derivation level
     algorithm: ENCRYPTION_CONFIG.algorithm,
   };
@@ -102,7 +103,7 @@ export async function encryptWithPassword(
   const iv = randomBytes(ENCRYPTION_CONFIG.ivLength);
 
   const result = await encrypt(data, key, iv);
-  result.salt = btoa(String.fromCharCode(...salt));
+  result.salt = uint8ArrayToBase64(salt);
 
   // Securely clear the key from memory
   key.fill(0);

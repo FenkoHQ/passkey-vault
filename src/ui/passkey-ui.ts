@@ -558,22 +558,35 @@ type PasskeySelectorResult =
   | { action: 'passthrough' };
 
 /**
+ * Settles the dialog on screen as cancelled. Only one dialog shows at a time,
+ * and a dialog that is replaced must still answer its caller and drop its
+ * listeners, or that request would hang until the page gives up on it.
+ */
+let dismissActiveDialog: (() => void) | null = null;
+
+function replaceActiveDialog(): void {
+  dismissActiveDialog?.();
+  // A dialog that already settled may still be animating out.
+  document.querySelector('.pkv-notification-container')?.remove();
+}
+
+/**
  * Show passkey selection modal
  * Returns one of: use selected passkey, cancel entirely, or pass through
  * to the next handler / native WebAuthn UI.
  */
 function showPasskeySelector(
   passkeys: PasskeyOption[],
-  rpId: string
+  rpId: string,
+  signal?: AbortSignal
 ): Promise<PasskeySelectorResult> {
   return new Promise((resolve) => {
-    injectStyles();
-
-    // Remove any existing card
-    const existingCard = document.querySelector('.pkv-notification-container');
-    if (existingCard) {
-      existingCard.remove();
+    if (signal?.aborted) {
+      resolve({ action: 'cancel' });
+      return;
     }
+    injectStyles();
+    replaceActiveDialog();
 
     let selectedId = passkeys.length > 0 ? passkeys[0].id : null;
 
@@ -647,14 +660,27 @@ function showPasskeySelector(
     });
 
     // Cleanup function
-    const cleanup = (result: PasskeySelectorResult) => {
+    let settled = false;
+    const cleanup = (result: PasskeySelectorResult, animate = true) => {
+      if (settled) return;
+      settled = true;
+      if (dismissActiveDialog === dismiss) dismissActiveDialog = null;
+      signal?.removeEventListener('abort', dismiss);
       document.removeEventListener('keydown', handleEscape);
+      if (!animate) {
+        container.remove();
+        resolve(result);
+        return;
+      }
       container.style.animation = 'pkv-slideOutRight 0.2s ease-in forwards';
       setTimeout(() => {
         container.remove();
         resolve(result);
       }, 200);
     };
+    const dismiss = () => cleanup({ action: 'cancel' }, false);
+    dismissActiveDialog = dismiss;
+    signal?.addEventListener('abort', dismiss);
 
     // Handle cancel
     const cancelBtn = container.querySelector('#pkv-cancel');
@@ -693,14 +719,18 @@ function showPasskeySelector(
  * gesture, a page can drive a logged-in "add a passkey" flow and register an
  * attacker-triggered credential. Resolves true only if the user clicks Create.
  */
-function showPasskeyCreateConfirm(rpId: string, userName: string): Promise<boolean> {
+function showPasskeyCreateConfirm(
+  rpId: string,
+  userName: string,
+  signal?: AbortSignal
+): Promise<boolean> {
   return new Promise((resolve) => {
-    injectStyles();
-
-    const existingCard = document.querySelector('.pkv-notification-container');
-    if (existingCard) {
-      existingCard.remove();
+    if (signal?.aborted) {
+      resolve(false);
+      return;
     }
+    injectStyles();
+    replaceActiveDialog();
 
     const container = document.createElement('div');
     container.className = 'pkv-notification-container';
@@ -723,14 +753,27 @@ function showPasskeyCreateConfirm(rpId: string, userName: string): Promise<boole
 
     document.body.appendChild(container);
 
-    const cleanup = (result: boolean) => {
+    let settled = false;
+    const cleanup = (result: boolean, animate = true) => {
+      if (settled) return;
+      settled = true;
+      if (dismissActiveDialog === dismiss) dismissActiveDialog = null;
+      signal?.removeEventListener('abort', dismiss);
       document.removeEventListener('keydown', handleEscape);
+      if (!animate) {
+        container.remove();
+        resolve(result);
+        return;
+      }
       container.style.animation = 'pkv-slideOutRight 0.2s ease-in forwards';
       setTimeout(() => {
         container.remove();
         resolve(result);
       }, 200);
     };
+    const dismiss = () => cleanup(false, false);
+    dismissActiveDialog = dismiss;
+    signal?.addEventListener('abort', dismiss);
 
     container.querySelector('#pkv-cancel')?.addEventListener('click', (event) => {
       if (event.isTrusted) cleanup(false);

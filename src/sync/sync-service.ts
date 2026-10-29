@@ -2,7 +2,6 @@ import { ChunkCollector, Delivery, splitMessage, MAX_EVENT_BYTES } from './trans
 import {
   NOSTR_EVENT_KIND,
   SYNC_BUNDLE_VERSION,
-  SYNC_KEY_PREFIX,
   SYNC_EVENT_PREFIX,
   SYNC_SEND_INTERVAL_MS,
   SYNC_LOOKBACK_SECONDS,
@@ -12,6 +11,13 @@ import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
 import { logger } from '../utils/logger';
 import { type SyncDeletion } from './merge';
+import { deriveChainKeys, legacyChainId, wipeChainKeys, type ChainKeys } from './chain-keys';
+import {
+  LEGACY_CLEANUP_KEY,
+  deleteLegacyEvents,
+  nextLegacyCleanup,
+  startLegacyCleanup,
+} from './legacy-chain';
 
 const RECONNECT_DELAY = 5000;
 const MAX_RECONNECT_DELAY = 60000;
@@ -115,6 +121,12 @@ export interface SyncVaultAdapter {
     sourceDeviceId: string,
     deletions?: SyncDeletion[]
   ): Promise<void>;
+  /**
+   * Store `chainId` wherever the saved sync config still holds the protocol
+   * v4 ID `legacyChainId` of the same seed. Called before the first relay
+   * connection on the new ID; a failure is logged and retried next start.
+   */
+  saveChainId?(chainId: string, legacyChainId: string): Promise<void>;
 }
 
 // Per-relay state exposed in debug info
@@ -198,6 +210,11 @@ export class SyncService {
   private isConnected = false;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private firstConnectResolve: (() => void) | null = null;
+  // Initializations run one at a time. Each one, and each disconnect, bumps the
+  // generation so a superseded run stops at its next await.
+  private initGeneration = 0;
+  private initQueue: Promise<void> = Promise.resolve();
+  private pendingInit: { key: string; promise: Promise<void> } | null = null;
   private debugLogs: DebugLogEntry[] = [];
   private lastBroadcastTime = 0;
   private pendingMessages = new Map<string, SyncMessage>();
@@ -309,37 +326,217 @@ export class SyncService {
     };
   }
 
+  /**
+   * Connect this device to the chain `seedHash` belongs to. `chainId` is the
+   * ID the caller has stored: the chain keys, the ID included, are derived
+   * from the seed, and a stored protocol v4 ID is replaced through the vault
+   * adapter's saveChainId(). `keys`, when the caller has just derived them
+   * for this seed, saves a second scrypt; this service then owns and wipes
+   * them.
+   */
   async initialize(
     chainId: string,
     deviceId: string,
     seedHash: string,
     deviceName?: string,
-    vaultAdapter?: SyncVaultAdapter
+    vaultAdapter?: SyncVaultAdapter,
+    keys?: ChainKeys
   ): Promise<void> {
     if (vaultAdapter) this.vaultAdapter = vaultAdapter;
-    if (this.chainId === chainId && this.isConnected) {
+    // Startup, unlock and every vault change while offline can all call this
+    // at once. Share the run already connecting this chain rather than opening
+    // a second set of sockets. The seed names the chain; a caller can still
+    // hold its v4 ID.
+    const key = `${deviceId}:${seedHash}`;
+    if (this.pendingInit?.key === key) {
+      this.log('info', 'init', 'Initialization already in progress for this chain');
+      wipeChainKeys(keys);
+      return this.pendingInit.promise;
+    }
+    if (
+      !this.pendingInit &&
+      this.seedHash === seedHash &&
+      this.chainId === chainId &&
+      this.isConnected
+    ) {
       this.log('info', 'init', 'Already initialized for this chain');
+      wipeChainKeys(keys);
       return;
     }
 
-    this.chainId = chainId;
+    const generation = ++this.initGeneration;
+    // A superseded run may be waiting for its first relay; let it finish now.
+    this.firstConnectResolve?.();
+    const promise = this.initQueue.then(() =>
+      this.runInitialize(generation, chainId, deviceId, seedHash, deviceName, keys)
+    );
+    const entry = { key, promise };
+    this.pendingInit = entry;
+    this.initQueue = promise.catch(() => {});
+    try {
+      await promise;
+    } finally {
+      if (this.pendingInit === entry) this.pendingInit = null;
+    }
+  }
+
+  private async runInitialize(
+    generation: number,
+    storedChainId: string,
+    deviceId: string,
+    seedHash: string,
+    deviceName?: string,
+    keys?: ChainKeys
+  ): Promise<void> {
+    if (generation !== this.initGeneration) {
+      wipeChainKeys(keys);
+      return;
+    }
+    if (
+      this.seedHash === seedHash &&
+      this.chainId &&
+      storedChainId !== this.chainId &&
+      storedChainId === legacyChainId(seedHash)
+    ) {
+      // Running on the v5 ID while the config still holds the v4 one: an
+      // earlier attempt to store it failed. Retry that, nothing else.
+      await this.adoptChainId(this.chainId, storedChainId);
+      if (generation !== this.initGeneration) {
+        wipeChainKeys(keys);
+        return;
+      }
+      storedChainId = this.chainId;
+    }
+    if (this.seedHash === seedHash && this.chainId === storedChainId && this.isConnected) {
+      this.log('info', 'init', 'Already initialized for this chain');
+      wipeChainKeys(keys);
+      return;
+    }
+
+    // Same chain, relays still retrying in the background: reconnect them now
+    // instead of replacing them, which would orphan their sockets and timers.
+    if (
+      this.chainId === storedChainId &&
+      this.deviceId === deviceId &&
+      this.seedHash === seedHash &&
+      this.encryptionKey &&
+      this.relayConnections.length > 0
+    ) {
+      wipeChainKeys(keys);
+      this.log('info', 'init', 'Reconnecting existing relay connections');
+      await this.waitForFirstRelay(() => {
+        for (const conn of this.relayConnections) {
+          if (conn.reconnectTimer) {
+            clearTimeout(conn.reconnectTimer);
+            conn.reconnectTimer = null;
+          }
+          this.connectRelay(conn);
+        }
+      });
+      return;
+    }
+
+    this.closeRelayConnections();
+    this.wipeKeys();
+    this.chainId = null;
     this.deviceId = deviceId;
-    this.seedHash = seedHash;
     this.deviceName = deviceName || 'Unknown Device';
 
     this.log('info', 'init', 'Initializing sync service', {
-      chainId: chainId.substring(0, 8) + '...',
       deviceId: deviceId.substring(0, 8) + '...',
       deviceName: this.deviceName,
     });
 
-    await this.deriveKeys(seedHash);
+    if (keys) {
+      this.useKeys(seedHash, keys);
+    } else {
+      await this.deriveKeys(seedHash);
+    }
+    if (generation !== this.initGeneration) {
+      // Disconnected (or re-initialized) while deriving. A newer run derives
+      // its own keys after this one, so never leave these in memory.
+      this.wipeKeys();
+      this.chainId = null;
+      return;
+    }
     this.log('info', 'crypto', 'Derived encryption and signing keys');
 
+    const chainId = this.chainId!;
+    let migrated = false;
+    if (storedChainId !== chainId) {
+      // Only the v4 ID of this same seed is replaced. Anything else means the
+      // stored config and seed disagree; syncing would pick one at random.
+      if (storedChainId !== legacyChainId(seedHash)) {
+        this.wipeKeys();
+        this.chainId = null;
+        throw new Error('The stored sync chain does not match its recovery phrase');
+      }
+      await this.adoptChainId(chainId, storedChainId);
+      if (generation !== this.initGeneration) return;
+      migrated = true;
+    }
+
     const relayUrls = await this.loadRelayUrls();
+    if (generation !== this.initGeneration) return;
     await this.connectAll(relayUrls);
 
-    this.log('info', 'init', 'Initialized for chain', { chainId: chainId.substring(0, 8) + '...' });
+    this.log('info', 'init', 'Initialized for chain', {
+      chainId: chainId.substring(0, 8) + '...',
+      migrated,
+    });
+    if (generation === this.initGeneration) void this.cleanUpLegacyChain(seedHash, relayUrls);
+  }
+
+  /**
+   * First start on protocol v5 with a v4 config. The cleanup record goes
+   * first: once the new ID is stored, nothing else would tell this device
+   * that its v4 events are still on the relays.
+   */
+  private async adoptChainId(chainId: string, storedChainId: string): Promise<void> {
+    this.log('info', 'init', 'Moving to the v5 chain ID', {
+      chainId: chainId.substring(0, 8) + '...',
+    });
+    try {
+      const stored = (await chrome.storage.local.get(LEGACY_CLEANUP_KEY))[LEGACY_CLEANUP_KEY];
+      const cleanup = startLegacyCleanup(stored, chainId, this.deviceId!);
+      if (cleanup) await chrome.storage.local.set({ [LEGACY_CLEANUP_KEY]: cleanup });
+      await this.vaultAdapter?.saveChainId?.(chainId, storedChainId);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.log('error', 'init', 'Failed to store the v5 chain ID', { error: errorMessage });
+    }
+  }
+
+  /**
+   * Ask the relays to drop this device's v4 events (see legacy-chain.ts).
+   * Runs beside sync, never in its way: failures are only logged, and the
+   * attempt is counted before it starts so a crash cannot repeat it forever.
+   */
+  private async cleanUpLegacyChain(seedHash: string, relayUrls: string[]): Promise<void> {
+    try {
+      const chainId = this.chainId;
+      const deviceId = this.deviceId;
+      const stored = (await chrome.storage.local.get(LEGACY_CLEANUP_KEY))[LEGACY_CLEANUP_KEY];
+      const next = nextLegacyCleanup(stored, chainId, deviceId);
+      if (!next) return;
+      await chrome.storage.local.set({ [LEGACY_CLEANUP_KEY]: next });
+      const accepted = await deleteLegacyEvents({
+        seedHash,
+        deviceId: deviceId!,
+        relays: relayUrls,
+        log: (message, data) => this.log('warn', 'cleanup', message, data),
+      });
+      this.log('info', 'cleanup', 'Requested deletion of v4 relay events', {
+        accepted,
+        attempt: next.attempts,
+      });
+      if (accepted > 0) {
+        await chrome.storage.local.set({ [LEGACY_CLEANUP_KEY]: { ...next, done: true } });
+      }
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.log('error', 'cleanup', 'Legacy cleanup failed', { error: errorMessage });
+    }
   }
 
   private async vaultSnapshot(): Promise<{
@@ -352,56 +549,23 @@ export class SyncService {
   }
 
   private async deriveKeys(seedHash: string): Promise<void> {
-    const encoder = new TextEncoder();
-    const keyMaterial = await crypto.subtle.importKey(
-      'raw',
-      encoder.encode(seedHash),
-      'PBKDF2',
-      false,
-      ['deriveKey', 'deriveBits']
-    );
+    this.useKeys(seedHash, await deriveChainKeys(seedHash));
+  }
 
-    // The PBKDF2 salt MUST be deterministic from the shared chain so that every
-    // device holding the mnemonic derives the SAME encryption/signing keys.
-    // A previous "random salt per device" attempt broke this: the salt was
-    // generated independently on each device and never transmitted, so peers
-    // derived different keys and could never decrypt each other's events.
-    // Different chains still get different keys because chainId derives from the
-    // seed. (Per-chain, not per-device — that is the whole point of sync.)
-    const encryptionSalt = encoder.encode(`${SYNC_KEY_PREFIX}-${this.chainId}-enc`);
-    const nostrSalt = encoder.encode(`${SYNC_KEY_PREFIX}-${this.chainId}-nostr`);
-
-    // Derive AES encryption key for message encryption
-    this.encryptionKey = await crypto.subtle.deriveKey(
-      {
-        name: 'PBKDF2',
-        salt: encryptionSalt,
-        iterations: 100000,
-        hash: 'SHA-256',
-      },
-      keyMaterial,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt', 'decrypt']
-    );
-
-    // Derive secp256k1 private key for Nostr signing
-    const nostrKeyBits = await crypto.subtle.deriveBits(
-      {
-        name: 'PBKDF2',
-        salt: nostrSalt,
-        iterations: 100000,
-        hash: 'SHA-256',
-      },
-      keyMaterial,
-      256
-    );
-
-    this.nostrPrivateKey = new Uint8Array(nostrKeyBits);
-
-    // Use schnorr.getPublicKey for x-only pubkey (32 bytes, required by Nostr/BIP340)
-    const xOnlyPubKey = secp256k1.schnorr.getPublicKey(this.nostrPrivateKey);
-    this.nostrPublicKey = bytesToHex(xOnlyPubKey);
+  private useKeys(seedHash: string, keys: ChainKeys): void {
+    let nostrPublicKey: string;
+    try {
+      // x-only public key (32 bytes), as Nostr/BIP340 requires
+      nostrPublicKey = bytesToHex(secp256k1.schnorr.getPublicKey(keys.nostrPrivateKey));
+    } catch (error) {
+      wipeChainKeys(keys);
+      throw error;
+    }
+    this.seedHash = seedHash;
+    this.chainId = keys.chainId;
+    this.encryptionKey = keys.encryptionKey;
+    this.nostrPrivateKey = keys.nostrPrivateKey;
+    this.nostrPublicKey = nostrPublicKey;
 
     this.log('info', 'crypto', 'Derived Nostr keypair', {
       pubkeyPrefix: this.nostrPublicKey.substring(0, 8) + '...',
@@ -435,6 +599,15 @@ export class SyncService {
 
     this.log('info', 'ws', 'Connecting to all relays', { count: urls.length, relays: urls });
 
+    return this.waitForFirstRelay(() => {
+      for (const conn of this.relayConnections) {
+        this.connectRelay(conn);
+      }
+    });
+  }
+
+  // Run `connect`, then resolve once any relay opens or the grace period ends.
+  private waitForFirstRelay(connect: () => void): Promise<void> {
     return new Promise((resolve) => {
       let settled = false;
       const settle = () => {
@@ -453,9 +626,7 @@ export class SyncService {
           settle();
         }
       }, 12000);
-      for (const conn of this.relayConnections) {
-        this.connectRelay(conn);
-      }
+      connect();
     });
   }
 
@@ -497,6 +668,7 @@ export class SyncService {
 
     ws.onopen = () => {
       clearTimeout(timeoutId);
+      if (conn.ws !== ws) return; // Closed by disconnect or re-initialization
       this.log('info', 'ws', 'WebSocket connected', { relay: conn.url });
       conn.reconnectDelay = RECONNECT_DELAY;
       this.isConnected = true;
@@ -1400,38 +1572,16 @@ export class SyncService {
     this.knownDevices.clear();
     this.lastBroadcastTime = 0;
 
+    // Stop any initialization still in flight at its next await.
+    this.initGeneration++;
+    this.pendingInit = null;
+
     // chainId is cleared below, which stops onclose handlers from reconnecting,
     // but clear it before closing sockets so no handler races us
     this.chainId = null;
 
-    for (const conn of this.relayConnections) {
-      if (conn.reconnectTimer) {
-        clearTimeout(conn.reconnectTimer);
-        conn.reconnectTimer = null;
-      }
-      if (conn.ws) {
-        if (conn.subId && conn.ws.readyState === WebSocket.OPEN) {
-          try {
-            conn.ws.send(JSON.stringify(['CLOSE', conn.subId]));
-          } catch {
-            // Ignore errors when closing subscription - socket may already be closing
-          }
-        }
-        conn.ws.close();
-        conn.ws = null;
-      }
-    }
-    this.relayConnections = [];
-    this.firstConnectResolve = null;
-
-    // SECURITY FIX: Wipe sensitive keys from memory
-    if (this.nostrPrivateKey) {
-      crypto.getRandomValues(this.nostrPrivateKey);
-      this.nostrPrivateKey.fill(0);
-      this.nostrPrivateKey = null;
-    }
-    this.encryptionKey = null;
-    this.seedHash = null;
+    this.closeRelayConnections();
+    this.wipeKeys();
 
     this.deviceId = null;
     this.isConnected = false;
@@ -1439,6 +1589,44 @@ export class SyncService {
     this.messageSequence = 0;
 
     this.log('info', 'ws', 'Disconnected');
+  }
+
+  // Close every relay socket and cancel its reconnect timer. conn.ws is cleared
+  // before close() so the socket's onclose does not schedule a reconnect.
+  private closeRelayConnections(): void {
+    for (const conn of this.relayConnections) {
+      if (conn.reconnectTimer) {
+        clearTimeout(conn.reconnectTimer);
+        conn.reconnectTimer = null;
+      }
+      const ws = conn.ws;
+      if (ws) {
+        conn.ws = null;
+        if (conn.subId && ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify(['CLOSE', conn.subId]));
+          } catch {
+            // Ignore errors when closing subscription - socket may already be closing
+          }
+        }
+        ws.close();
+      }
+    }
+    this.relayConnections = [];
+    this.isConnected = false;
+    // Release an initialization waiting for these relays to open
+    this.firstConnectResolve?.();
+  }
+
+  // SECURITY FIX: Wipe sensitive keys from memory
+  private wipeKeys(): void {
+    if (this.nostrPrivateKey) {
+      crypto.getRandomValues(this.nostrPrivateKey);
+      this.nostrPrivateKey.fill(0);
+      this.nostrPrivateKey = null;
+    }
+    this.encryptionKey = null;
+    this.seedHash = null;
   }
 }
 

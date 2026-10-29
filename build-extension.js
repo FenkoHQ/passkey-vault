@@ -162,7 +162,8 @@ async function buildForTarget(browserTarget) {
   } else {
     manifest.background.service_worker = 'background.js';
     manifest.content_scripts[0].js = ['content.js'];
-    manifest.web_accessible_resources[0].resources = ['webauthn-inject.js'];
+    // The page shim runs as a MAIN-world content script, before page scripts.
+    manifest.content_scripts[1].js = ['webauthn-inject.js'];
   }
 
   fs.writeFileSync(`${distDir}/manifest.json`, JSON.stringify(manifest, null, 2));

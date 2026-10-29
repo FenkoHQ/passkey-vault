@@ -8,7 +8,6 @@ import { cleanSyncConfig } from '../../../src/sync/config';
 import {
   NOSTR_EVENT_KIND,
   SYNC_BUNDLE_VERSION,
-  SYNC_KEY_PREFIX,
   SYNC_EVENT_PREFIX,
   SYNC_SEND_INTERVAL_MS,
   SYNC_HEARTBEAT_MS,
@@ -23,6 +22,19 @@ import {
   SYNC_DELETIONS_KEY,
   type SyncDeletion,
 } from '../../../src/sync/merge';
+import { repairCredentialIds } from '../../../src/sync/credential-ids';
+import {
+  deriveChainKeys,
+  legacyChainId,
+  wipeChainKeys,
+  type ChainKeys,
+} from '../../../src/sync/chain-keys';
+import {
+  LEGACY_CLEANUP_KEY,
+  deleteLegacyEvents,
+  nextLegacyCleanup,
+  startLegacyCleanup,
+} from '../../../src/sync/legacy-chain';
 import * as secp256k1 from '@noble/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
@@ -274,6 +286,22 @@ function mergeNativeSnapshot(snapshotJson?: string): void {
   } catch {
     // A bad native snapshot must not stop the WebView app from opening.
   }
+}
+
+/**
+ * Re-key passkeys imported with a Bitwarden-encoded credential ID (issue #17).
+ * Deletion records go first so the mirror to native carries both. Returns
+ * whether anything changed, so callers can broadcast the repair.
+ */
+function repairPasskeyIds(): boolean {
+  const repair = repairCredentialIds(getPasskeys());
+  if (repair.deletions.length === 0) return false;
+  localStorage.setItem(
+    SYNC_DELETIONS_KEY,
+    JSON.stringify(mergeDeletions(loadJson(SYNC_DELETIONS_KEY, []), repair.deletions))
+  );
+  setPasskeys(repair.passkeys);
+  return true;
 }
 
 function getTotpEntries(): StoredTotpEntry[] {
@@ -619,23 +647,39 @@ async function addTotpManual(form: HTMLFormElement): Promise<void> {
 }
 
 function codeFor(entry: StoredTotpEntry): { code: string; remaining: number } {
-  const secret = base64ToBytes(entry.secretB64);
-  const code =
-    entry.type === 'hotp'
-      ? generateHotp({
-          secret,
-          algorithm: entry.algorithm,
-          digits: entry.digits,
-          counter: entry.counter,
-        })
-      : generateTotp({
-          secret,
-          algorithm: entry.algorithm,
-          digits: entry.digits,
-          period: entry.period,
-          timestamp: Date.now(),
-        });
+  const code = generateTotp({
+    secret: base64ToBytes(entry.secretB64),
+    algorithm: entry.algorithm,
+    digits: entry.digits,
+    period: entry.period,
+    timestamp: Date.now(),
+  });
   return { code, remaining: timeRemaining(Date.now(), entry.period || 30) };
+}
+
+// HOTP codes are single-use (RFC 4226), so one is issued only on an explicit
+// tap: the code for the stored counter is returned and counter + 1 is saved
+// and synced (peers merge counters by max). Issued codes stay on screen for
+// this session, so re-rendering or copying again consumes nothing.
+const issuedHotpCodes = new Map<string, string>();
+
+function issueHotpCode(id: string): string | null {
+  const entries = getTotpEntries();
+  const index = entries.findIndex((e) => e.id === id);
+  const entry = entries[index];
+  if (!entry || entry.type !== 'hotp') return null;
+  const counter = entry.counter || 0;
+  const code = generateHotp({
+    secret: base64ToBytes(entry.secretB64),
+    algorithm: entry.algorithm,
+    digits: entry.digits,
+    counter,
+  });
+  entries[index] = { ...entry, counter: counter + 1, lastUsed: Date.now() };
+  setTotpEntries(entries);
+  issuedHotpCodes.set(id, code);
+  void state.sync?.broadcastUpdate();
+  return code;
 }
 
 async function deriveBackupKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
@@ -861,6 +905,7 @@ async function importVault(raw: string): Promise<void> {
   const totpMap = new Map(getTotpEntries().map((item) => [item.id, item]));
   for (const entry of totpEntries) totpMap.set(entry.id, entry);
   setPasskeys(Array.from(passkeyMap.values()));
+  repairPasskeyIds();
   setTotpEntries(Array.from(totpMap.values()));
   if (payload.syncConfig) setSyncConfig(payload.syncConfig);
   if (payload.syncDevices) saveJson(SYNC_DEVICES_KEY, payload.syncDevices);
@@ -904,7 +949,11 @@ class AndroidSync {
   public connected = false;
   public lastError = '';
 
-  constructor(private config: SyncConfig) {}
+  /** `keys`, just derived for this config's seed, saves a second scrypt; they are wiped here. */
+  constructor(
+    private config: SyncConfig,
+    private keys: ChainKeys | null = null
+  ) {}
 
   async start(): Promise<void> {
     this.stopped = false;
@@ -913,10 +962,56 @@ class AndroidSync {
       !this.config.chainId ||
       !this.config.deviceId ||
       !this.config.seedHash
-    )
+    ) {
+      wipeChainKeys(this.keys);
+      this.keys = null;
       return;
-    await this.deriveKeys();
+    }
+    // A sync failure must not stop the app from opening (boot awaits this).
+    let chainId: string;
+    try {
+      chainId = await this.deriveKeys();
+    } catch (error) {
+      this.lastError = `Sync could not start: ${String(error)}`;
+      setStatus(this.lastError, 'bad');
+      return;
+    }
+    if (this.stopped) {
+      this.wipeKeys();
+      return;
+    }
+    if (chainId !== this.config.chainId) {
+      // Only the v4 ID of this same seed is replaced; anything else means the
+      // stored config and seed disagree.
+      if (this.config.chainId !== legacyChainId(this.config.seedHash)) {
+        this.wipeKeys();
+        this.lastError =
+          'The stored sync chain does not match its recovery phrase. Leave and join again.';
+        setStatus(this.lastError, 'bad');
+        return;
+      }
+      this.config = adoptChainId(this.config, chainId);
+    }
     this.connect();
+    void this.cleanUpLegacyChain().catch((error) => console.warn('Legacy cleanup failed', error));
+  }
+
+  /**
+   * Ask the relays to drop this device's v4 events (see legacy-chain.ts),
+   * beside sync and never in its way. The attempt is counted before it starts.
+   */
+  private async cleanUpLegacyChain(): Promise<void> {
+    const { chainId, deviceId, seedHash } = this.config;
+    const next = nextLegacyCleanup(loadJson(LEGACY_CLEANUP_KEY, null), chainId, deviceId);
+    if (!next || !seedHash || !deviceId) return;
+    saveJson(LEGACY_CLEANUP_KEY, next);
+    const accepted = await deleteLegacyEvents({
+      seedHash,
+      deviceId,
+      relays: getRelays(),
+      log: (message, data) => console.warn(message, data || ''),
+    });
+    if (accepted > 0) saveJson(LEGACY_CLEANUP_KEY, { ...next, done: true });
   }
 
   stop(): void {
@@ -939,33 +1034,30 @@ class AndroidSync {
     this.ws?.close();
     this.ws = null;
     this.connected = false;
+    this.wipeKeys();
   }
 
-  private async deriveKeys(): Promise<void> {
-    const encoder = new TextEncoder();
-    const keyMaterial = await crypto.subtle.importKey(
-      'raw',
-      encoder.encode(this.config.seedHash || ''),
-      'PBKDF2',
-      false,
-      ['deriveKey', 'deriveBits']
-    );
-    const encryptionSalt = encoder.encode(`${SYNC_KEY_PREFIX}-${this.config.chainId}-enc`);
-    const nostrSalt = encoder.encode(`${SYNC_KEY_PREFIX}-${this.config.chainId}-nostr`);
-    this.encryptionKey = await crypto.subtle.deriveKey(
-      { name: 'PBKDF2', salt: encryptionSalt, iterations: 100000, hash: 'SHA-256' },
-      keyMaterial,
-      { name: 'AES-GCM', length: 256 },
-      false,
-      ['encrypt', 'decrypt']
-    );
-    const bits = await crypto.subtle.deriveBits(
-      { name: 'PBKDF2', salt: nostrSalt, iterations: 100000, hash: 'SHA-256' },
-      keyMaterial,
-      256
-    );
-    this.nostrPrivateKey = new Uint8Array(bits);
-    this.nostrPublicKey = bytesToHex(secp256k1.schnorr.getPublicKey(this.nostrPrivateKey));
+  /** Derive (or take the given) chain keys for the config's seed; returns their chain ID. */
+  private async deriveKeys(): Promise<string> {
+    const keys = this.keys ?? (await deriveChainKeys(this.config.seedHash || ''));
+    this.keys = null;
+    try {
+      this.nostrPublicKey = bytesToHex(secp256k1.schnorr.getPublicKey(keys.nostrPrivateKey));
+    } catch (error) {
+      wipeChainKeys(keys);
+      throw error;
+    }
+    this.encryptionKey = keys.encryptionKey;
+    this.nostrPrivateKey = keys.nostrPrivateKey;
+    return keys.chainId;
+  }
+
+  private wipeKeys(): void {
+    this.nostrPrivateKey?.fill(0);
+    this.nostrPrivateKey = null;
+    this.encryptionKey = null;
+    wipeChainKeys(this.keys);
+    this.keys = null;
   }
 
   private connect(): void {
@@ -1412,6 +1504,8 @@ class AndroidSync {
     saveJson(SYNC_DELETIONS_KEY, deletions);
     setPasskeys(mergeRecords(getPasskeys(), passkeys, deletions, 'passkey'));
     setTotpEntries(mergeRecords(getTotpEntries(), totpEntries, deletions, 'totp'));
+    // A peer on an older build can still send Bitwarden-encoded IDs.
+    if (repairPasskeyIds()) void this.broadcastUpdate();
   }
 }
 
@@ -1478,7 +1572,8 @@ async function configureSync(
   const seedBytes = mnemonicToBytes(mnemonic);
   const keypair = await deriveEd25519Keypair(seedBytes);
   const seedHash = await sha256Hex(seedBytes);
-  const chainId = seedHash.slice(0, 32);
+  const keys = await deriveChainKeys(seedHash);
+  const chainId = keys.chainId;
   const deviceId = uuid();
   const publicKey = bytesToHex(keypair.publicKey);
   const device: SyncDevice = {
@@ -1505,18 +1600,45 @@ async function configureSync(
   };
   setSyncConfig(config);
   saveJson(SYNC_DEVICES_KEY, chain);
-  await bootSync();
+  await bootSync(keys);
   if (created) await state.sync?.broadcastUpdate();
 }
 
-async function bootSync(): Promise<void> {
+async function bootSync(keys?: ChainKeys): Promise<void> {
   state.sync?.stop();
   state.sync = null;
   const config = getSyncConfig();
   if (config.enabled) {
-    state.sync = new AndroidSync(config);
+    state.sync = new AndroidSync(config, keys);
     await state.sync.start();
+  } else {
+    wipeChainKeys(keys);
   }
+}
+
+/**
+ * Sync protocol v5 replaced the chain ID, which v4 took straight from the
+ * seed (see sync/chain-keys.ts). Rewrite every stored copy that still holds
+ * this seed's v4 ID. The config goes last: its v4 ID is what starts this, so
+ * an interrupted run is finished by the next start. Before it, the cleanup of
+ * the v4 relay events is recorded, since once the new ID is stored nothing
+ * else says they are still there. Returns the config to sync with.
+ */
+function adoptChainId(config: SyncConfig, chainId: string): SyncConfig {
+  const legacy = legacyChainId(config.seedHash || '');
+  const cleanup = startLegacyCleanup(
+    loadJson(LEGACY_CLEANUP_KEY, null),
+    chainId,
+    config.deviceId || ''
+  );
+  if (cleanup) saveJson(LEGACY_CLEANUP_KEY, cleanup);
+  const chain = loadJson<SyncChain | null>(SYNC_DEVICES_KEY, null);
+  if (chain?.id === legacy) saveJson(SYNC_DEVICES_KEY, { ...chain, id: chainId });
+  const stored = getSyncConfig();
+  if (stored.chainId === legacy && stored.seedHash === config.seedHash) {
+    setSyncConfig({ ...stored, chainId });
+  }
+  return { ...config, chainId };
 }
 
 function leaveSync(): void {
@@ -1530,6 +1652,7 @@ function leaveSync(): void {
     seedHash: null,
   });
   localStorage.removeItem(SYNC_DEVICES_KEY);
+  localStorage.removeItem(LEGACY_CLEANUP_KEY);
   pendingMnemonic = null;
   setStatus('Sync disabled.');
   render();
@@ -1730,6 +1853,7 @@ function renderVault(): string {
 }
 
 function renderTotpItem(entry: StoredTotpEntry): string {
+  if (entry.type === 'hotp') return renderHotpItem(entry);
   const { code, remaining } = codeFor(entry);
   const width = Math.max(2, (remaining / (entry.period || 30)) * 100);
   const expanded = state.expanded.has(entry.id);
@@ -1749,6 +1873,37 @@ function renderTotpItem(entry: StoredTotpEntry): string {
         <p class="muted">${entry.type.toUpperCase()} &middot; ${entry.algorithm} &middot; ${entry.digits} digits &middot; ${entry.period}s period &middot; ${remaining}s left</p>
         <p class="muted">Added ${new Date(entry.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}</p>
         <button data-copy="${escapeHtml(code)}">Copy code</button>
+      </div>`
+          : ''
+      }
+    </article>
+  `;
+}
+
+function renderHotpItem(entry: StoredTotpEntry): string {
+  const code = issuedHotpCodes.get(entry.id);
+  const id = escapeHtml(entry.id);
+  const expanded = state.expanded.has(entry.id);
+  return `
+    <article class="item totp-card" data-item-kind="totp" data-item-id="${id}" data-expand="${id}">
+      <div class="item-head">
+        <div class="totp-text">
+          <h3>${escapeHtml(entry.issuer || 'Unknown issuer')}</h3>
+          <p class="muted">${escapeHtml(entry.account || '')}</p>
+        </div>
+        ${
+          code
+            ? `<button class="code code-compact" data-copy="${escapeHtml(code)}">${code}</button>`
+            : `<button class="code code-compact" data-hotp-next="${id}">Get code</button>`
+        }
+      </div>
+      ${
+        expanded
+          ? `<div class="totp-details">
+        <p class="muted">HOTP &middot; ${entry.algorithm} &middot; ${entry.digits} digits &middot; counter ${entry.counter || 0}</p>
+        <p class="muted">Added ${new Date(entry.createdAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+        ${code ? `<button data-copy="${escapeHtml(code)}">Copy code</button>` : ''}
+        <button data-hotp-next="${id}">Next code</button>
       </div>`
           : ''
       }
@@ -2092,6 +2247,13 @@ function bindVault(): void {
   document.querySelectorAll<HTMLElement>('[data-copy]').forEach((button) => {
     button.addEventListener('click', () => copyText(button.dataset.copy || ''));
   });
+  document.querySelectorAll<HTMLElement>('[data-hotp-next]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const code = issueHotpCode(button.dataset.hotpNext || '');
+      if (code) copyText(code);
+      updateTabContent();
+    });
+  });
   document.querySelectorAll<HTMLElement>('[data-item-kind]').forEach((item) => {
     bindLongPress(item, () => {
       void requestDelete(item.dataset.itemKind as 'passkey' | 'totp', item.dataset.itemId || '');
@@ -2287,6 +2449,7 @@ let pointerDown = false;
 window.__fenkoNativeRefresh = (snapshot?: string) => {
   const before = JSON.stringify([getPasskeys(), getTotpEntries()]);
   mergeNativeSnapshot(snapshot);
+  repairPasskeyIds();
   if (before !== JSON.stringify([getPasskeys(), getTotpEntries()])) {
     void state.sync?.broadcastUpdate();
     render();
@@ -2297,8 +2460,10 @@ async function boot(): Promise<void> {
   localStorage.removeItem(LEGACY_LOCK_KEY);
   purgeRecycleBin();
   mergeNativeSnapshot();
+  const repaired = repairPasskeyIds();
   state.unlocked = !localStorage.getItem(LOCKED_FLAG_KEY);
   if (state.unlocked) await bootSync();
+  if (repaired) void state.sync?.broadcastUpdate();
   render();
   mirrorVaultToAndroid();
   setupPullToRefresh();

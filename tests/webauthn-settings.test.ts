@@ -1,5 +1,8 @@
 import {
+  BACKUP_FLAGS_SNAPSHOT_KEY,
   DEFAULT_WEBAUTHN_FLAGS,
+  ensureBackupFlagsSnapshot,
+  preUpgradeBackupFlags,
   WEBAUTHN_FLAGS_KEY,
   normalizeWebAuthnFlags,
   loadWebAuthnFlags,
@@ -32,10 +35,10 @@ describe('normalizeWebAuthnFlags', () => {
     ).toEqual(DEFAULT_WEBAUTHN_FLAGS);
   });
 
-  it('defaults to the behaviour shipped before the setting existed', () => {
+  it('defaults to the shipped behaviour, with new passkeys backup eligible', () => {
     expect(DEFAULT_WEBAUTHN_FLAGS).toEqual({
       userVerification: 'always',
-      backupEligible: false,
+      backupEligible: true,
       backupState: false,
       signCounter: 'increment',
       attachment: 'cross-platform',
@@ -115,13 +118,77 @@ describe('storage', () => {
     expect(storage.set).toHaveBeenCalledWith({
       [WEBAUTHN_FLAGS_KEY]: {
         userVerification: 'never',
-        backupEligible: false,
-        backupState: false,
+        backupEligible: true,
+        backupState: true,
         signCounter: 'increment',
         attachment: 'cross-platform',
         aaguid: 'vault',
       },
     });
     expect(written.attachment).toBe('cross-platform');
+  });
+});
+
+describe('pre-upgrade backup flags', () => {
+  const storage = chrome.storage.local as unknown as {
+    get: jest.Mock;
+    set: jest.Mock;
+  };
+
+  beforeEach(() => {
+    storage.get.mockReset();
+    storage.set.mockReset();
+    storage.set.mockResolvedValue(undefined);
+  });
+
+  it('reads untouched settings as the old all-off defaults, not the new ones', () => {
+    expect(preUpgradeBackupFlags(undefined)).toEqual({
+      backupEligible: false,
+      backupState: false,
+    });
+    expect(preUpgradeBackupFlags({ userVerification: 'never' })).toEqual({
+      backupEligible: false,
+      backupState: false,
+    });
+  });
+
+  it('keeps the toggles a user turned on to make a site work', () => {
+    expect(preUpgradeBackupFlags({ backupEligible: true, backupState: true })).toEqual({
+      backupEligible: true,
+      backupState: true,
+    });
+    expect(preUpgradeBackupFlags({ backupEligible: false, backupState: true })).toEqual({
+      backupEligible: false,
+      backupState: false,
+    });
+  });
+
+  it('snapshots the stored toggles once', async () => {
+    storage.get.mockImplementation(async (keys: string[]) =>
+      keys.includes(WEBAUTHN_FLAGS_KEY)
+        ? { [WEBAUTHN_FLAGS_KEY]: { backupEligible: true, backupState: true } }
+        : {}
+    );
+
+    await expect(ensureBackupFlagsSnapshot()).resolves.toEqual({
+      backupEligible: true,
+      backupState: true,
+    });
+    expect(storage.set).toHaveBeenCalledWith({
+      [BACKUP_FLAGS_SNAPSHOT_KEY]: { backupEligible: true, backupState: true },
+    });
+  });
+
+  it('never retakes an existing snapshot', async () => {
+    storage.get.mockResolvedValue({
+      [BACKUP_FLAGS_SNAPSHOT_KEY]: { backupEligible: false, backupState: false },
+      [WEBAUTHN_FLAGS_KEY]: { backupEligible: true, backupState: true },
+    });
+
+    await expect(ensureBackupFlagsSnapshot()).resolves.toEqual({
+      backupEligible: false,
+      backupState: false,
+    });
+    expect(storage.set).not.toHaveBeenCalled();
   });
 });
