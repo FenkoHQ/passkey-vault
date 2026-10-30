@@ -19,6 +19,9 @@ jobs:
   build:
     name: Build Extension
     runs-on: ubuntu-latest
+    env:
+      # Build and validate store packages, not development builds (build-extension.js)
+      PASSKEY_VAULT_RELEASE: '1'
 
     steps:
       - name: Checkout code

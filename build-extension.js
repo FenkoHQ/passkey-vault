@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const esbuild = require('esbuild');
 
 const args = process.argv.slice(2);
@@ -16,13 +18,56 @@ if (!validTargets.includes(target)) {
 
 const targets = target === 'all' ? ['chrome', 'firefox'] : [target];
 
+// The release workflow sets this for the packages it uploads to the stores.
+// Every other build is a development build.
+const isRelease = process.env.PASSKEY_VAULT_RELEASE === '1';
+
+// Chrome gives an unpacked extension an ID made from its folder's path unless
+// the manifest has a key, and keeps the extension's storage, vault included,
+// under that ID, so a build loaded from a new folder started with an empty
+// vault. Development builds carry this public key instead, which makes every
+// one of them opnaemnnjkoolijgdldhjfinpjmhkagi wherever it is loaded from. Its
+// private half was not kept: loading unpacked needs only this, and no package
+// can be signed as this ID. Store packages keep the IDs the stores gave them.
+const DEV_PUBLIC_KEY =
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0oKeBOcHT2frHj4npujFfCF/1FfQd6Q9e+6jVheXDhypA9aVkGuAjxcEoTDo/mAAVU8dd/YsfE3Uihq2KQPPWw84l8JgaHKPSnIAjGc3MtUKiYAkjT70OFbpHY0g7O5yJMqE7DHR96CJuXY98CZv/kekSwHqmZIgTVoOPHCls3k+Z36WJGLhCFq55B8HsOKgNB3LuMWW8MH6kApBM8/5t0r450d8mUX8PvSKxAGAY6RnN6fdaQBldV4FXQCXKG3rFD62WVjaDNPdKkKqv35Eia5fRszNodQlJUxErX0/Q49jV3ryM2uYxbcefwLFrLhoaEJqqA1lcXrOlxGtLkH9uwIDAQAB';
+
+// The ID Chrome derives from a manifest key: the first 32 hex digits of the
+// key's SHA-256, each written as a letter from a to p.
+function chromeExtensionId(key) {
+  const hex = crypto.createHash('sha256').update(Buffer.from(key, 'base64')).digest('hex');
+  return [...hex.slice(0, 32)]
+    .map((digit) => String.fromCharCode(97 + parseInt(digit, 16)))
+    .join('');
+}
+
 function getVersionFromPackage() {
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
   const version = pkg.version;
   if (!/^\d+(\.\d+){0,3}$/.test(version)) {
     throw new Error(`Invalid package version for browser manifest: ${version}`);
   }
-  return { version, versionName: version };
+  // Chrome shows version_name on chrome://extensions, so a development build
+  // names its commit there, as in 0.12.0+2d873fb.
+  const commit = isRelease ? null : getCommit();
+  return { version, versionName: commit ? `${version}+${commit}` : version };
+}
+
+// HEAD's short hash, plus .dirty when tracked files have uncommitted changes.
+// Null outside a git checkout, such as a source archive.
+function getCommit() {
+  const git = (...gitArgs) =>
+    execFileSync('git', gitArgs, {
+      cwd: __dirname,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  try {
+    const hash = git('rev-parse', '--short', 'HEAD');
+    return git('status', '--porcelain', '--untracked-files=no') ? `${hash}.dirty` : hash;
+  } catch {
+    return null;
+  }
 }
 
 async function main() {
@@ -153,6 +198,9 @@ async function buildForTarget(browserTarget) {
   // Firefox/AMO doesn't support version_name (lints as a warning); Chrome does.
   if (!isFirefox) {
     manifest.version_name = versionName;
+    if (!isRelease) {
+      manifest.key = DEV_PUBLIC_KEY;
+    }
   }
 
   if (isFirefox) {
@@ -263,6 +311,9 @@ async function buildForTarget(browserTarget) {
 
   console.log(`\n🎉 ${browserTarget.toUpperCase()} Build Complete!`);
   console.log(`📦 Extension: ${manifest.name} v${versionName}`);
+  if (manifest.key) {
+    console.log(`🔑 Extension ID: ${chromeExtensionId(manifest.key)}`);
+  }
   console.log(`📁 Output: ${distDir}/`);
   console.log(`💾 Total size: ${(totalSize / 1024).toFixed(1)}KB`);
 
@@ -284,7 +335,7 @@ Installation:
 2. Enable "Developer mode"
 3. Click "Load unpacked"
 4. Select the "${distDir}" directory
-`);
+${manifest.key ? '\nTo update, load the new build the same way. Remove would delete the vault.\n' : ''}`);
   }
 }
 

@@ -15,6 +15,8 @@ if (!zipPathArg || !targetArg) {
 
 const zipPath = path.resolve(root, zipPathArg);
 const target = targetArg.toLowerCase();
+// Set by the release workflow, whose packages go to the stores.
+const release = process.env.PASSKEY_VAULT_RELEASE === '1';
 const validTargets = new Set(['chrome', 'firefox']);
 
 if (!validTargets.has(target)) {
@@ -112,8 +114,15 @@ function main() {
     `Manifest version ${manifest.version} != ${pkg.version}`
   );
   if (target === 'chrome') {
+    // A development build names its commit, as in 0.12.0+2d873fb; a release
+    // build carries the plain version (build-extension.js).
+    const commit = String(manifest.version_name).slice(pkg.version.length + 1);
+    const isDevelopmentName =
+      !release &&
+      String(manifest.version_name).startsWith(`${pkg.version}+`) &&
+      /^[0-9a-f]{7,40}(\.dirty)?$/.test(commit);
     assert(
-      manifest.version_name === pkg.version,
+      manifest.version_name === pkg.version || isDevelopmentName,
       `Manifest version_name ${manifest.version_name} != ${pkg.version}`
     );
   } else {
@@ -123,6 +132,12 @@ function main() {
       `Firefox manifest should not set version_name (got ${manifest.version_name})`
     );
   }
+  // Only a Chrome development build carries the development key; the stores
+  // keep their own (build-extension.js).
+  assert(
+    manifest.key === undefined || (target === 'chrome' && !release),
+    `${release ? 'A release' : 'A Firefox'} package must not carry a manifest key`
+  );
   assert(manifest.name === '__MSG_appName__', `Unexpected manifest name: ${manifest.name}`);
   assert(
     enMessages.appName?.message === 'Fenko Vault | Passkey and MFA Manager',
@@ -153,7 +168,9 @@ function main() {
     assert(hash(packagedIcon) === hash(sourceIcon), `${entry} hash differs from src/icons`);
   }
 
-  console.log(`Package OK: ${path.relative(root, zipPath)} (${target})`);
+  console.log(
+    `Package OK: ${path.relative(root, zipPath)} (${target}${release ? ', release' : ''})`
+  );
 }
 
 try {
