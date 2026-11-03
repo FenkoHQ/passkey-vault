@@ -1171,7 +1171,7 @@ class BackgroundService {
 
   private async handleFactoryReset(): Promise<unknown> {
     await syncService.disconnect();
-    secureStorage.lock();
+    await secureStorage.lock();
     await chrome.storage.local.clear();
     return { success: true };
   }
@@ -1775,7 +1775,7 @@ class BackgroundService {
   private async handleLockSecureStorage(): Promise<unknown> {
     try {
       await syncService.disconnect();
-      secureStorage.lock();
+      await secureStorage.lock();
       return { success: true, message: 'Secure storage locked' };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);

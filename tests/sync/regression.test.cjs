@@ -791,9 +791,30 @@ test('locking clears the saved session and alarm', async () => {
   assert.equal(await w.vault.initialize('123456'), true);
   await w.settle();
   assert.equal(w.session.size, 1);
-  w.vault.lock();
+  await w.vault.lock();
   await w.settle();
   assert.equal(w.session.size + w.alarms.size, 0);
+  assert.equal(await vaultWorker(w).vault.restoreSession(), false);
+});
+
+test('lock stays locked when a pending session save finishes late', async () => {
+  const w = vaultWorker();
+  let finishSave;
+  const waitForSave = new Promise((resolve) => {
+    finishSave = resolve;
+  });
+  w.context.chrome.storage.session.set = (values) =>
+    waitForSave.then(() => {
+      for (const [key, value] of Object.entries(values)) {
+        w.session.set(key, value);
+      }
+    });
+
+  assert.equal(await w.vault.initialize('123456'), true);
+  const locked = w.vault.lock();
+  finishSave();
+  await locked;
+
   assert.equal(await vaultWorker(w).vault.restoreSession(), false);
 });
 

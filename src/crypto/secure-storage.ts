@@ -134,6 +134,7 @@ export class SecureStorage {
   private autoLockMs = 30 * 60 * 1000; // 30 minutes default; 0 never locks
   private activeAt = 0;
   private sessionSavedAt = 0;
+  private sessionWrites: Promise<void> = Promise.resolve();
   /** Called when the vault locks itself after the timeout. */
   onAutoLock: (() => void) | null = null;
 
@@ -185,7 +186,7 @@ export class SecureStorage {
    */
   async lockIfIdle(): Promise<void> {
     if (!(await this.restoreSession())) return;
-    if (this.isIdle(this.activeAt)) this.autoLock();
+    if (this.isIdle(this.activeAt)) await this.autoLock();
   }
 
   /**
@@ -218,11 +219,11 @@ export class SecureStorage {
             this.encryptionKey
           );
           if (decrypted !== 'passkey-vault-check') {
-            this.lock();
+            await this.lock();
             return false;
           }
         } catch {
-          this.lock();
+          await this.lock();
           return false;
         }
       } else {
@@ -238,7 +239,7 @@ export class SecureStorage {
       return true;
     } catch (error) {
       console.error('SecureStorage initialization failed:', error);
-      this.lock();
+      await this.lock();
       return false;
     }
   }
@@ -261,7 +262,7 @@ export class SecureStorage {
   /**
    * Lock the secure storage, wiping encryption key from memory
    */
-  lock(): void {
+  lock(): Promise<void> {
     if (this.encryptionKey) {
       secureWipe(this.encryptionKey);
       this.encryptionKey = null;
@@ -271,12 +272,13 @@ export class SecureStorage {
       clearTimeout(this.lockTimeout);
       this.lockTimeout = null;
     }
-    void this.clearSession();
+    return this.clearSession();
   }
 
-  private autoLock(): void {
-    this.lock();
+  private autoLock(): Promise<void> {
+    const cleared = this.lock();
     this.onAutoLock?.();
+    return cleared;
   }
 
   private isIdle(activeAt: number): boolean {
@@ -302,21 +304,24 @@ export class SecureStorage {
     }
     if (this.autoLockMs <= 0) return;
     const delay = Math.max(0, this.activeAt + this.autoLockMs - Date.now());
-    this.lockTimeout = setTimeout(() => this.autoLock(), delay);
+    this.lockTimeout = setTimeout(() => void this.autoLock(), delay);
   }
 
-  private async saveSession(): Promise<void> {
+  private saveSession(): Promise<void> {
     const area = sessionArea();
-    if (!area || !this.encryptionKey || !this.salt) return;
+    if (!area || !this.encryptionKey || !this.salt) return Promise.resolve();
     this.sessionSavedAt = this.activeAt;
-    await area.set({
+    const session = {
       [UNLOCKED_SESSION_KEY]: {
         key: uint8ArrayToBase64(this.encryptionKey),
         salt: uint8ArrayToBase64(this.salt),
         activeAt: this.activeAt,
       } satisfies UnlockedSession,
+    };
+    return this.writeSession(async () => {
+      await area.set(session);
+      await this.scheduleAlarm();
     });
-    await this.scheduleAlarm();
   }
 
   private async scheduleAlarm(): Promise<void> {
@@ -329,10 +334,18 @@ export class SecureStorage {
     }
   }
 
-  private async clearSession(): Promise<void> {
+  private clearSession(): Promise<void> {
     this.sessionSavedAt = 0;
-    await sessionArea()?.remove(UNLOCKED_SESSION_KEY);
-    await alarms()?.clear(AUTO_LOCK_ALARM);
+    return this.writeSession(async () => {
+      await sessionArea()?.remove(UNLOCKED_SESSION_KEY);
+      await alarms()?.clear(AUTO_LOCK_ALARM);
+    });
+  }
+
+  private writeSession(write: () => Promise<void>): Promise<void> {
+    const next = this.sessionWrites.catch(() => undefined).then(write);
+    this.sessionWrites = next;
+    return next;
   }
 
   /**
@@ -582,7 +595,7 @@ export class SecureStorage {
     if (!verified) {
       return false;
     }
-    this.lock();
+    await this.lock();
     await chrome.storage.local.remove([
       STORAGE_KEYS.MASTER_KEY_CHECK,
       STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG,
@@ -597,7 +610,7 @@ export class SecureStorage {
    * Wipe all secure data (emergency reset)
    */
   async emergencyWipe(): Promise<void> {
-    this.lock();
+    await this.lock();
     await chrome.storage.local.remove([
       STORAGE_KEYS.MASTER_KEY_CHECK,
       STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG,
