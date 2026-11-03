@@ -28,6 +28,10 @@ const STORAGE_KEYS = {
 export const AUTO_LOCK_SETTING_KEY = 'auto_lock_timeout';
 export const AUTO_LOCK_ALARM = 'passext-auto-lock';
 const UNLOCKED_SESSION_KEY = 'passext_unlocked_session';
+export enum StorageActivity {
+  Record = 'record',
+  Maintenance = 'maintenance',
+}
 // Activity extends the deadline in memory at once but reaches session storage
 // at most this often, so a restarted worker may lock up to this much early.
 const SESSION_WRITE_INTERVAL_MS = 15 * 1000;
@@ -185,7 +189,9 @@ export class SecureStorage {
    * in-memory timer nor the key survives a stopped service worker.
    */
   async lockIfIdle(): Promise<void> {
-    if (!(await this.restoreSession())) return;
+    if (!this.isStorageUnlocked()) {
+      return;
+    }
     if (this.isIdle(this.activeAt)) await this.autoLock();
   }
 
@@ -363,7 +369,10 @@ export class SecureStorage {
   /**
    * Store sync configuration securely
    */
-  async storeSyncConfig(config: SecureStorageConfig): Promise<void> {
+  async storeSyncConfig(
+    config: SecureStorageConfig,
+    activity = StorageActivity.Record
+  ): Promise<void> {
     this.ensureUnlocked();
 
     const encrypted = encryptData(JSON.stringify(cleanSyncConfig(config)), this.encryptionKey!);
@@ -371,13 +380,15 @@ export class SecureStorage {
       [STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG]: encrypted,
     });
 
-    this.resetAutoLock();
+    if (activity === StorageActivity.Record) {
+      this.resetAutoLock();
+    }
   }
 
   /**
    * Retrieve sync configuration
    */
-  async getSyncConfig(): Promise<SecureStorageConfig | null> {
+  async getSyncConfig(activity = StorageActivity.Record): Promise<SecureStorageConfig | null> {
     this.ensureUnlocked();
 
     const result = await chrome.storage.local.get(STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG);
@@ -390,11 +401,13 @@ export class SecureStorage {
         result[STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG],
         this.encryptionKey!
       );
-      this.resetAutoLock();
+      if (activity === StorageActivity.Record) {
+        this.resetAutoLock();
+      }
       const stored = JSON.parse(decrypted);
       const config = cleanSyncConfig(stored);
       if (JSON.stringify(stored) !== JSON.stringify(config)) {
-        await this.storeSyncConfig(config);
+        await this.storeSyncConfig(config, activity);
       }
       return config;
     } catch (error) {
@@ -410,7 +423,10 @@ export class SecureStorage {
     await chrome.storage.local.remove(STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG);
   }
 
-  async storePasskeys(passkeys: Record<string, unknown>[]): Promise<void> {
+  async storePasskeys(
+    passkeys: Record<string, unknown>[],
+    activity = StorageActivity.Record
+  ): Promise<void> {
     this.ensureUnlocked();
 
     const encrypted = encryptData(JSON.stringify(passkeys), this.encryptionKey!);
@@ -418,10 +434,12 @@ export class SecureStorage {
       [STORAGE_KEYS.ENCRYPTED_PASSKEYS]: encrypted,
     });
 
-    this.resetAutoLock();
+    if (activity === StorageActivity.Record) {
+      this.resetAutoLock();
+    }
   }
 
-  async getPasskeys(): Promise<Record<string, unknown>[]> {
+  async getPasskeys(activity = StorageActivity.Record): Promise<Record<string, unknown>[]> {
     this.ensureUnlocked();
 
     const result = await chrome.storage.local.get(STORAGE_KEYS.ENCRYPTED_PASSKEYS);
@@ -431,7 +449,9 @@ export class SecureStorage {
 
     try {
       const decrypted = decryptData(result[STORAGE_KEYS.ENCRYPTED_PASSKEYS], this.encryptionKey!);
-      this.resetAutoLock();
+      if (activity === StorageActivity.Record) {
+        this.resetAutoLock();
+      }
       return JSON.parse(decrypted);
     } catch (error) {
       console.error('Failed to decrypt passkeys:', error);
@@ -468,7 +488,10 @@ export class SecureStorage {
     return passkeys.filter((p) => p.rpId === rpId);
   }
 
-  async storeTotpEntries(entries: Record<string, unknown>[]): Promise<void> {
+  async storeTotpEntries(
+    entries: Record<string, unknown>[],
+    activity = StorageActivity.Record
+  ): Promise<void> {
     this.ensureUnlocked();
 
     const encrypted = encryptData(JSON.stringify(entries), this.encryptionKey!);
@@ -476,10 +499,12 @@ export class SecureStorage {
       [STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES]: encrypted,
     });
 
-    this.resetAutoLock();
+    if (activity === StorageActivity.Record) {
+      this.resetAutoLock();
+    }
   }
 
-  async getTotpEntries(): Promise<Record<string, unknown>[]> {
+  async getTotpEntries(activity = StorageActivity.Record): Promise<Record<string, unknown>[]> {
     this.ensureUnlocked();
 
     const result = await chrome.storage.local.get(STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES);
@@ -492,7 +517,9 @@ export class SecureStorage {
         result[STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES],
         this.encryptionKey!
       );
-      this.resetAutoLock();
+      if (activity === StorageActivity.Record) {
+        this.resetAutoLock();
+      }
       return JSON.parse(decrypted);
     } catch (error) {
       console.error('Failed to decrypt TOTP entries:', error);

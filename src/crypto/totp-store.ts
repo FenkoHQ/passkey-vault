@@ -6,7 +6,7 @@
  * unlocked. Falls back to raw storage when secure storage is not in use.
  */
 
-import { secureStorage } from './secure-storage';
+import { secureStorage, StorageActivity } from './secure-storage';
 import { arrayBufferToBase64, base64ToUint8Array } from '../utils/base64';
 
 export type TotpAlgorithm = 'SHA1' | 'SHA256' | 'SHA512';
@@ -31,9 +31,11 @@ function isUnlocked(): boolean {
   return secureStorage.isStorageUnlocked();
 }
 
-export async function loadTotpEntries(): Promise<StoredTotpEntry[]> {
+export async function loadTotpEntries(
+  activity = StorageActivity.Record
+): Promise<StoredTotpEntry[]> {
   if (isUnlocked()) {
-    const entries = (await secureStorage.getTotpEntries()) as unknown as StoredTotpEntry[];
+    const entries = (await secureStorage.getTotpEntries(activity)) as unknown as StoredTotpEntry[];
     return entries;
   }
   if (await secureStorage.isSetup()) {
@@ -43,9 +45,12 @@ export async function loadTotpEntries(): Promise<StoredTotpEntry[]> {
   return (result[TOTP_STORAGE_KEY] || []) as StoredTotpEntry[];
 }
 
-export async function saveTotpEntries(entries: StoredTotpEntry[]): Promise<void> {
+export async function saveTotpEntries(
+  entries: StoredTotpEntry[],
+  activity = StorageActivity.Record
+): Promise<void> {
   if (isUnlocked()) {
-    await secureStorage.storeTotpEntries(entries as unknown as Record<string, unknown>[]);
+    await secureStorage.storeTotpEntries(entries as unknown as Record<string, unknown>[], activity);
     return;
   }
   if (await secureStorage.isSetup()) {
