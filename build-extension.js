@@ -63,7 +63,7 @@ function getCommit() {
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
   try {
-    const hash = git('rev-parse', '--short', 'HEAD');
+    const hash = git('rev-parse', '--short=7', 'HEAD');
     return git('status', '--porcelain', '--untracked-files=no') ? `${hash}.dirty` : hash;
   } catch {
     return null;
