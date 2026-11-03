@@ -664,6 +664,9 @@ for (const fixture of require('./merge-fixtures.json')) {
       m.mergeVault([remote], [], 'peer');
       assert.equal(e.api.getPasskeys()[0].label, fixture.winner);
       assert.equal(e.api.getPasskeys()[0].counter, fixture.counter);
+      if ('backupEligible' in fixture) {
+        assert.equal(e.api.getPasskeys()[0].backupEligible, fixture.backupEligible);
+      }
     }
   });
 }
@@ -734,4 +737,213 @@ test('console output carries log data as text, not [object Object]', () => {
   assert.equal(typeof errors[0][2], 'string');
   assert.match(errors[0][2], /"error":"bad tag"/);
   assert.doesNotMatch(errors[0][2], /secret/);
+});
+
+const BITWARDEN_GUID = '674880d4-06ed-1af1-e8dd-2d901d9dbd3d';
+const DECODED_ID = 'Z0iA1AbtGvHo3S2QHZ29PQ';
+const bitwardenImport = { ...passkey, id: BITWARDEN_GUID, credentialId: BITWARDEN_GUID };
+
+// Arrays built inside the VM fail deepStrictEqual against this realm's arrays.
+const plain = (value) => JSON.parse(JSON.stringify(value));
+
+function quietOwner(owner) {
+  Object.assign(owner, {
+    logSync() {},
+    logWebAuthn() {},
+    incrementPendingChanges: async () => {},
+    triggerSync: async () => {},
+  });
+}
+
+test('Bitwarden credential IDs are re-keyed and the repair converges on mobile', async () => {
+  const { b, owner, mobile, m } = await clients();
+  quietOwner(owner);
+  await owner.savePasskeys([bitwardenImport]);
+  mobile.api.setPasskeys([bitwardenImport]);
+
+  await owner.repairStoredCredentialIds();
+  const snapshot = await b.s.vaultAdapter.getSnapshot();
+  assert.deepEqual(plain(snapshot.passkeys.map((entry) => [entry.id, entry.credentialId])), [
+    [DECODED_ID, DECODED_ID],
+  ]);
+  assert.deepEqual(plain(snapshot.deletions.map((entry) => entry.id)), [BITWARDEN_GUID]);
+
+  m.mergeVault(snapshot.passkeys, [], 'browser', snapshot.deletions);
+  assert.deepEqual(plain(mobile.api.getPasskeys().map((entry) => [entry.id, entry.privateKey])), [
+    [DECODED_ID, passkey.privateKey],
+  ]);
+});
+
+test('browser re-keys Bitwarden IDs a peer on an older build still sends', async () => {
+  const { owner } = await clients();
+  quietOwner(owner);
+  await owner.syncVaultAdapter().mergeRemote([bitwardenImport], [], 'old-peer', []);
+  assert.deepEqual(plain((await owner.loadPasskeys()).map((entry) => entry.id)), [DECODED_ID]);
+});
+
+test('browser refuses a new passkey only when the site excludes a stored one', async () => {
+  const { owner } = await clients();
+  quietOwner(owner);
+  await owner.savePasskeys([{ ...passkey, id: DECODED_ID, credentialId: DECODED_ID }]);
+  const register = (excludeCredentials) =>
+    owner.handleCreatePasskey({
+      publicKey: {
+        rp: { id: 'example.com', name: 'Example' },
+        rpId: 'example.com',
+        user: { id: 'dXNlcg', name: 'ali', displayName: 'Ali' },
+        challenge: 'AAAA',
+        excludeCredentials,
+      },
+      origin: 'https://example.com',
+    });
+
+  const second = await register([{ id: 'b3RoZXI', type: 'public-key' }]);
+  assert.equal(second.success, true, second.error);
+  const excluded = await register([{ id: DECODED_ID, type: 'public-key' }]);
+  assert.equal(excluded.name, 'InvalidStateError');
+  assert.equal((await owner.loadPasskeys()).length, 2);
+});
+
+async function backgroundWithVault(records, stored = {}) {
+  const e = env(backgroundCode);
+  const values = new Map(Object.entries(stored));
+  e.context.chrome.storage.local.get = async (keys) => {
+    const out = {};
+    for (const key of Array.isArray(keys) ? keys : [keys]) {
+      if (values.has(key)) out[key] = values.get(key);
+    }
+    return out;
+  };
+  e.context.chrome.storage.local.set = async (items) =>
+    Object.entries(items).forEach(([key, value]) => values.set(key, value));
+  const owner = Object.create(e.api.BackgroundService.prototype);
+  owner.vaultJobs = Promise.resolve();
+  owner.loadPasskeys = async () => records;
+  owner.savePasskeys = async (next) => {
+    records = next;
+  };
+  owner.logWebAuthn = async () => {};
+  owner.logSync = () => {};
+  owner.incrementPendingChanges = async () => {};
+  owner.triggerSync = () => {};
+  return { owner, values, records: () => records };
+}
+
+async function vaultKey() {
+  const pair = await webcrypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+    'sign',
+    'verify',
+  ]);
+  const pkcs8 = Buffer.from(await webcrypto.subtle.exportKey('pkcs8', pair.privateKey));
+  return pkcs8.toString('base64');
+}
+
+function signedFlags(response) {
+  return Buffer.from(response.credential.response.authenticatorData, 'base64')[32];
+}
+
+const BE = 0x08;
+const BS = 0x10;
+const getRequest = {
+  origin: 'https://tele.example.com',
+  publicKey: { challenge: 'Y2hhbGxlbmdl', rpId: 'tele.example.com' },
+};
+
+test("sign-in uses the passkey's own backup flags, whatever the global toggles say", async () => {
+  const privateKey = await vaultKey();
+  const base = { rpId: 'tele.example.com', privateKey, createdAt: 1, counter: 0, user: {} };
+  const { owner } = await backgroundWithVault(
+    [
+      { ...base, id: 'synced', backupEligible: true, backupState: true, backupSource: 'imported' },
+      { ...base, id: 'bound', backupEligible: false, backupState: false, backupSource: 'created' },
+    ],
+    { webauthn_flags: { backupEligible: false, backupState: false } }
+  );
+
+  const synced = await owner.handleGetPasskey({ ...getRequest, selectedPasskeyId: 'synced' });
+  assert.equal(signedFlags(synced) & (BE | BS), BE | BS);
+  const bound = await owner.handleGetPasskey({ ...getRequest, selectedPasskeyId: 'bound' });
+  assert.equal(signedFlags(bound) & (BE | BS), 0);
+});
+
+test('a passkey without flags signs with the pre-upgrade snapshot', async () => {
+  const privateKey = await vaultKey();
+  const record = { id: 'old', rpId: 'tele.example.com', privateKey, createdAt: 1, counter: 0 };
+  const withSnapshot = await backgroundWithVault([{ ...record }], {
+    webauthn_backup_snapshot: { backupEligible: true, backupState: true },
+  });
+  const response = await withSnapshot.owner.handleGetPasskey(getRequest);
+  assert.equal(signedFlags(response) & (BE | BS), BE | BS);
+
+  const noSnapshot = await backgroundWithVault([{ ...record }]);
+  assert.equal(signedFlags(await noSnapshot.owner.handleGetPasskey(getRequest)) & (BE | BS), 0);
+});
+
+test('upgrade stamps the toggles in force onto existing passkeys, once', async () => {
+  const vault = await backgroundWithVault(
+    [{ id: 'old', rpId: 'tele.example.com', privateKey: 'k', createdAt: 1, counter: 0 }],
+    { webauthn_flags: { backupEligible: true, backupState: true } }
+  );
+  await vault.owner.stampLegacyBackupFlags();
+  assert.deepEqual(JSON.parse(JSON.stringify(vault.records()[0])), {
+    id: 'old',
+    rpId: 'tele.example.com',
+    privateKey: 'k',
+    createdAt: 1,
+    counter: 0,
+    backupEligible: true,
+    backupState: true,
+    backupSource: 'legacy',
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(vault.values.get('webauthn_backup_snapshot'))), {
+    backupEligible: true,
+    backupState: true,
+  });
+
+  // Turning the toggles off afterwards only affects new passkeys.
+  vault.values.set('webauthn_flags', { backupEligible: false, backupState: false });
+  await vault.owner.stampLegacyBackupFlags();
+  assert.equal(vault.records()[0].backupEligible, true);
+});
+
+test('a new passkey records the flags it registered with', async () => {
+  const vault = await backgroundWithVault([], {});
+  const response = await vault.owner.handleCreatePasskey({
+    origin: 'https://tele.example.com',
+    publicKey: {
+      challenge: 'Y2hhbGxlbmdl',
+      rp: { id: 'tele.example.com', name: 'Teleport' },
+      user: { id: 'dXNlcg', name: 'colin', displayName: 'colin' },
+    },
+  });
+  assert.equal(response.success, true);
+  const [created] = vault.records();
+  assert.equal(created.backupEligible, true);
+  assert.equal(created.backupState, false);
+  assert.equal(created.backupSource, 'created');
+  const attestedFlags = Buffer.from(response.credential.response.authenticatorData, 'base64')[32];
+  assert.equal(attestedFlags & (BE | BS), BE);
+});
+
+test('the per-passkey switch sets both flags, marks the choice and bumps the revision', async () => {
+  const vault = await backgroundWithVault([
+    {
+      id: 'p',
+      rpId: 'tele.example.com',
+      privateKey: 'k',
+      createdAt: 1,
+      updatedAt: 5,
+      counter: 0,
+      backupEligible: false,
+      backupState: false,
+      backupSource: 'legacy',
+    },
+  ]);
+  const result = await vault.owner.handleSetPasskeyBackup({ credentialId: 'p', synced: true });
+  assert.equal(result.success, true);
+  const [record] = vault.records();
+  assert.equal(record.backupEligible, true);
+  assert.equal(record.backupState, true);
+  assert.equal(record.backupSource, 'manual');
+  assert.ok(record.updatedAt > 5);
 });

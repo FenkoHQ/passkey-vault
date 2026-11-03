@@ -6,6 +6,28 @@ All notable changes to Passkey Vault are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-10-29
+
+### Fixed
+
+- Bitwarden passkeys imported from JSON now use the credential IDs sites expect
+  in the browser, on Android, and on iOS. Earlier imports are repaired when the
+  vault starts, unlocks, or syncs.
+- Imported passkeys now keep their own synced state across devices. If a site
+  still rejects a passkey imported before this release, import the original
+  file again to update that state. Existing vault-created passkeys keep their
+  previous sign-in behavior.
+- Multiple accounts on one site can each register a passkey.
+- WebAuthn requests containing a view of a larger buffer now use only the
+  requested bytes.
+
+### Changed
+
+- Passkey details now offer a "Synced passkey" switch for sites that need a
+  different setting. New passkeys are backup eligible, and report as backed up
+  once sync is configured.
+- Import now reports when it updates or repairs a passkey.
+
 ## [0.12.0] - 2026-09-21
 
 ### Knowing a passkey by its site

@@ -23,6 +23,7 @@ import {
   SYNC_DELETIONS_KEY,
   type SyncDeletion,
 } from '../../../src/sync/merge';
+import { repairCredentialIds } from '../../../src/sync/credential-ids';
 import * as secp256k1 from '@noble/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils';
@@ -274,6 +275,22 @@ function mergeNativeSnapshot(snapshotJson?: string): void {
   } catch {
     // A bad native snapshot must not stop the WebView app from opening.
   }
+}
+
+/**
+ * Re-key passkeys imported with a Bitwarden-encoded credential ID (issue #17).
+ * Deletion records go first so the mirror to native carries both. Returns
+ * whether anything changed, so callers can broadcast the repair.
+ */
+function repairPasskeyIds(): boolean {
+  const repair = repairCredentialIds(getPasskeys());
+  if (repair.deletions.length === 0) return false;
+  localStorage.setItem(
+    SYNC_DELETIONS_KEY,
+    JSON.stringify(mergeDeletions(loadJson(SYNC_DELETIONS_KEY, []), repair.deletions))
+  );
+  setPasskeys(repair.passkeys);
+  return true;
 }
 
 function getTotpEntries(): StoredTotpEntry[] {
@@ -861,6 +878,7 @@ async function importVault(raw: string): Promise<void> {
   const totpMap = new Map(getTotpEntries().map((item) => [item.id, item]));
   for (const entry of totpEntries) totpMap.set(entry.id, entry);
   setPasskeys(Array.from(passkeyMap.values()));
+  repairPasskeyIds();
   setTotpEntries(Array.from(totpMap.values()));
   if (payload.syncConfig) setSyncConfig(payload.syncConfig);
   if (payload.syncDevices) saveJson(SYNC_DEVICES_KEY, payload.syncDevices);
@@ -1412,6 +1430,8 @@ class AndroidSync {
     saveJson(SYNC_DELETIONS_KEY, deletions);
     setPasskeys(mergeRecords(getPasskeys(), passkeys, deletions, 'passkey'));
     setTotpEntries(mergeRecords(getTotpEntries(), totpEntries, deletions, 'totp'));
+    // A peer on an older build can still send Bitwarden-encoded IDs.
+    if (repairPasskeyIds()) void this.broadcastUpdate();
   }
 }
 
@@ -2287,6 +2307,7 @@ let pointerDown = false;
 window.__fenkoNativeRefresh = (snapshot?: string) => {
   const before = JSON.stringify([getPasskeys(), getTotpEntries()]);
   mergeNativeSnapshot(snapshot);
+  repairPasskeyIds();
   if (before !== JSON.stringify([getPasskeys(), getTotpEntries()])) {
     void state.sync?.broadcastUpdate();
     render();
@@ -2297,8 +2318,10 @@ async function boot(): Promise<void> {
   localStorage.removeItem(LEGACY_LOCK_KEY);
   purgeRecycleBin();
   mergeNativeSnapshot();
+  const repaired = repairPasskeyIds();
   state.unlocked = !localStorage.getItem(LOCKED_FLAG_KEY);
   if (state.unlocked) await bootSync();
+  if (repaired) void state.sync?.broadcastUpdate();
   render();
   mirrorVaultToAndroid();
   setupPullToRefresh();
