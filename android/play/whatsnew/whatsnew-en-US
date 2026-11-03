@@ -1,1 +1,1 @@
-Version bump to stay in step with the browser extension, which gains import and export for other providers' passkey and MFA formats. The Android provider itself is unchanged in this release.
+Bitwarden passkeys imported from JSON now use the correct credential IDs. Imported passkeys retain their individual synced state. If a site still rejects an earlier import, import the original file again. Existing passkeys keep their previous sign-in behavior.

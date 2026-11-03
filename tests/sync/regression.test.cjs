@@ -6,6 +6,9 @@ const { webcrypto } = require('node:crypto');
 const esbuild = require('esbuild');
 
 let browserCode, mobileCode, backgroundCode, storageCode;
+
+const EXTENSION_ORIGIN = 'chrome-extension://fenkovaulttest';
+const POPUP = { id: 'fenkovaulttest', url: `${EXTENSION_ORIGIN}/popup.html` };
 before(async () => {
   async function bundle(file, suffix, strip) {
     let contents = fs.readFileSync(file, 'utf8');
@@ -39,10 +42,6 @@ before(async () => {
     'void boot().catch'
   );
 });
-
-// Chrome's account of a message from the popup, an extension page.
-const EXTENSION_ORIGIN = 'chrome-extension://fenkovaulttest';
-const POPUP = { id: 'fenkovaulttest', url: `${EXTENSION_ORIGIN}/popup.html` };
 
 function env(code) {
   const storage = new Map();
@@ -917,71 +916,6 @@ test('acknowledging presence cannot hide an exhausted snapshot', async () => {
   assert.ok(s.getStatus().lastError, 'presence ACK is not a snapshot ACK');
 });
 
-const BITWARDEN_GUID = '674880d4-06ed-1af1-e8dd-2d901d9dbd3d';
-const DECODED_ID = 'Z0iA1AbtGvHo3S2QHZ29PQ';
-const bitwardenImport = { ...passkey, id: BITWARDEN_GUID, credentialId: BITWARDEN_GUID };
-
-// Arrays built inside the VM fail deepStrictEqual against this realm's arrays.
-const plain = (value) => JSON.parse(JSON.stringify(value));
-
-function quietOwner(owner) {
-  Object.assign(owner, {
-    logSync() {},
-    logWebAuthn() {},
-    incrementPendingChanges: async () => {},
-    triggerSync: async () => {},
-  });
-}
-
-test('Bitwarden credential IDs are re-keyed and the repair converges on mobile', async () => {
-  const { b, owner, mobile, m } = await clients();
-  quietOwner(owner);
-  await owner.savePasskeys([bitwardenImport]);
-  mobile.api.setPasskeys([bitwardenImport]);
-
-  await owner.repairStoredCredentialIds();
-  const snapshot = await b.s.vaultAdapter.getSnapshot();
-  assert.deepEqual(plain(snapshot.passkeys.map((entry) => [entry.id, entry.credentialId])), [
-    [DECODED_ID, DECODED_ID],
-  ]);
-  assert.deepEqual(plain(snapshot.deletions.map((entry) => entry.id)), [BITWARDEN_GUID]);
-
-  m.mergeVault(snapshot.passkeys, [], 'browser', snapshot.deletions);
-  assert.deepEqual(plain(mobile.api.getPasskeys().map((entry) => [entry.id, entry.privateKey])), [
-    [DECODED_ID, passkey.privateKey],
-  ]);
-});
-
-test('browser re-keys Bitwarden IDs a peer on an older build still sends', async () => {
-  const { owner } = await clients();
-  quietOwner(owner);
-  await owner.syncVaultAdapter().mergeRemote([bitwardenImport], [], 'old-peer', []);
-  assert.deepEqual(plain((await owner.loadPasskeys()).map((entry) => entry.id)), [DECODED_ID]);
-});
-
-test('browser refuses a new passkey only when the site excludes a stored one', async () => {
-  const { owner } = await clients();
-  quietOwner(owner);
-  await owner.savePasskeys([{ ...passkey, id: DECODED_ID, credentialId: DECODED_ID }]);
-  const register = (excludeCredentials) =>
-    owner.handleCreatePasskey({
-      publicKey: {
-        rp: { id: 'example.com', name: 'Example' },
-        rpId: 'example.com',
-        user: { id: 'dXNlcg', name: 'ali', displayName: 'Ali' },
-        challenge: 'AAAA',
-        excludeCredentials,
-      },
-      origin: 'https://example.com',
-    });
-
-  const second = await register([{ id: 'b3RoZXI', type: 'public-key' }]);
-  assert.equal(second.success, true, second.error);
-  const excluded = await register([{ id: DECODED_ID, type: 'public-key' }]);
-  assert.equal(excluded.name, 'InvalidStateError');
-  assert.equal((await owner.loadPasskeys()).length, 2);
-});
-
 // A fresh SecureStorage over the same chrome.storage is what a restarted
 // service worker sees: local and session storage survive, memory does not.
 function vaultWorker(shared) {
@@ -1056,6 +990,48 @@ test('the auto-lock alarm locks a live worker and reports it', async () => {
   assert.equal(w.session.size + w.alarms.size, 0);
 });
 
+test('maintenance reads do not extend a restored session', async () => {
+  const first = vaultWorker();
+  assert.equal(await first.vault.initialize('123456'), true);
+  await first.vault.storePasskeys([passkey]);
+  await first.vault.storeSyncConfig(config);
+  await first.settle();
+
+  const restarted = vaultWorker(first);
+  restarted.later(29 * 60000);
+  assert.equal(await restarted.vault.restoreSession(), true);
+  await restarted.vault.getPasskeys('maintenance');
+  await restarted.vault.getSyncConfig('maintenance');
+  await restarted.settle();
+
+  const expired = vaultWorker(first);
+  expired.later(31 * 60000);
+  assert.equal(await expired.vault.restoreSession(), false);
+});
+
+test('an alarm cannot restore a session after a manual lock', async () => {
+  const w = vaultWorker();
+  assert.equal(await w.vault.initialize('123456'), true);
+  await w.settle();
+
+  const saved = w.session.get('passext_unlocked_session');
+  let finishRead;
+  const pendingRead = new Promise((resolve) => {
+    finishRead = resolve;
+  });
+  w.context.chrome.storage.session.get = async () => {
+    await pendingRead;
+    return { passext_unlocked_session: saved };
+  };
+
+  const alarm = w.vault.lockIfIdle();
+  await w.vault.lock();
+  finishRead();
+  await alarm;
+
+  assert.equal(w.vault.isStorageUnlocked(), false);
+});
+
 test('"Never" keeps the vault unlocked instead of locking at once', async () => {
   const w = vaultWorker();
   w.storage.set('auto_lock_timeout', 0);
@@ -1086,9 +1062,30 @@ test('locking clears the saved session and alarm', async () => {
   assert.equal(await w.vault.initialize('123456'), true);
   await w.settle();
   assert.equal(w.session.size, 1);
-  w.vault.lock();
+  await w.vault.lock();
   await w.settle();
   assert.equal(w.session.size + w.alarms.size, 0);
+  assert.equal(await vaultWorker(w).vault.restoreSession(), false);
+});
+
+test('lock stays locked when a pending session save finishes late', async () => {
+  const w = vaultWorker();
+  let finishSave;
+  const waitForSave = new Promise((resolve) => {
+    finishSave = resolve;
+  });
+  w.context.chrome.storage.session.set = (values) =>
+    waitForSave.then(() => {
+      for (const [key, value] of Object.entries(values)) {
+        w.session.set(key, value);
+      }
+    });
+
+  assert.equal(await w.vault.initialize('123456'), true);
+  const locked = w.vault.lock();
+  finishSave();
+  await locked;
+
   assert.equal(await vaultWorker(w).vault.restoreSession(), false);
 });
 
@@ -1114,6 +1111,71 @@ test('messages wait for the restored session before checking the lock', async ()
   restore();
   await lookup;
   assert.equal(replied, true);
+});
+
+const BITWARDEN_GUID = '674880d4-06ed-1af1-e8dd-2d901d9dbd3d';
+const DECODED_ID = 'Z0iA1AbtGvHo3S2QHZ29PQ';
+const bitwardenImport = { ...passkey, id: BITWARDEN_GUID, credentialId: BITWARDEN_GUID };
+
+// Arrays built inside the VM fail deepStrictEqual against this realm's arrays.
+const plain = (value) => JSON.parse(JSON.stringify(value));
+
+function quietOwner(owner) {
+  Object.assign(owner, {
+    logSync() {},
+    logWebAuthn() {},
+    incrementPendingChanges: async () => {},
+    triggerSync: async () => {},
+  });
+}
+
+test('Bitwarden credential IDs are re-keyed and the repair converges on mobile', async () => {
+  const { b, owner, mobile, m } = await clients();
+  quietOwner(owner);
+  await owner.savePasskeys([bitwardenImport]);
+  mobile.api.setPasskeys([bitwardenImport]);
+
+  await owner.repairStoredCredentialIds();
+  const snapshot = await b.s.vaultAdapter.getSnapshot();
+  assert.deepEqual(plain(snapshot.passkeys.map((entry) => [entry.id, entry.credentialId])), [
+    [DECODED_ID, DECODED_ID],
+  ]);
+  assert.deepEqual(plain(snapshot.deletions.map((entry) => entry.id)), [BITWARDEN_GUID]);
+
+  m.mergeVault(snapshot.passkeys, [], 'browser', snapshot.deletions);
+  assert.deepEqual(plain(mobile.api.getPasskeys().map((entry) => [entry.id, entry.privateKey])), [
+    [DECODED_ID, passkey.privateKey],
+  ]);
+});
+
+test('browser re-keys Bitwarden IDs a peer on an older build still sends', async () => {
+  const { owner } = await clients();
+  quietOwner(owner);
+  await owner.syncVaultAdapter().mergeRemote([bitwardenImport], [], 'old-peer', []);
+  assert.deepEqual(plain((await owner.loadPasskeys()).map((entry) => entry.id)), [DECODED_ID]);
+});
+
+test('browser refuses a new passkey only when the site excludes a stored one', async () => {
+  const { owner } = await clients();
+  quietOwner(owner);
+  await owner.savePasskeys([{ ...passkey, id: DECODED_ID, credentialId: DECODED_ID }]);
+  const register = (excludeCredentials) =>
+    owner.handleCreatePasskey({
+      publicKey: {
+        rp: { id: 'example.com', name: 'Example' },
+        rpId: 'example.com',
+        user: { id: 'dXNlcg', name: 'ali', displayName: 'Ali' },
+        challenge: 'AAAA',
+        excludeCredentials,
+      },
+      origin: 'https://example.com',
+    });
+
+  const second = await register([{ id: 'b3RoZXI', type: 'public-key' }]);
+  assert.equal(second.success, true, second.error);
+  const excluded = await register([{ id: DECODED_ID, type: 'public-key' }]);
+  assert.equal(excluded.name, 'InvalidStateError');
+  assert.equal((await owner.loadPasskeys()).length, 2);
 });
 
 async function backgroundWithVault(records, stored = {}) {

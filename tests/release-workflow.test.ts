@@ -33,3 +33,20 @@ test.each([
 ])('rejects failed or malformed Chrome response %s', (response) => {
   expect(checkResponse(response).status).not.toBe(0);
 });
+
+test('development version validates with a short Git abbreviation setting', () => {
+  const env = {
+    ...process.env,
+    GIT_CONFIG_COUNT: '1',
+    GIT_CONFIG_KEY_0: 'core.abbrev',
+    GIT_CONFIG_VALUE_0: '4',
+  };
+  const build = spawnSync(process.execPath, ['build-extension.js', '--target=chrome'], {
+    encoding: 'utf8',
+    env,
+  });
+  expect(build.status).toBe(0);
+
+  const manifest = JSON.parse(readFileSync('dist/manifest.json', 'utf8'));
+  expect(manifest.version_name).toMatch(/\+[0-9a-f]{7,40}(\.dirty)?$/);
+});
