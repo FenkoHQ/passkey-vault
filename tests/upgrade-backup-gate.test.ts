@@ -15,6 +15,7 @@ const vault: { passkeys: Record<string, unknown>[]; totp: Record<string, unknown
 };
 
 jest.mock('../src/crypto/secure-storage', () => ({
+  StorageActivity: { Record: 'record', Maintenance: 'maintenance' },
   secureStorage: {
     isSetup: async () => true,
     isStorageUnlocked: () => true,

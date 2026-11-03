@@ -19,7 +19,12 @@ import {
   type SyncTotpEntry,
   type SyncVaultAdapter,
 } from '../sync/sync-service';
-import { AUTO_LOCK_ALARM, AUTO_LOCK_SETTING_KEY, secureStorage } from '../crypto/secure-storage';
+import {
+  AUTO_LOCK_ALARM,
+  AUTO_LOCK_SETTING_KEY,
+  secureStorage,
+  StorageActivity,
+} from '../crypto/secure-storage';
 import { encryptWithPassword, decryptWithPassword } from '../crypto/encryption';
 import { logger } from '../utils/logger';
 import { arrayBufferToBase64, arrayBufferToBase64URL, base64urlToBase64 } from '../utils/base64';
@@ -233,9 +238,9 @@ class BackgroundService {
     return secureStorage.isStorageUnlocked();
   }
 
-  private async loadPasskeys(): Promise<StoredPasskey[]> {
+  private async loadPasskeys(activity = StorageActivity.Record): Promise<StoredPasskey[]> {
     if (this.useSecureStorage) {
-      return (await secureStorage.getPasskeys()) as unknown as StoredPasskey[];
+      return (await secureStorage.getPasskeys(activity)) as unknown as StoredPasskey[];
     }
     if (await secureStorage.isSetup()) {
       throw new VaultLockedError();
@@ -244,9 +249,12 @@ class BackgroundService {
     return result[PASSKEY_STORAGE_KEY] || [];
   }
 
-  private async savePasskeys(passkeys: StoredPasskey[]): Promise<void> {
+  private async savePasskeys(
+    passkeys: StoredPasskey[],
+    activity = StorageActivity.Record
+  ): Promise<void> {
     if (this.useSecureStorage) {
-      await secureStorage.storePasskeys(passkeys as unknown as Record<string, unknown>[]);
+      await secureStorage.storePasskeys(passkeys as unknown as Record<string, unknown>[], activity);
       return;
     }
     if (await secureStorage.isSetup()) {
@@ -421,9 +429,12 @@ class BackgroundService {
     return this.withVault(async () => {
       if ((await secureStorage.isSetup()) && !secureStorage.isStorageUnlocked()) return;
       const snapshot = await ensureBackupFlagsSnapshot();
-      const { records, stamped } = stampLegacyBackupFlags(await this.loadPasskeys(), snapshot);
+      const { records, stamped } = stampLegacyBackupFlags(
+        await this.loadPasskeys(StorageActivity.Maintenance),
+        snapshot
+      );
       if (stamped === 0) return;
-      await this.savePasskeys(records);
+      await this.savePasskeys(records, StorageActivity.Maintenance);
       logger.info(`Recorded pre-upgrade backup flags on ${stamped} passkeys`);
       await this.incrementPendingChanges();
       void this.triggerSync();
@@ -475,7 +486,9 @@ class BackgroundService {
   private async resolveSyncSeedHash(config: SyncConfig | undefined): Promise<string | null> {
     if (config?.seedHash) return config.seedHash;
     if (!secureStorage.isStorageUnlocked()) return null;
-    const stored = (await secureStorage.getSyncConfig()) as { seedHash?: string } | null;
+    const stored = (await secureStorage.getSyncConfig(StorageActivity.Maintenance)) as {
+      seedHash?: string;
+    } | null;
     return stored?.seedHash || null;
   }
 
@@ -516,10 +529,10 @@ class BackgroundService {
    */
   private async repairStoredCredentialIds(): Promise<void> {
     if (!secureStorage.isStorageUnlocked() && (await secureStorage.isSetup())) return;
-    const repair = repairCredentialIds(await this.loadPasskeys());
+    const repair = repairCredentialIds(await this.loadPasskeys(StorageActivity.Maintenance));
     if (repair.deletions.length === 0) return;
     await this.recordDeletions(repair.deletions);
-    await this.savePasskeys(repair.passkeys);
+    await this.savePasskeys(repair.passkeys, StorageActivity.Maintenance);
     logger.info(`Re-keyed ${repair.deletions.length} passkeys with Bitwarden credential IDs`);
     await this.incrementPendingChanges();
     void this.triggerSync();
@@ -538,8 +551,8 @@ class BackgroundService {
 
   private async readVaultSnapshot() {
     return {
-      passkeys: (await this.loadPasskeys()) as SyncPasskey[],
-      totpEntries: (await loadTotpEntries()) as SyncTotpEntry[],
+      passkeys: (await this.loadPasskeys(StorageActivity.Maintenance)) as SyncPasskey[],
+      totpEntries: (await loadTotpEntries(StorageActivity.Maintenance)) as SyncTotpEntry[],
       deletions: await this.loadDeletions(),
     };
   }
@@ -571,14 +584,21 @@ class BackgroundService {
           await chrome.storage.local.set({ [SYNC_DELETIONS_KEY]: deletions });
           await this.savePasskeys(
             mergeRecords(
-              await this.loadPasskeys(),
+              await this.loadPasskeys(StorageActivity.Maintenance),
               remotePasskeys as StoredPasskey[],
               deletions,
               'passkey'
-            )
+            ),
+            StorageActivity.Maintenance
           );
           await saveTotpEntries(
-            mergeRecords(await loadTotpEntries(), remoteTotpEntries, deletions, 'totp')
+            mergeRecords(
+              await loadTotpEntries(StorageActivity.Maintenance),
+              remoteTotpEntries,
+              deletions,
+              'totp'
+            ),
+            StorageActivity.Maintenance
           );
           await this.repairStoredCredentialIds();
         }),
