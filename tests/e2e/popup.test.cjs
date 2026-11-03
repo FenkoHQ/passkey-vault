@@ -29,6 +29,9 @@ const PASSKEYS = [
     privateKey: 'BASE64-PRIVATE-KEY-MUST-NOT-LEAVE',
     createdAt: 1757000000000,
     counter: 3,
+    backupEligible: true,
+    backupState: true,
+    backupSource: 'imported',
   },
   {
     id: 'cred-mitre',
@@ -46,6 +49,7 @@ const PASSKEYS = [
 
 let context;
 let popup;
+let worker;
 const consoleErrors = [];
 
 before(async () => {
@@ -58,7 +62,7 @@ before(async () => {
     args: [`--disable-extensions-except=${DIST}`, `--load-extension=${DIST}`],
   });
 
-  const worker = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
+  worker = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker'));
   const extensionId = new URL(worker.url()).host;
 
   // Seed the unencrypted display copies the popup reads when no PIN is set.
@@ -155,6 +159,30 @@ test('copies metadata but never the private key once confirmed', async () => {
   assert.equal(copied.rpId, 'google.com');
   assert.equal(copied.publicKey, 'BASE64-PUBLIC-KEY');
   assert.equal('privateKey' in copied, false);
+});
+
+test("explains where a passkey's backup flags came from and lets the user change them", async () => {
+  const row = popup.locator('.passkey-item', { hasText: 'google.com' });
+  if (!(await row.locator('.passkey-backup').isVisible())) await row.locator('.expand-btn').click();
+
+  const toggle = row.locator('.passkey-backup-toggle');
+  assert.equal(await toggle.isChecked(), true);
+  assert.match(await row.locator('.passkey-backup-hint').textContent(), /another password manager/);
+
+  await row.locator('.passkey-backup-row').click();
+  await popup.waitForFunction(() =>
+    document.querySelector('.passkey-backup-hint')?.textContent?.includes('Set by you')
+  );
+  assert.equal(await toggle.isChecked(), false);
+
+  const stored = await worker.evaluate(async () => {
+    const { passkeys } = await chrome.storage.local.get('passkeys');
+    return passkeys.find((p) => p.id === 'cred-google');
+  });
+  assert.equal(stored.backupEligible, false);
+  assert.equal(stored.backupState, false);
+  assert.equal(stored.backupSource, 'manual');
+  assert.ok(stored.updatedAt > 0);
 });
 
 test('renders the popup without console errors', () => {

@@ -90,6 +90,15 @@ const en: TranslationMap = {
   popupFailedLoad: 'Failed to load passkeys',
   popupAdded: 'Added:',
   popupKeyId: 'Key ID:',
+  popupSyncedPasskey: 'Synced passkey',
+  popupBackupHelp: 'If a site rejects this passkey, set this to match the app that created it.',
+  popupBackupImported:
+    'Imported from another password manager, so it signs in as a synced passkey.',
+  popupBackupCreated: 'Created in Fenko Vault.',
+  popupBackupLegacy: 'Kept the sign-in settings it had before this update.',
+  popupBackupManual: 'Set by you.',
+  popupBackupSaved: 'Saved. Try signing in again.',
+  popupBackupFailed: 'Could not update passkey: {error}',
   popupCopyClipboard: 'Copy to clipboard',
   popupDetails: 'Details',
   popupCopyDetails: 'Copy details',
@@ -159,7 +168,7 @@ const en: TranslationMap = {
   optionsUvTitle: 'User Verification',
   optionsUvAlways: 'Report as verified (default)',
   optionsUvNever: 'Report presence only',
-  optionsBackupTitle: 'Backup Flags',
+  optionsBackupTitle: 'Backup Flags for New Passkeys',
   optionsBeTitle: 'Backup eligible (BE)',
   optionsBsTitle: 'Backed up (BS)',
   optionsCounterTitle: 'Signature Counter',
@@ -181,16 +190,18 @@ const en: TranslationMap = {
   optionsUvDesc:
     'The vault has no verification step of its own — a click in the consent card is user presence, not verification. Reporting verification anyway is what lets Google and other passwordless sign-ins accept the passkey. Report presence only and those sites will ask for a password instead.',
   optionsBackupDesc:
-    'Tell the site whether this credential can be synced to your other devices. Some sites use it to decide whether to keep a second factor on the account.',
-  optionsBeDesc: 'The credential is allowed to leave this device.',
-  optionsBsDesc: 'The credential is synced right now. Requires backup eligible.',
+    'What passkeys the vault creates from now on tell sites about syncing. Every passkey keeps the flags it was created or imported with, because sites that record them reject a change. To change one passkey, open it in the vault list.',
+  optionsBeDesc:
+    'New passkeys may be synced to your other devices. On by default, since the vault syncs.',
+  optionsBsDesc:
+    'Report new passkeys as backed up even before sync is set up. With sync on, they are reported as backed up anyway.',
   optionsCounterDesc:
     'Every device keeps its own counter, so a synced credential can look cloned to a site that checks for it. Sending zero is what platform passkey providers do.',
   optionsAaguidDesc:
     'Identifies the authenticator model at registration. The Fenko Vault value makes sites show the vault by name and icon; all-zero keeps the authenticator anonymous.',
   optionsAttachmentDesc: 'How the credential describes where it lives. Cosmetic on most sites.',
   optionsFlagsScope:
-    'Changes apply to the next ceremony. Credentials you already registered keep working, though a site that recorded different flags at registration may notice.',
+    'Changes apply to the next ceremony. Backup flags only apply to passkeys created after the change; existing passkeys keep their own.',
   navAbout: 'About',
   feedbackTitle: 'Send feedback',
   feedbackLabel: 'Feedback',
@@ -377,6 +388,14 @@ const en: TranslationMap = {
   importSkippedItems: '{count} entry(ies) skipped:',
   importKindPasskey: 'Passkey',
   importKindMfa: 'MFA',
+  importKindRepair: 'Fix',
+  importBackupRepairHint: 'Already in your vault. Its sign-in will be fixed to match this file.',
+  importBackupRepairs_one:
+    '{count} passkey already in your vault will be fixed to sign in like the original.',
+  importBackupRepairs_other:
+    '{count} passkeys already in your vault will be fixed to sign in like the original.',
+  importBackupRepaired_one: 'Fixed sign-in for {count} passkey already in your vault.',
+  importBackupRepaired_other: 'Fixed sign-in for {count} passkeys already in your vault.',
   importSucceeded: 'Imported {passkeys} passkey(s) and {totp} MFA entry(ies)',
   importSourcesTitle: 'Where can this come from?',
   importSourcesPasskeys:

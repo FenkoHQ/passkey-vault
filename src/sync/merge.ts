@@ -1,3 +1,5 @@
+import { BackupFields, carryBackupFields } from './backup-flags';
+
 export const SYNC_DELETIONS_KEY = 'sync_deletions';
 
 export interface SyncDeletion {
@@ -6,7 +8,7 @@ export interface SyncDeletion {
   deletedAt: number;
 }
 
-interface SyncRecord {
+interface SyncRecord extends BackupFields {
   id: string;
   createdAt: number;
   updatedAt?: number;
@@ -111,7 +113,7 @@ export function mergeRecords<T extends SyncRecord>(
       incomingTime > currentTime ||
       (incomingTime === currentTime && recordOrder(incoming) > recordOrder(current));
     records.set(incoming.id, {
-      ...(newer ? incoming : current),
+      ...carryBackupFields(newer ? incoming : current, newer ? current : incoming),
       counter: Math.max(current.counter || 0, incoming.counter || 0),
     });
   }
