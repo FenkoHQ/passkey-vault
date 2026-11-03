@@ -69,5 +69,64 @@
     },
     "winner": "",
     "counter": 1
+  },
+  {
+    "name": "backup flags survive a newer copy without them",
+    "local": {
+      "id": "p",
+      "credentialId": "cA",
+      "rpId": "example.com",
+      "privateKey": "keep",
+      "createdAt": 1,
+      "counter": 3,
+      "label": "old",
+      "backupEligible": true,
+      "backupState": true,
+      "backupSource": "imported"
+    },
+    "remote": {
+      "id": "p",
+      "credentialId": "cA",
+      "rpId": "example.com",
+      "privateKey": "keep",
+      "createdAt": 1,
+      "updatedAt": 5,
+      "counter": 1,
+      "label": "renamed"
+    },
+    "winner": "renamed",
+    "counter": 3,
+    "backupEligible": true
+  },
+  {
+    "name": "explicit device-bound flags are kept, not treated as missing",
+    "local": {
+      "id": "p",
+      "credentialId": "cA",
+      "rpId": "example.com",
+      "privateKey": "keep",
+      "createdAt": 1,
+      "counter": 1,
+      "label": "old",
+      "backupEligible": true,
+      "backupState": true,
+      "backupSource": "imported"
+    },
+    "remote": {
+      "id": "p",
+      "credentialId": "cA",
+      "rpId": "example.com",
+      "privateKey": "keep",
+      "createdAt": 1,
+      "updatedAt": 5,
+      "counter": 1,
+      "label": "manual",
+      "backupEligible": false,
+      "backupState": false,
+      "backupSource": "manual"
+    },
+    "winner": "manual",
+    "counter": 1,
+    "backupEligible": false
   }
 ]
