@@ -573,6 +573,28 @@ h3 {
   border-color: var(--danger);
 }
 
+.hotp-next {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.hotp-next:hover {
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+
 .totp-delete {
   display: inline-flex;
   align-items: center;

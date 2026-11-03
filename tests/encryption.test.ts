@@ -140,6 +140,22 @@ describe('Encryption Module', () => {
         decryptWithPassword(encrypted.data, encrypted.iv, encrypted.salt, wrongPassword)
       ).rejects.toThrow('Failed to decrypt data');
     });
+
+    it('should round-trip a backup larger than the engine argument limit', async () => {
+      // A full backup of a few hundred passkeys; spreading this many bytes into
+      // String.fromCharCode overflows the call stack.
+      const plaintext = JSON.stringify({ passkeys: 'x'.repeat(1_000_000) });
+      const password = 'master-password';
+
+      const encrypted = await encryptWithPassword(plaintext, password);
+      const decrypted = await decryptWithPassword(
+        encrypted.data,
+        encrypted.iv,
+        encrypted.salt,
+        password
+      );
+      expect(decrypted).toBe(plaintext);
+    });
   });
 
   describe('deriveKey', () => {
