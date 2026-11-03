@@ -4,6 +4,8 @@
  * then materialises them into vault records.
  */
 
+import type { BackupFlags, BackupSource } from '../sync/backup-flags';
+
 export type OtpType = 'totp' | 'hotp';
 export type OtpAlgorithm = 'SHA1' | 'SHA256' | 'SHA512';
 
@@ -36,6 +38,13 @@ export interface PortablePasskey {
   privateKey: unknown;
   counter: number;
   createdAt: number;
+  /**
+   * Backup flags the file recorded for this passkey. Absent when the format
+   * does not record them: the passkey came from a manager that syncs it, so
+   * it is imported as a synced passkey. 'unknown' marks a Fenko backup made
+   * before passkeys carried their own flags; those keep signing as before.
+   */
+  backup?: { flags: BackupFlags; source: BackupSource } | 'unknown';
 }
 
 /** What a parser hands back: everything it understood plus what it skipped. */
