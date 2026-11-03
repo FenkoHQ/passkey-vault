@@ -57,11 +57,12 @@ function captureRequest(): Promise<{ payload: unknown }> {
 
 /** What the background receives from the content script on Chrome. */
 async function backgroundExtensions(
-  extensions: AuthenticationExtensionsClientInputs
+  extensions: AuthenticationExtensionsClientInputs,
+  allowCredentials?: PublicKeyCredentialDescriptor[]
 ): Promise<SentExtensions> {
   const request = captureRequest();
   await navigator.credentials
-    .get({ publicKey: { challenge: new Uint8Array([1]), extensions } })
+    .get({ publicKey: { challenge: new Uint8Array([1]), allowCredentials, extensions } })
     .catch(() => undefined);
   const message = await request;
   return JSON.parse(JSON.stringify(message.payload)).publicKey.extensions;
@@ -117,18 +118,23 @@ describe('PRF inputs across the page → content → background boundary', () =>
 
   it('serialises every evalByCredential entry', async () => {
     const credentialId = b64url(new Uint8Array([1, 2, 3, 4]));
-    const extensions = await backgroundExtensions({
-      prf: { evalByCredential: { [credentialId]: { first: salt.slice().buffer } } },
-    });
+    // evalByCredential is only valid for credentials named in allowCredentials.
+    const extensions = await backgroundExtensions(
+      { prf: { evalByCredential: { [credentialId]: { first: salt.slice().buffer } } } },
+      [{ type: 'public-key', id: new Uint8Array([1, 2, 3, 4]) }]
+    );
 
     expect(extensions.prf.evalByCredential[credentialId]).toEqual({ first: b64url(salt) });
     expect(await prfFirst(extensions, credentialId)).toEqual(await hmac(salt));
   });
 
-  it('leaves other extension inputs alone', async () => {
-    const extensions = await backgroundExtensions({ credProps: true });
+  it('drops the extensions the vault does not implement', async () => {
+    const extensions = await backgroundExtensions({
+      appid: 'https://example.com/u2f.json',
+      largeBlob: { read: true },
+    } as AuthenticationExtensionsClientInputs);
 
-    expect(extensions).toEqual({ credProps: true });
+    expect(extensions).toEqual({});
   });
 });
 

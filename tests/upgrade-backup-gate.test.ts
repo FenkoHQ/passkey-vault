@@ -4,6 +4,8 @@
  * an in-memory chrome.storage.local and a fake unlocked vault.
  */
 
+// A module, not a global script: other test files declare the same top-level
+// names, and TypeScript would reject the clash when both compile in one worker.
 export {};
 
 const UPGRADE_KEY = 'upgrade_backup_required_0_9_5';
@@ -71,7 +73,9 @@ function installChromeStorage(): void {
 
 function send(type: string, payload?: unknown): Promise<{ success: boolean; error?: string }> {
   return new Promise((resolve) => {
-    listener({ type, payload }, {}, resolve as (response: unknown) => void);
+    // Chrome's account of a message from the popup, an extension page.
+    const popup = { id: chrome.runtime.id, url: chrome.runtime.getURL('popup.html') };
+    listener({ type, payload }, popup, resolve as (response: unknown) => void);
   });
 }
 

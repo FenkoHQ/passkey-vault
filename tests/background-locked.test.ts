@@ -21,7 +21,15 @@ chromeMock.storage.local.set.mockResolvedValue(undefined);
 
 function send(message: Record<string, unknown>): Promise<any> {
   const listener = chromeMock.runtime.onMessage.addListener.mock.calls[0][0] as Listener;
-  return new Promise((resolve) => listener(message, {}, resolve));
+  // Chrome's account of a message from a content script on example.com.
+  const contentScript = {
+    id: chromeMock.runtime.id,
+    url: 'https://example.com/login',
+    origin: 'https://example.com',
+    tab: { id: 1, url: 'https://example.com/login' },
+    frameId: 0,
+  };
+  return new Promise((resolve) => listener(message, contentScript, resolve));
 }
 
 beforeAll(() => {
@@ -32,11 +40,25 @@ beforeAll(() => {
   require('../src/background/background');
 });
 
+const openSignInDialog = {
+  type: 'PASSKEY_DIALOG_OPEN',
+  requestId: 'req-1',
+  payload: { kind: 'get', publicKey: { rpId: 'example.com', challenge: 'AQID' } },
+};
+
 describe('background: locked vault', () => {
-  it('tags LIST_PASSKEYS_FOR_RP with VAULT_LOCKED', async () => {
-    const response = await send({ type: 'LIST_PASSKEYS_FOR_RP', payload: { rpId: 'example.com' } });
+  it('tags a sign-in dialog with VAULT_LOCKED', async () => {
+    const response = await send(openSignInDialog);
 
     expect(response).toMatchObject({ success: false, code: 'VAULT_LOCKED' });
+  });
+
+  it('does not report the locked vault as an extension error', async () => {
+    (console.error as jest.Mock).mockClear();
+
+    await send(openSignInDialog);
+
+    expect(console.error).not.toHaveBeenCalled();
   });
 
   it('leaves unrelated failures untagged', async () => {

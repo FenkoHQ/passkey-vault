@@ -46,6 +46,13 @@ export interface PortablePasskey {
   counter: number;
   createdAt: number;
   /**
+   * Backup flags the file recorded for this passkey. Absent when the format
+   * does not record them: the passkey came from a manager that syncs it, so
+   * it is imported as a synced passkey. 'unknown' marks a Fenko backup made
+   * before passkeys carried their own flags; those keep signing as before.
+   */
+  backup?: { flags: BackupFlags; source: BackupSource } | 'unknown';
+  /**
    * Set only by Fenko's own backup parser. `id` keeps the record's sync
    * identity; `prfKey` is the random WebAuthn PRF secret minted at
    * registration, which cannot be re-derived, so losing it changes every PRF
@@ -53,13 +60,6 @@ export interface PortablePasskey {
    */
   id?: string;
   prfKey?: string;
-  /**
-   * Backup flags the file recorded for this passkey. Absent when the format
-   * does not record them: the passkey came from a manager that syncs it, so
-   * it is imported as a synced passkey. 'unknown' marks a Fenko backup made
-   * before passkeys carried their own flags; those keep signing as before.
-   */
-  backup?: { flags: BackupFlags; source: BackupSource } | 'unknown';
 }
 
 /** What a parser hands back: everything it understood plus what it skipped. */

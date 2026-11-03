@@ -10,6 +10,10 @@
  * the tests here catch a half fix as well as the original bug.
  */
 
+// A module, not a global script: other test files declare the same top-level
+// names, and TypeScript would reject the clash when both compile in one worker.
+export {};
+
 function illegal(): TypeError {
   return new TypeError('Illegal invocation');
 }
@@ -157,7 +161,8 @@ function createPayload() {
       transports: ['internal'],
     },
     authenticatorAttachment: 'platform',
-    clientExtensionResults: {},
+    // What the background returns when the RP asked for credProps.
+    clientExtensionResults: { credProps: { rk: true } },
   };
 }
 
@@ -364,7 +369,7 @@ describe('webauthn-inject credential shape', () => {
         rawId: b64url(RAW_ID),
         type: 'public-key',
         authenticatorAttachment: 'cross-platform',
-        clientExtensionResults: { credProps: { rk: true } },
+        clientExtensionResults: cred.getClientExtensionResults(),
         response: {
           clientDataJSON: b64url(CLIENT_DATA),
           authenticatorData: b64url(AUTH_DATA),

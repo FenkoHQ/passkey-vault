@@ -47,9 +47,6 @@ const chainA: SyncConfigData = {
 const passkey = {
   id: 'pk-1',
   credentialId: 'cred-1',
-  backupEligible: false,
-  backupState: false,
-  backupSource: 'legacy',
   type: 'public-key',
   rpId: 'example.com',
   origin: 'https://example.com',
@@ -58,6 +55,10 @@ const passkey = {
   publicKey: 'public-key',
   createdAt: 1,
   counter: 0,
+  // Per-passkey backup flags, so the legacy stamp on unlock leaves it alone.
+  backupEligible: true,
+  backupState: true,
+  backupSource: 'created',
 };
 
 // jsdom has no structuredClone; stored values are all JSON.
@@ -112,8 +113,10 @@ async function loadBackground(): Promise<{
     sync = ((await import('../src/sync/sync-service')) as unknown as SyncServiceModule).syncService;
   });
 
+  // Chrome's account of a message from the popup, an extension page.
+  const popup = { id: chrome.runtime.id, url: chrome.runtime.getURL('popup.html') };
   const send: Respond = (message) =>
-    new Promise((resolve) => listeners[0](message, {}, (v) => resolve(v as Reply)));
+    new Promise((resolve) => listeners[0](message, popup, (v) => resolve(v as Reply)));
   return { send, secure, sync };
 }
 

@@ -5,6 +5,10 @@
  * or signs with a passkey nobody receives.
  */
 
+// A module, not a global script: other test files declare the same top-level
+// names, and TypeScript would reject the clash when both compile in one worker.
+export {};
+
 const nativeGet = navigator.credentials.get as jest.Mock;
 
 // Side-effect import: hooks navigator.credentials and listens for messages.
@@ -32,6 +36,9 @@ afterEach(() => {
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+// Longer than any timeout the shim allows a ceremony, whatever the RP asks for.
+const PAST_ANY_TIMEOUT_MS = 10 * 60 * 1000 + 1;
+
 const createOptions = (signal?: AbortSignal): CredentialCreationOptions => ({
   publicKey: {
     rp: { name: 'Example' },
@@ -57,7 +64,7 @@ describe('webauthn-inject cancellation', () => {
     const result = navigator.credentials.create(createOptions());
     const outcome = result.catch((error) => error);
 
-    jest.advanceTimersByTime(60000);
+    jest.advanceTimersByTime(PAST_ANY_TIMEOUT_MS);
     jest.useRealTimers();
     await flush();
 
@@ -71,7 +78,7 @@ describe('webauthn-inject cancellation', () => {
     jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate', 'queueMicrotask'] });
     const outcome = navigator.credentials.get(getOptions()).catch((error) => error);
 
-    jest.advanceTimersByTime(60000);
+    jest.advanceTimersByTime(PAST_ANY_TIMEOUT_MS);
     jest.useRealTimers();
     await flush();
 

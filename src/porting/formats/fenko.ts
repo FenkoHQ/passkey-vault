@@ -46,14 +46,6 @@ function str(value: unknown): string {
   return value == null ? '' : String(value);
 }
 
-function nonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
-}
-
-function positiveNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0;
-}
-
 /**
  * A native backup records each passkey's flags since they became
  * per-passkey. One without them predates that, so the passkey keeps signing
@@ -81,6 +73,14 @@ function csvBackup(row: CsvRow): PortablePasskey['backup'] {
     flags: normalizeBackupFlags(backupEligible, parse(row.backupstate) ?? backupEligible),
     source: 'imported',
   };
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function positiveNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
 /** Drop `#` comment rows before the header-keyed parse. */
@@ -125,9 +125,9 @@ export const fenkoJson: FormatParser = {
         privateKey: passkey.privateKey,
         counter: Number(passkey.counter) || 0,
         createdAt: Number(passkey.createdAt) || Date.now(),
+        backup: nativeBackup(passkey),
         ...(nonEmptyString(passkey.id) && { id: passkey.id }),
         ...(nonEmptyString(passkey.prfKey) && { prfKey: passkey.prfKey }),
-        backup: nativeBackup(passkey),
       });
     }
 

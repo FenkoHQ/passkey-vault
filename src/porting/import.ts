@@ -248,7 +248,7 @@ export async function materialize(
   for (const candidate of parsed.passkeys) {
     try {
       const record = await toStoredPasskey(candidate);
-      const known = knownPasskeys.get(record.id) || knownPasskeys.get(record.credentialId);
+      const known = knownPasskeys.get(record.id) ?? knownPasskeys.get(record.credentialId);
       if (known) {
         duplicatePasskeys += 1;
         const repair = backupRepairFor(record, known);

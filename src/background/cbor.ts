@@ -12,27 +12,43 @@ export const PASSKEY_VAULT_AAGUID = new Uint8Array([
   0xd2, 0x71, 0x7a, 0x32, 0x98, 0x51, 0x48, 0xa8, 0x99, 0x61, 0xb2, 0x64, 0xc9, 0x7a, 0x41, 0x1a,
 ]);
 
+const MAJOR_BYTES = 2;
+const MAJOR_TEXT = 3;
+const MAJOR_MAP = 5;
+
+/**
+ * The initial bytes of a CBOR item (RFC 8949 §3): major type plus its
+ * argument (a length or count) in the shortest form, as CTAP2's canonical
+ * encoding requires. Lengths of 64 KiB and more take the four-byte form.
+ */
+function encodeHead(majorType: number, argument: number): number[] {
+  const major = majorType << 5;
+  if (argument < 24) return [major | argument];
+  if (argument < 0x100) return [major | 24, argument];
+  if (argument < 0x10000) return [major | 25, argument >> 8, argument & 0xff];
+  if (argument <= 0xffffffff) {
+    return [
+      major | 26,
+      (argument >>> 24) & 0xff,
+      (argument >>> 16) & 0xff,
+      (argument >>> 8) & 0xff,
+      argument & 0xff,
+    ];
+  }
+  throw new RangeError('CBOR item too large');
+}
+
 export function encodeMapHeader(length: number): number[] {
-  if (length < 24) return [0xa0 + length];
-  if (length < 256) return [0xb8, length];
-  return [0xb9, (length >> 8) & 0xff, length & 0xff];
+  return encodeHead(MAJOR_MAP, length);
 }
 
 export function encodeTextString(value: string): number[] {
   const bytes = new TextEncoder().encode(value);
-  const header =
-    bytes.length < 24
-      ? [0x60 + bytes.length]
-      : bytes.length < 256
-        ? [0x78, bytes.length]
-        : [0x79, (bytes.length >> 8) & 0xff, bytes.length & 0xff];
-  return [...header, ...bytes];
+  return [...encodeHead(MAJOR_TEXT, bytes.length), ...bytes];
 }
 
 export function encodeByteString(bytes: Uint8Array): number[] {
-  if (bytes.length < 24) return [0x40 + bytes.length, ...bytes];
-  if (bytes.length < 256) return [0x58, bytes.length, ...bytes];
-  return [0x59, (bytes.length >> 8) & 0xff, bytes.length & 0xff, ...bytes];
+  return [...encodeHead(MAJOR_BYTES, bytes.length), ...bytes];
 }
 
 /** COSE algorithm identifier for ES256 (RFC 9053), the only key type the vault issues. */
@@ -84,13 +100,7 @@ export function createAttestationObjectNone(authenticatorData: ArrayBuffer): Arr
   parts.push(0x61, 0x75, 0x74, 0x68, 0x44, 0x61, 0x74, 0x61);
 
   // byte string header for authData
-  if (authDataBytes.length <= 23) {
-    parts.push(0x40 + authDataBytes.length);
-  } else if (authDataBytes.length <= 255) {
-    parts.push(0x58, authDataBytes.length);
-  } else {
-    parts.push(0x59, (authDataBytes.length >> 8) & 0xff, authDataBytes.length & 0xff);
-  }
+  parts.push(...encodeHead(MAJOR_BYTES, authDataBytes.length));
 
   const result = new Uint8Array(parts.length + authDataBytes.length);
   result.set(parts, 0);

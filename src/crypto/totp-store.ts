@@ -9,6 +9,7 @@
 import { secureStorage, StorageActivity } from './secure-storage';
 import { generateHotp } from './totp';
 import { arrayBufferToBase64, base64ToUint8Array } from '../utils/base64';
+import { wellFormedRecords } from '../utils/records';
 
 export type TotpAlgorithm = 'SHA1' | 'SHA256' | 'SHA512';
 
@@ -36,14 +37,15 @@ export async function loadTotpEntries(
   activity = StorageActivity.Record
 ): Promise<StoredTotpEntry[]> {
   if (isUnlocked()) {
-    const entries = (await secureStorage.getTotpEntries(activity)) as unknown as StoredTotpEntry[];
-    return entries;
+    return wellFormedRecords(
+      (await secureStorage.getTotpEntries(activity)) as unknown as StoredTotpEntry[]
+    );
   }
   if (await secureStorage.isSetup()) {
     throw new Error('Secure storage is locked. Please unlock with master password.');
   }
   const result = await chrome.storage.local.get(TOTP_STORAGE_KEY);
-  return (result[TOTP_STORAGE_KEY] || []) as StoredTotpEntry[];
+  return wellFormedRecords((result[TOTP_STORAGE_KEY] || []) as StoredTotpEntry[]);
 }
 
 export async function saveTotpEntries(

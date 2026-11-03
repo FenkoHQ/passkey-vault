@@ -549,6 +549,7 @@ const en: TranslationMap = {
   pagePasskeyCreatedMsg: 'Saved passkey for {user} on {rp}',
   pageSignedIn: 'Signed In',
   pageSignedInMsg: 'Used passkey for {user}',
+  pageSignedInSiteMsg: 'Signed in to {rp} with Fenko Vault',
   pagePasskeyError: 'Passkey Error',
   pageSignInFailed: 'Sign In Failed',
   pageChoosePasskey: 'Choose a Passkey',
@@ -557,9 +558,13 @@ const en: TranslationMap = {
   pageVaultLockedMsg: 'Unlock Fenko Vault from the toolbar to sign in with a vault passkey.',
   pageContinue: 'Continue',
   pageUseOtherPasskey: 'Use other passkey',
+  pageChoosePasskeyButton: 'Choose a passkey',
   pageCreatePasskeyTitle: 'Create a Passkey?',
   pageCreatePasskeyMsg: 'Create a passkey for {user} on {rp}?',
   pageCreate: 'Create',
+  dialogInactive: 'This request is no longer active.',
+  dialogNotVisible: 'Cannot confirm this dialog is fully visible.',
+  dialogOpenWindow: 'Open it in a window',
 };
 
 const ru: TranslationMap = {
@@ -1516,12 +1521,21 @@ export async function setStoredLanguage(language: SupportedLanguage): Promise<vo
   await chrome.storage.local.set({ [LANGUAGE_STORAGE_KEY]: language });
 }
 
-export async function initI18n(): Promise<ResolvedLanguage> {
+/**
+ * Load the user's language. On the extension's own pages it also sets the
+ * document's lang and dir; a content script passes applyToDocument: false,
+ * since the document is the web page's.
+ */
+export async function initI18n(
+  options: { applyToDocument?: boolean } = {}
+): Promise<ResolvedLanguage> {
   const stored = await getStoredLanguage();
   currentLanguage =
     stored === 'auto' ? resolveLanguage(navigator.language) : resolveLanguage(stored);
-  document.documentElement.lang = currentLanguage.replace('_', '-');
-  document.documentElement.dir = isRtlLanguage(currentLanguage) ? 'rtl' : 'ltr';
+  if (options.applyToDocument !== false) {
+    document.documentElement.lang = currentLanguage.replace('_', '-');
+    document.documentElement.dir = isRtlLanguage(currentLanguage) ? 'rtl' : 'ltr';
+  }
   return currentLanguage;
 }
 

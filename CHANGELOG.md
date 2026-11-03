@@ -18,6 +18,13 @@ All notable changes to Passkey Vault are documented here. The format follows
   behaviour.
 - The "Never" auto-lock option locked the vault immediately instead of
   keeping it unlocked.
+- WebAuthn requests now follow the browser's validation, timeout, and error
+  behavior more closely. PRF results and client data reach sites in the
+  expected form.
+- Passkey confirmation and account selection now run in extension-owned
+  dialogs. A web page cannot read the account list or approve a request by
+  scripting the dialog.
+- New sync recovery phrases no longer fail when the word list runs short.
 
 ## [0.12.1] - 2026-10-29
 

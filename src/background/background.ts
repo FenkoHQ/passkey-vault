@@ -57,12 +57,19 @@ import {
   type BackupRepair,
 } from '../sync/backup-flags';
 import { verifyRelatedOrigin } from './related-origins';
+import { serializeClientData } from './client-data';
+import { acceptsEs256 } from '../utils/algorithms';
+import { isRpIdValidForHost } from '../utils/rp-id';
+import { hasStringId, wellFormedRecords } from '../utils/records';
+import { DIALOG_MESSAGES, isVaultDialogSender } from '../utils/vault-dialog';
+import { DialogBroker } from './dialog-broker';
 import { needsSiteIcon, saveSiteIcon, clearSiteIcons } from '../site-icons';
 import {
   selectPrfEval,
   getOrCreatePrfKey,
   computePrfResults,
   buildClientExtensionResults,
+  usablePrfInput,
 } from './prf';
 import {
   generateTotp as generateTotpCode,
@@ -86,6 +93,18 @@ const SYNC_CONFIG_KEY = 'sync_config';
 const SYNC_DEVICES_KEY = 'sync_devices';
 const SYNC_STATUS_KEY = 'sync_status';
 const UPGRADE_BACKUP_REQUIRED_KEY = 'upgrade_backup_required_0_9_5';
+/** How long a page may take back a passkey it stopped waiting for. */
+const REGISTRATION_UNDO_MS = 10 * 60 * 1000;
+
+/**
+ * The content script's account of the calling frame, for clientData
+ * crossOrigin/topOrigin. Absent fields mean a top-level, same-origin call.
+ */
+function callerFrame(payload: MessagePayload): { crossOrigin: boolean; topOrigin?: string } {
+  const crossOrigin = payload.crossOrigin === true;
+  const topOrigin = typeof payload.topOrigin === 'string' ? payload.topOrigin : undefined;
+  return crossOrigin && topOrigin ? { crossOrigin, topOrigin } : { crossOrigin };
+}
 
 /**
  * Translate the user's Advanced settings, and the passkey's own backup flags,
@@ -170,11 +189,117 @@ interface ExtensionMessage {
   type: string;
   payload?: MessagePayload;
   requestId?: string;
+  /** Which tab, frame and origin a web page's message came from; set by bindToWebPage. */
+  requester?: string;
   timestamp?: number;
   deviceName?: string;
   wordCount?: number;
   mnemonic?: string;
   deviceId?: string;
+}
+
+/**
+ * What a content script may ask for. A content script runs in the web
+ * page's renderer process, which a browser exploit can take over and use to
+ * send any message the content script could, so these are the only
+ * messages accepted from a web page: the ceremony itself, and nothing that
+ * reads, exports, changes or deletes the vault or its settings.
+ */
+const WEB_PAGE_MESSAGES = new Set([
+  DIALOG_MESSAGES.OPEN,
+  DIALOG_MESSAGES.LAUNCH,
+  DIALOG_MESSAGES.CANCEL,
+  'CREATE_PASSKEY',
+  'DISCARD_REGISTRATION',
+  'GET_PASSKEY',
+  'VERIFY_RELATED_ORIGIN',
+  'NEEDS_SITE_ICON',
+  'SAVE_SITE_ICON',
+  'ACTIVATE_UI',
+]);
+
+/** The popup, options and other pages bundled with the extension. */
+function isExtensionPage(sender: chrome.runtime.MessageSender): boolean {
+  return typeof sender?.url === 'string' && sender.url.startsWith(chrome.runtime.getURL(''));
+}
+
+/** The web origin Chrome says a message came from, or null if it has none. */
+function webOrigin(sender: chrome.runtime.MessageSender): string | null {
+  try {
+    const origin = sender.origin || new URL(sender.url || '').origin;
+    return /^https?:\/\//.test(origin) ? origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Refuse an RP ID the sending origin may not use, as the content script does. */
+async function requireRpIdFor(rpId: string, origin: string): Promise<void> {
+  if (isRpIdValidForHost(rpId, new URL(origin).hostname)) return;
+  if (await verifyRelatedOrigin(rpId, origin)) return;
+  throw new Error(`RP ID ${rpId} is not valid for ${origin}`);
+}
+
+/**
+ * Check a content script's message against Chrome's account of the sender,
+ * and rewrite what the page could otherwise lie about: the origin written
+ * into clientDataJSON, the RP ID it signs for, and whether it runs in a
+ * cross-origin frame. Throws for anything a web page may not ask.
+ */
+async function bindToWebPage(
+  message: ExtensionMessage,
+  sender: chrome.runtime.MessageSender
+): Promise<ExtensionMessage> {
+  if (!WEB_PAGE_MESSAGES.has(message.type)) {
+    throw new Error(`${message.type} is not available to web pages`);
+  }
+  const origin = webOrigin(sender);
+  if (!origin) {
+    throw new Error('Message from an unknown sender');
+  }
+  const host = new URL(origin).hostname;
+  const payload: MessagePayload = { ...(message.payload || {}) };
+
+  switch (message.type) {
+    case DIALOG_MESSAGES.OPEN:
+    case 'CREATE_PASSKEY':
+    case 'GET_PASSKEY': {
+      const publicKey = { ...((payload.publicKey as MessagePayload) || {}) };
+      const rp = publicKey.rp as Record<string, unknown> | undefined;
+      const rpId = String(publicKey.rpId ?? rp?.id ?? host);
+      await requireRpIdFor(rpId, origin);
+      publicKey.rpId = rpId;
+      payload.publicKey = publicKey;
+      payload.origin = origin;
+      // A frame whose origin differs from the tab's top-level page is
+      // cross-origin whatever the page claims.
+      let tabOrigin: string | null = null;
+      try {
+        tabOrigin = sender.tab?.url ? new URL(sender.tab.url).origin : null;
+      } catch {
+        tabOrigin = null;
+      }
+      if (sender.frameId !== 0 && tabOrigin && tabOrigin !== origin) {
+        payload.crossOrigin = true;
+        payload.topOrigin = tabOrigin;
+      } else if (sender.frameId === 0) {
+        payload.crossOrigin = false;
+        delete payload.topOrigin;
+      }
+      break;
+    }
+    case 'NEEDS_SITE_ICON':
+    case 'SAVE_SITE_ICON':
+      // Only a page of the site itself may supply its icon.
+      if (!isRpIdValidForHost(String(payload.rpId || ''), host)) {
+        throw new Error('A page may only supply its own site icon');
+      }
+      break;
+    case 'VERIFY_RELATED_ORIGIN':
+      payload.origin = origin;
+      break;
+  }
+  return { ...message, payload, requester: `${sender.tab?.id}:${sender.frameId}:${origin}` };
 }
 
 /**
@@ -194,6 +319,21 @@ class BackgroundService {
   private isInitialized: boolean;
   private sessionRestored: Promise<unknown>;
   private vaultJobs: Promise<unknown> = Promise.resolve();
+  /** Passkeys made for a web page recently, by request, so the page can take one back. */
+  private recentRegistrations = new Map<
+    string,
+    { requester: string; credentialId: string; at: number }
+  >();
+
+  /** The vault's ceremony dialogs, and the approvals they give. */
+  private dialogs = new DialogBroker({
+    assertUnlocked: async () => {
+      if ((await secureStorage.isSetup()) && !secureStorage.isStorageUnlocked()) {
+        throw new VaultLockedError();
+      }
+    },
+    passkeysFor: async (rpId) => (await this.loadPasskeys()).filter((p) => p.rpId === rpId),
+  });
 
   private withVault<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.vaultJobs.then(operation);
@@ -240,13 +380,15 @@ class BackgroundService {
 
   private async loadPasskeys(activity = StorageActivity.Record): Promise<StoredPasskey[]> {
     if (this.useSecureStorage) {
-      return (await secureStorage.getPasskeys(activity)) as unknown as StoredPasskey[];
+      return wellFormedRecords(
+        (await secureStorage.getPasskeys(activity)) as unknown as StoredPasskey[]
+      );
     }
     if (await secureStorage.isSetup()) {
       throw new VaultLockedError();
     }
     const result = await chrome.storage.local.get(PASSKEY_STORAGE_KEY);
-    return result[PASSKEY_STORAGE_KEY] || [];
+    return wellFormedRecords(result[PASSKEY_STORAGE_KEY] || []);
   }
 
   private async savePasskeys(
@@ -377,6 +519,40 @@ class BackgroundService {
   }
 
   /**
+   * Give every passkey from before per-credential backup flags the flags it
+   * was already being signed with, so a site that stored them sees no change.
+   * Needs the vault readable, so it runs at start-up and again on unlock. A
+   * no-op once every record carries flags.
+   */
+  private stampLegacyBackupFlags(): Promise<void> {
+    return this.withVault(async () => {
+      if ((await secureStorage.isSetup()) && !secureStorage.isStorageUnlocked()) return;
+      const snapshot = await ensureBackupFlagsSnapshot();
+      const { records, stamped } = stampLegacyBackupFlags(
+        await this.loadPasskeys(StorageActivity.Maintenance),
+        snapshot
+      );
+      if (stamped === 0) return;
+      await this.savePasskeys(records, StorageActivity.Maintenance);
+      logger.info(`Recorded pre-upgrade backup flags on ${stamped} passkeys`);
+      await this.noteVaultChange();
+    });
+  }
+
+  /** Flags for a passkey that has none of its own yet: what it was signed with before. */
+  private async fallbackBackupFlags(): Promise<BackupFlags> {
+    return (await loadBackupFlagsSnapshot()) ?? PRE_UPGRADE_BACKUP_FLAGS;
+  }
+
+  /** Whether this device is part of a sync chain, so a new passkey is already backed up. */
+  private async isSyncConfigured(): Promise<boolean> {
+    const config = (await chrome.storage.local.get(SYNC_CONFIG_KEY))[SYNC_CONFIG_KEY] as
+      | SyncConfig
+      | undefined;
+    return Boolean(config?.enabled && config.chainId);
+  }
+
+  /**
    * Older builds also kept the sync seed in the cleartext `sync_devices` chain
    * record, and PIN setup never stripped it. Strip it once the encrypted sync
    * config is known to hold that seed, which needs the key, so stripping never
@@ -417,41 +593,6 @@ class BackgroundService {
     delete publicChain.seedHash;
     await chrome.storage.local.set({ [SYNC_DEVICES_KEY]: publicChain });
     logger.info('Removed the cleartext sync seed from the chain record');
-  }
-
-  /**
-   * Give every passkey from before per-credential backup flags the flags it
-   * was already being signed with, so a site that stored them sees no change.
-   * Needs the vault readable, so it runs at start-up and again on unlock. A
-   * no-op once every record carries flags.
-   */
-  private stampLegacyBackupFlags(): Promise<void> {
-    return this.withVault(async () => {
-      if ((await secureStorage.isSetup()) && !secureStorage.isStorageUnlocked()) return;
-      const snapshot = await ensureBackupFlagsSnapshot();
-      const { records, stamped } = stampLegacyBackupFlags(
-        await this.loadPasskeys(StorageActivity.Maintenance),
-        snapshot
-      );
-      if (stamped === 0) return;
-      await this.savePasskeys(records, StorageActivity.Maintenance);
-      logger.info(`Recorded pre-upgrade backup flags on ${stamped} passkeys`);
-      await this.incrementPendingChanges();
-      void this.triggerSync();
-    });
-  }
-
-  /** Flags for a passkey that has none of its own yet: what it was signed with before. */
-  private async fallbackBackupFlags(): Promise<BackupFlags> {
-    return (await loadBackupFlagsSnapshot()) ?? PRE_UPGRADE_BACKUP_FLAGS;
-  }
-
-  /** Whether this device is part of a sync chain, so a new passkey is already backed up. */
-  private async isSyncConfigured(): Promise<boolean> {
-    const config = (await chrome.storage.local.get(SYNC_CONFIG_KEY))[SYNC_CONFIG_KEY] as
-      | SyncConfig
-      | undefined;
-    return Boolean(config?.enabled && config.chainId);
   }
 
   private async initialize(): Promise<void> {
@@ -534,8 +675,7 @@ class BackgroundService {
     await this.recordDeletions(repair.deletions);
     await this.savePasskeys(repair.passkeys, StorageActivity.Maintenance);
     logger.info(`Re-keyed ${repair.deletions.length} passkeys with Bitwarden credential IDs`);
-    await this.incrementPendingChanges();
-    void this.triggerSync();
+    await this.noteVaultChange();
   }
 
   private async loadDeletions(): Promise<SyncDeletion[]> {
@@ -579,6 +719,10 @@ class BackgroundService {
       mergeRemote: (remotePasskeys, remoteTotpEntries, sourceDeviceId, remoteDeletions = []) =>
         this.withVault(async () => {
           void sourceDeviceId;
+          // A peer on another build or platform can send a damaged record;
+          // it must not stop the rest of its snapshot from merging.
+          remotePasskeys = wellFormedRecords(remotePasskeys).filter(hasStringId);
+          remoteTotpEntries = wellFormedRecords(remoteTotpEntries).filter(hasStringId);
           const deletions = mergeDeletions(await this.loadDeletions(), remoteDeletions);
           // Persist deletion records first, so interrupted merges cannot resurrect entries.
           await chrome.storage.local.set({ [SYNC_DELETIONS_KEY]: deletions });
@@ -607,38 +751,60 @@ class BackgroundService {
 
   private setupMessageHandlers(): void {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      void sender;
-      this.handleMessage(message, sendResponse);
+      this.handleMessage(message, sendResponse, sender);
       return true;
     });
   }
 
   private async handleMessage(
     message: ExtensionMessage,
-    sendResponse: (response?: unknown) => void
+    sendResponse: (response?: unknown) => void,
+    sender: chrome.runtime.MessageSender
   ): Promise<void> {
     try {
-      const response = await this.routeMessage(message);
+      const response = await this.routeMessage(message, sender);
       sendResponse(response);
     } catch (error: unknown) {
       const message_str = error instanceof Error ? error.message : String(error);
-      console.error('Message handling error:', error);
       const code = error instanceof VaultLockedError ? error.code : undefined;
+      // A locked vault is a normal state that the caller handles, not an
+      // error for chrome://extensions to list against the extension.
+      if (!code) {
+        console.error('Message handling error:', error);
+      }
       sendResponse({ success: false, error: message_str, ...(code && { code }) });
     }
   }
 
-  private async routeMessage(message: ExtensionMessage): Promise<unknown> {
-    const { type } = message;
+  private async routeMessage(
+    received: ExtensionMessage,
+    sender: chrome.runtime.MessageSender
+  ): Promise<unknown> {
     await this.sessionRestored;
+    // The dialog page is an extension page that web pages embed, so it gets
+    // the dialog messages and nothing else an extension page could ask for.
+    if (isVaultDialogSender(sender, chrome.runtime.id)) {
+      return this.dialogs.handleDialogMessage(received as unknown as MessagePayload, sender);
+    }
+    const message = isExtensionPage(sender) ? received : await bindToWebPage(received, sender);
+    const { type } = message;
+    if (type === DIALOG_MESSAGES.OPEN) {
+      return this.dialogs.open(message, sender);
+    }
+    if (type === DIALOG_MESSAGES.LAUNCH) {
+      return this.dialogs.launch(message);
+    }
+    if (type === DIALOG_MESSAGES.CANCEL) {
+      return this.dialogs.cancel(message);
+    }
 
     const lockedTypes = new Set([
       'CREATE_PASSKEY',
+      'DISCARD_REGISTRATION',
       'GET_PASSKEY',
       'RETRIEVE_PASSKEY',
       'LIST_PASSKEYS',
       'GET_PASSKEYS',
-      'LIST_PASSKEYS_FOR_RP',
       'DELETE_PASSKEY',
       'SET_PASSKEY_BACKUP',
       'ENCRYPT_BACKUP',
@@ -676,10 +842,21 @@ class BackgroundService {
     if (upgradeBlockedTypes.has(type) && (await this.isUpgradeBackupRequired())) {
       throw new Error('Export an encrypted backup before changing this upgraded vault.');
     }
+    // A web page signs only with the passkey the user picked in the vault's
+    // dialog, and creates one only when the user confirmed it there, for
+    // the request they approved.
+    if (message.requester && type === 'GET_PASSKEY') {
+      const selectedPasskeyId = await this.dialogs.consumeApproval(message, 'get');
+      message.payload = { ...message.payload, selectedPasskeyId };
+    }
+    if (message.requester && type === 'CREATE_PASSKEY') {
+      await this.dialogs.consumeApproval(message, 'create');
+    }
 
     // Serialize read/modify/write operations. Lookups and relay waits stay independent.
     const mutations = new Set([
       'CREATE_PASSKEY',
+      'DISCARD_REGISTRATION',
       'GET_PASSKEY',
       'DELETE_PASSKEY',
       'SET_PASSKEY_BACKUP',
@@ -706,7 +883,9 @@ class BackgroundService {
     const { type, payload } = message;
     switch (type) {
       case 'CREATE_PASSKEY':
-        return this.handleCreatePasskey(payload || {});
+        return this.handleCreatePasskey(payload || {}, message.requestId, message.requester);
+      case 'DISCARD_REGISTRATION':
+        return this.handleDiscardRegistration(message.requestId, message.requester);
       case 'GET_PASSKEY':
         return this.handleGetPasskey(payload || {});
       case 'RETRIEVE_PASSKEY':
@@ -714,8 +893,6 @@ class BackgroundService {
       case 'LIST_PASSKEYS':
       case 'GET_PASSKEYS':
         return this.handleListPasskeys();
-      case 'LIST_PASSKEYS_FOR_RP':
-        return this.handleListPasskeysForRp(payload || {});
       case 'VERIFY_RELATED_ORIGIN':
         return this.handleVerifyRelatedOrigin(payload || {});
       case 'NEEDS_SITE_ICON':
@@ -855,7 +1032,11 @@ class BackgroundService {
 
   // ==================== PASSKEY OPERATIONS ====================
 
-  private async handleCreatePasskey(payload: MessagePayload): Promise<unknown> {
+  private async handleCreatePasskey(
+    payload: MessagePayload,
+    requestId?: string,
+    requester?: string
+  ): Promise<unknown> {
     try {
       const options = payload.publicKey as Record<string, unknown> | undefined;
       const origin = payload.origin as string | undefined;
@@ -867,6 +1048,16 @@ class BackgroundService {
         (origin ? new URL(origin).hostname : 'localhost');
 
       logger.debug('Creating passkey for', rpId, 'user:', (user?.name as string) || 'unknown');
+
+      // The content script hands these to the browser; refuse here too rather
+      // than mint a key type the relying party did not offer.
+      if (!acceptsEs256(options?.pubKeyCredParams)) {
+        return {
+          success: false,
+          error: 'None of the requested algorithms is supported',
+          name: 'NotSupportedError',
+        };
+      }
 
       // Refuse only a credential the RP says this account already has. A site
       // can hold several accounts, and an account several passkeys.
@@ -914,21 +1105,24 @@ class BackgroundService {
       const prfKeyBytes = crypto.getRandomValues(new Uint8Array(32));
       const prfKeyBase64 = arrayBufferToBase64URL(prfKeyBytes.buffer);
 
-      const prfInput = (options?.extensions as Record<string, unknown> | undefined)?.prf;
-      const prfEvalInput = selectPrfEval(
-        prfInput as Parameters<typeof selectPrfEval>[0],
-        credentialIdBase64
-      );
+      const extensions = options?.extensions as Record<string, unknown> | undefined;
+      const prfEvalInput = selectPrfEval(usablePrfInput(extensions, 'create'), credentialIdBase64);
       const prfResults = prfEvalInput
         ? await computePrfResults(prfKeyBytes.buffer, prfEvalInput)
         : null;
       // SECURITY: the PRF/hmac-secret output is a client-only secret. It is
       // returned to the page via clientExtensionResults (below), but must NOT
       // be embedded in authenticatorData, which is forwarded to the RP server.
-      const clientExtensionResults = buildClientExtensionResults(prfResults);
+      const clientExtensionResults = buildClientExtensionResults(extensions, 'create', prfResults);
 
-      const clientData = { type: 'webauthn.create', challenge, origin };
-      const clientDataJSONBytes = new TextEncoder().encode(JSON.stringify(clientData));
+      const clientDataJSONBytes = new TextEncoder().encode(
+        serializeClientData({
+          type: 'webauthn.create',
+          challenge: challenge as string,
+          origin: origin as string,
+          ...callerFrame(payload),
+        })
+      );
 
       const flagSettings = await loadWebAuthnFlags();
       // Fixed for the life of the credential: the site may store BE and
@@ -978,6 +1172,9 @@ class BackgroundService {
 
       await this.savePasskeys(passkeys);
       logger.debug('Created and stored passkey', credentialIdBase64);
+      if (requestId && requester) {
+        this.rememberRegistration(requestId, requester, credentialIdBase64);
+      }
 
       this.logWebAuthn('CREATE', 'info', `Created passkey for ${rpId}`, {
         rpId,
@@ -985,8 +1182,7 @@ class BackgroundService {
         user: (user?.name as string) || '',
       });
       this.logSync('PASSKEY_CREATED', { id: credentialIdBase64, rpId });
-      await this.incrementPendingChanges();
-      this.triggerSync();
+      await this.noteVaultChange();
 
       const rawIdBase64 = base64urlToBase64(credentialIdBase64);
       const clientDataJSONBase64 = arrayBufferToBase64(clientDataJSONBytes.buffer);
@@ -1081,19 +1277,22 @@ class BackgroundService {
         ['sign']
       );
 
-      const clientData = { type: 'webauthn.get', challenge, origin };
-      const clientDataJSONBytes = new TextEncoder().encode(JSON.stringify(clientData));
-
-      const prfInput = (options?.extensions as Record<string, unknown> | undefined)?.prf;
-      const prfEvalInput = selectPrfEval(
-        prfInput as Parameters<typeof selectPrfEval>[0],
-        passkey.id
+      const clientDataJSONBytes = new TextEncoder().encode(
+        serializeClientData({
+          type: 'webauthn.get',
+          challenge: challenge as string,
+          origin: origin as string,
+          ...callerFrame(payload),
+        })
       );
+
+      const extensions = options?.extensions as Record<string, unknown> | undefined;
+      const prfEvalInput = selectPrfEval(usablePrfInput(extensions, 'get'), passkey.id);
       const prfKeyBuffer = await getOrCreatePrfKey(passkey);
       const prfResults = prfEvalInput ? await computePrfResults(prfKeyBuffer, prfEvalInput) : null;
       // SECURITY: keep the PRF secret out of the RP-bound authenticatorData;
       // it is returned only via clientExtensionResults.
-      const clientExtensionResults = buildClientExtensionResults(prfResults);
+      const clientExtensionResults = buildClientExtensionResults(extensions, 'get', prfResults);
 
       const flagSettings = await loadWebAuthnFlags();
       passkey.counter = (passkey.counter || 0) + 1;
@@ -1185,6 +1384,45 @@ class BackgroundService {
     }
   }
 
+  private rememberRegistration(requestId: string, requester: string, credentialId: string): void {
+    const now = Date.now();
+    for (const [id, entry] of this.recentRegistrations) {
+      if (now - entry.at > REGISTRATION_UNDO_MS) this.recentRegistrations.delete(id);
+    }
+    this.recentRegistrations.set(requestId, { requester, credentialId, at: now });
+  }
+
+  /**
+   * Take back a passkey made for a page that stopped waiting for it (it
+   * aborted, or its request timed out) before the credential reached it.
+   * The site never registered that passkey, so keeping it would leave the
+   * user a passkey that cannot sign in. Only the tab, frame and origin the
+   * passkey was made for can take it back, and only for a little while.
+   */
+  private async handleDiscardRegistration(
+    requestId: string | undefined,
+    requester: string | undefined
+  ): Promise<unknown> {
+    const entry = requestId ? this.recentRegistrations.get(requestId) : undefined;
+    if (!entry || entry.requester !== requester || Date.now() - entry.at > REGISTRATION_UNDO_MS) {
+      return { success: false, error: 'Nothing to discard' };
+    }
+    this.recentRegistrations.delete(requestId!);
+    const passkeys = await this.loadPasskeys();
+    const kept = passkeys.filter((p) => p.credentialId !== entry.credentialId);
+    if (kept.length === passkeys.length) {
+      return { success: false, error: 'Nothing to discard' };
+    }
+    // A sync may already have sent it to other devices.
+    await this.recordDeletions([
+      { kind: 'passkey', id: entry.credentialId, deletedAt: Date.now() },
+    ]);
+    await this.savePasskeys(kept);
+    logger.debug('Discarded a passkey the page stopped waiting for', entry.credentialId);
+    await this.noteVaultChange();
+    return { success: true };
+  }
+
   private async handleRetrievePasskey(payload: MessagePayload): Promise<unknown> {
     try {
       const publicKey = payload.publicKey as Record<string, string> | undefined;
@@ -1211,35 +1449,6 @@ class BackgroundService {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
-    }
-  }
-
-  private async handleListPasskeysForRp(payload: MessagePayload): Promise<unknown> {
-    try {
-      const rpId = payload.rpId as string | undefined;
-      if (!rpId) return { success: false, error: 'No rpId provided' };
-
-      const passkeys = await this.loadPasskeys();
-      const matchingPasskeys = passkeys.filter((p) => p.rpId === rpId);
-
-      logger.debug('Found', matchingPasskeys.length, 'passkeys for', rpId);
-      return {
-        success: true,
-        passkeys: matchingPasskeys.map((p) => ({
-          id: p.id,
-          credentialId: p.credentialId || p.id,
-          rpId: p.rpId,
-          origin: p.origin,
-          user: p.user,
-          createdAt: p.createdAt,
-        })),
-        count: matchingPasskeys.length,
-        rpId,
-      };
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      const code = error instanceof VaultLockedError ? error.code : undefined;
-      return { success: false, error: message, ...(code && { code }) };
     }
   }
 
@@ -1299,8 +1508,7 @@ class BackgroundService {
         `Marked passkey for ${current.rpId} as ${synced ? 'synced' : 'device-bound'}`,
         { rpId: current.rpId, credentialId: current.id }
       );
-      await this.incrementPendingChanges();
-      void this.triggerSync();
+      await this.noteVaultChange();
       const { backupEligible, backupState, backupSource, updatedAt } = passkeys[index];
       return { success: true, passkey: { backupEligible, backupState, backupSource, updatedAt } };
     } catch (error: unknown) {
@@ -1325,8 +1533,7 @@ class BackgroundService {
         );
         await this.savePasskeys(filtered);
         this.logSync('PASSKEY_DELETED', { credentialId });
-        await this.incrementPendingChanges();
-        this.triggerSync();
+        await this.noteVaultChange();
         return { success: true, message: 'Passkey deleted' };
       }
       return { success: false, error: 'Passkey not found' };
@@ -1391,8 +1598,7 @@ class BackgroundService {
     if (newTotp.length > 0) await saveTotpEntries([...totpEntries, ...newTotp]);
 
     if (newPasskeys.length > 0 || newTotp.length > 0 || repaired > 0) {
-      await this.incrementPendingChanges();
-      void this.triggerSync();
+      await this.noteVaultChange();
     }
     return {
       success: true,
@@ -1421,8 +1627,7 @@ class BackgroundService {
     await this.savePasskeys([]);
     await saveTotpEntries([]);
     await clearSiteIcons();
-    await this.incrementPendingChanges();
-    void this.triggerSync();
+    await this.noteVaultChange();
     return { success: true };
   }
 
@@ -1503,8 +1708,7 @@ class BackgroundService {
 
       await addTotpEntryStore(entry);
       this.logSync('TOTP_CREATED', { id: entry.id, issuer: entry.issuer });
-      await this.incrementPendingChanges();
-      this.triggerSync();
+      await this.noteVaultChange();
       return { success: true, entry };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1524,8 +1728,7 @@ class BackgroundService {
       const deleted = await deleteTotpEntryStore(id);
       if (!deleted) return { success: false, error: 'Entry not found' };
       this.logSync('TOTP_DELETED', { id });
-      await this.incrementPendingChanges();
-      this.triggerSync();
+      await this.noteVaultChange();
       return { success: true };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1586,8 +1789,7 @@ class BackgroundService {
       const issued = await issueHotpCode(id);
       if (!issued) return { success: false, error: 'Entry not found' };
       this.logSync('HOTP_COUNTER_ADVANCED', { id, counter: issued.entry.counter });
-      await this.incrementPendingChanges();
-      this.triggerSync();
+      await this.noteVaultChange();
       return {
         success: true,
         code: issued.code,
@@ -1893,6 +2095,24 @@ class BackgroundService {
     this.syncStatus = { ...this.syncStatus, ...changes };
     await chrome.storage.local.set({ [SYNC_STATUS_KEY]: this.syncStatus });
     this.logSync('SYNC_STATUS_UPDATE', changes);
+  }
+
+  /**
+   * Count a saved vault change for sync and push it out. This is
+   * bookkeeping: the change is already stored, so a failure here (a full
+   * storage quota, an unreachable relay) is logged instead of turning the
+   * caller's success into an error. A registration reported as failed after
+   * its passkey was saved leaves a passkey the site never received.
+   */
+  private async noteVaultChange(): Promise<void> {
+    try {
+      await this.incrementPendingChanges();
+    } catch (error) {
+      logger.error('Failed to count a pending sync change:', error);
+    }
+    void Promise.resolve(this.triggerSync()).catch((error) =>
+      logger.error('Failed to start a sync:', error)
+    );
   }
 
   private async incrementPendingChanges(): Promise<void> {
