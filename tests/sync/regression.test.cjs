@@ -882,6 +882,9 @@ for (const fixture of require('./merge-fixtures.json')) {
       m.mergeVault([remote], [], 'peer');
       assert.equal(e.api.getPasskeys()[0].label, fixture.winner);
       assert.equal(e.api.getPasskeys()[0].counter, fixture.counter);
+      if ('backupEligible' in fixture) {
+        assert.equal(e.api.getPasskeys()[0].backupEligible, fixture.backupEligible);
+      }
     }
   });
 }
@@ -903,4 +906,364 @@ test('acknowledging presence cannot hide an exhausted snapshot', async () => {
   await s.broadcastMessage({ type: 'announce', payload: { action: 'online' } });
   await s.handleWebSocketMessage(JSON.stringify(['OK', frames.at(-1)[1].id, true, '']), conn);
   assert.ok(s.getStatus().lastError, 'presence ACK is not a snapshot ACK');
+});
+
+// A fresh SecureStorage over the same chrome.storage is what a restarted
+// service worker sees: local and session storage survive, memory does not.
+function vaultWorker(shared) {
+  const e = env(storageCode);
+  const session = shared?.session ?? new Map();
+  const alarms = shared?.alarms ?? new Map();
+  const area = (map) => ({
+    get: async (k) => ({ [k]: map.get(k) }),
+    set: async (o) => Object.entries(o).forEach(([k, v]) => map.set(k, v)),
+    remove: async (k) => [].concat(k).forEach((key) => map.delete(key)),
+  });
+  if (shared) {
+    for (const [k, v] of shared.storage) e.storage.set(k, v);
+  }
+  e.context.chrome.storage.local = area(e.storage);
+  e.context.chrome.storage.session = area(session);
+  e.context.chrome.alarms = {
+    create: async (name, info) => alarms.set(name, info),
+    clear: async (name) => alarms.delete(name),
+  };
+  const vault = new e.api.SecureStorage();
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  const later = (ms) => {
+    const now = Date.now() + ms;
+    e.context.Date = class extends Date {
+      static now() {
+        return now;
+      }
+    };
+  };
+  return { ...e, session, alarms, vault, settle, later };
+}
+
+test('an unlock survives a service worker restart until the auto-lock timeout', async () => {
+  const first = vaultWorker();
+  first.storage.set('auto_lock_timeout', 30);
+  assert.equal(await first.vault.initialize('123456'), true);
+  await first.vault.storePasskeys([passkey]);
+  await first.settle();
+  const deadline = first.alarms.get('passext-auto-lock').when;
+  assert.ok(Math.abs(deadline - (Date.now() + 30 * 60000)) < 5000, 'alarm at the timeout');
+
+  const restarted = vaultWorker(first);
+  restarted.later(29 * 60000);
+  assert.equal(await restarted.vault.restoreSession(), true);
+  assert.equal((await restarted.vault.getPasskeys())[0].privateKey, passkey.privateKey);
+
+  await restarted.settle();
+  const extended = vaultWorker(first);
+  extended.later(31 * 60000);
+  assert.equal(await extended.vault.restoreSession(), true, 'activity after restart counts');
+
+  const expired = vaultWorker(first);
+  expired.later(60 * 60000);
+  assert.equal(await expired.vault.restoreSession(), false);
+  await expired.settle();
+  assert.equal(expired.session.size, 0, 'expired key is dropped from session storage');
+});
+
+test('the auto-lock alarm locks a live worker and reports it', async () => {
+  const w = vaultWorker();
+  assert.equal(await w.vault.initialize('123456'), true);
+  let autoLocked = 0;
+  w.vault.onAutoLock = () => autoLocked++;
+  await w.vault.lockIfIdle();
+  assert.equal(w.vault.isStorageUnlocked(), true, 'not idle yet');
+  w.later(31 * 60000);
+  await w.vault.lockIfIdle();
+  await w.settle();
+  assert.equal(w.vault.isStorageUnlocked(), false);
+  assert.equal(autoLocked, 1);
+  assert.equal(w.session.size + w.alarms.size, 0);
+});
+
+test('"Never" keeps the vault unlocked instead of locking at once', async () => {
+  const w = vaultWorker();
+  w.storage.set('auto_lock_timeout', 0);
+  await w.vault.restoreSession();
+  assert.equal(await w.vault.initialize('123456'), true);
+  await w.settle();
+  assert.equal(w.timers.size, 0, 'no lock timer');
+  assert.equal(w.alarms.size, 0, 'no lock alarm');
+  const restarted = vaultWorker(w);
+  restarted.later(7 * 24 * 3600000);
+  assert.equal(await restarted.vault.restoreSession(), true);
+});
+
+test('a session from before a PIN change no longer unlocks', async () => {
+  const w = vaultWorker();
+  assert.equal(await w.vault.initialize('111111'), true);
+  await w.settle();
+  const stale = w.session.get('passext_unlocked_session');
+  assert.equal(await w.vault.changeMasterPassword('111111', '222222'), true);
+  await w.settle();
+  assert.notEqual(w.session.get('passext_unlocked_session').key, stale.key);
+  w.session.set('passext_unlocked_session', stale);
+  assert.equal(await vaultWorker(w).vault.restoreSession(), false);
+});
+
+test('locking clears the saved session and alarm', async () => {
+  const w = vaultWorker();
+  assert.equal(await w.vault.initialize('123456'), true);
+  await w.settle();
+  assert.equal(w.session.size, 1);
+  await w.vault.lock();
+  await w.settle();
+  assert.equal(w.session.size + w.alarms.size, 0);
+  assert.equal(await vaultWorker(w).vault.restoreSession(), false);
+});
+
+test('lock stays locked when a pending session save finishes late', async () => {
+  const w = vaultWorker();
+  let finishSave;
+  const waitForSave = new Promise((resolve) => {
+    finishSave = resolve;
+  });
+  w.context.chrome.storage.session.set = (values) =>
+    waitForSave.then(() => {
+      for (const [key, value] of Object.entries(values)) {
+        w.session.set(key, value);
+      }
+    });
+
+  assert.equal(await w.vault.initialize('123456'), true);
+  const locked = w.vault.lock();
+  finishSave();
+  await locked;
+
+  assert.equal(await vaultWorker(w).vault.restoreSession(), false);
+});
+
+test('messages wait for the restored session before checking the lock', async () => {
+  const e = env(backgroundCode);
+  const owner = Object.create(e.api.BackgroundService.prototype);
+  owner.vaultJobs = Promise.resolve();
+  let restore;
+  owner.sessionRestored = new Promise((resolve) => {
+    restore = resolve;
+  });
+  owner.handleListPasskeys = async () => ({ success: true });
+  let replied = false;
+  const lookup = owner.handleMessage({ type: 'LIST_PASSKEYS' }, () => {
+    replied = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(replied, false);
+  restore();
+  await lookup;
+  assert.equal(replied, true);
+});
+
+const BITWARDEN_GUID = '674880d4-06ed-1af1-e8dd-2d901d9dbd3d';
+const DECODED_ID = 'Z0iA1AbtGvHo3S2QHZ29PQ';
+const bitwardenImport = { ...passkey, id: BITWARDEN_GUID, credentialId: BITWARDEN_GUID };
+
+// Arrays built inside the VM fail deepStrictEqual against this realm's arrays.
+const plain = (value) => JSON.parse(JSON.stringify(value));
+
+function quietOwner(owner) {
+  Object.assign(owner, {
+    logSync() {},
+    logWebAuthn() {},
+    incrementPendingChanges: async () => {},
+    triggerSync: async () => {},
+  });
+}
+
+test('Bitwarden credential IDs are re-keyed and the repair converges on mobile', async () => {
+  const { b, owner, mobile, m } = await clients();
+  quietOwner(owner);
+  await owner.savePasskeys([bitwardenImport]);
+  mobile.api.setPasskeys([bitwardenImport]);
+
+  await owner.repairStoredCredentialIds();
+  const snapshot = await b.s.vaultAdapter.getSnapshot();
+  assert.deepEqual(plain(snapshot.passkeys.map((entry) => [entry.id, entry.credentialId])), [
+    [DECODED_ID, DECODED_ID],
+  ]);
+  assert.deepEqual(plain(snapshot.deletions.map((entry) => entry.id)), [BITWARDEN_GUID]);
+
+  m.mergeVault(snapshot.passkeys, [], 'browser', snapshot.deletions);
+  assert.deepEqual(plain(mobile.api.getPasskeys().map((entry) => [entry.id, entry.privateKey])), [
+    [DECODED_ID, passkey.privateKey],
+  ]);
+});
+
+test('browser re-keys Bitwarden IDs a peer on an older build still sends', async () => {
+  const { owner } = await clients();
+  quietOwner(owner);
+  await owner.syncVaultAdapter().mergeRemote([bitwardenImport], [], 'old-peer', []);
+  assert.deepEqual(plain((await owner.loadPasskeys()).map((entry) => entry.id)), [DECODED_ID]);
+});
+
+test('browser refuses a new passkey only when the site excludes a stored one', async () => {
+  const { owner } = await clients();
+  quietOwner(owner);
+  await owner.savePasskeys([{ ...passkey, id: DECODED_ID, credentialId: DECODED_ID }]);
+  const register = (excludeCredentials) =>
+    owner.handleCreatePasskey({
+      publicKey: {
+        rp: { id: 'example.com', name: 'Example' },
+        rpId: 'example.com',
+        user: { id: 'dXNlcg', name: 'ali', displayName: 'Ali' },
+        challenge: 'AAAA',
+        excludeCredentials,
+      },
+      origin: 'https://example.com',
+    });
+
+  const second = await register([{ id: 'b3RoZXI', type: 'public-key' }]);
+  assert.equal(second.success, true, second.error);
+  const excluded = await register([{ id: DECODED_ID, type: 'public-key' }]);
+  assert.equal(excluded.name, 'InvalidStateError');
+  assert.equal((await owner.loadPasskeys()).length, 2);
+});
+
+async function backgroundWithVault(records, stored = {}) {
+  const e = env(backgroundCode);
+  const values = new Map(Object.entries(stored));
+  e.context.chrome.storage.local.get = async (keys) => {
+    const out = {};
+    for (const key of Array.isArray(keys) ? keys : [keys]) {
+      if (values.has(key)) out[key] = values.get(key);
+    }
+    return out;
+  };
+  e.context.chrome.storage.local.set = async (items) =>
+    Object.entries(items).forEach(([key, value]) => values.set(key, value));
+  const owner = Object.create(e.api.BackgroundService.prototype);
+  owner.vaultJobs = Promise.resolve();
+  owner.loadPasskeys = async () => records;
+  owner.savePasskeys = async (next) => {
+    records = next;
+  };
+  owner.logWebAuthn = async () => {};
+  owner.logSync = () => {};
+  owner.incrementPendingChanges = async () => {};
+  owner.triggerSync = () => {};
+  return { owner, values, records: () => records };
+}
+
+async function vaultKey() {
+  const pair = await webcrypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+    'sign',
+    'verify',
+  ]);
+  const pkcs8 = Buffer.from(await webcrypto.subtle.exportKey('pkcs8', pair.privateKey));
+  return pkcs8.toString('base64');
+}
+
+function signedFlags(response) {
+  return Buffer.from(response.credential.response.authenticatorData, 'base64')[32];
+}
+
+const BE = 0x08;
+const BS = 0x10;
+const getRequest = {
+  origin: 'https://tele.example.com',
+  publicKey: { challenge: 'Y2hhbGxlbmdl', rpId: 'tele.example.com' },
+};
+
+test("sign-in uses the passkey's own backup flags, whatever the global toggles say", async () => {
+  const privateKey = await vaultKey();
+  const base = { rpId: 'tele.example.com', privateKey, createdAt: 1, counter: 0, user: {} };
+  const { owner } = await backgroundWithVault(
+    [
+      { ...base, id: 'synced', backupEligible: true, backupState: true, backupSource: 'imported' },
+      { ...base, id: 'bound', backupEligible: false, backupState: false, backupSource: 'created' },
+    ],
+    { webauthn_flags: { backupEligible: false, backupState: false } }
+  );
+
+  const synced = await owner.handleGetPasskey({ ...getRequest, selectedPasskeyId: 'synced' });
+  assert.equal(signedFlags(synced) & (BE | BS), BE | BS);
+  const bound = await owner.handleGetPasskey({ ...getRequest, selectedPasskeyId: 'bound' });
+  assert.equal(signedFlags(bound) & (BE | BS), 0);
+});
+
+test('a passkey without flags signs with the pre-upgrade snapshot', async () => {
+  const privateKey = await vaultKey();
+  const record = { id: 'old', rpId: 'tele.example.com', privateKey, createdAt: 1, counter: 0 };
+  const withSnapshot = await backgroundWithVault([{ ...record }], {
+    webauthn_backup_snapshot: { backupEligible: true, backupState: true },
+  });
+  const response = await withSnapshot.owner.handleGetPasskey(getRequest);
+  assert.equal(signedFlags(response) & (BE | BS), BE | BS);
+
+  const noSnapshot = await backgroundWithVault([{ ...record }]);
+  assert.equal(signedFlags(await noSnapshot.owner.handleGetPasskey(getRequest)) & (BE | BS), 0);
+});
+
+test('upgrade stamps the toggles in force onto existing passkeys, once', async () => {
+  const vault = await backgroundWithVault(
+    [{ id: 'old', rpId: 'tele.example.com', privateKey: 'k', createdAt: 1, counter: 0 }],
+    { webauthn_flags: { backupEligible: true, backupState: true } }
+  );
+  await vault.owner.stampLegacyBackupFlags();
+  assert.deepEqual(JSON.parse(JSON.stringify(vault.records()[0])), {
+    id: 'old',
+    rpId: 'tele.example.com',
+    privateKey: 'k',
+    createdAt: 1,
+    counter: 0,
+    backupEligible: true,
+    backupState: true,
+    backupSource: 'legacy',
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(vault.values.get('webauthn_backup_snapshot'))), {
+    backupEligible: true,
+    backupState: true,
+  });
+
+  // Turning the toggles off afterwards only affects new passkeys.
+  vault.values.set('webauthn_flags', { backupEligible: false, backupState: false });
+  await vault.owner.stampLegacyBackupFlags();
+  assert.equal(vault.records()[0].backupEligible, true);
+});
+
+test('a new passkey records the flags it registered with', async () => {
+  const vault = await backgroundWithVault([], {});
+  const response = await vault.owner.handleCreatePasskey({
+    origin: 'https://tele.example.com',
+    publicKey: {
+      challenge: 'Y2hhbGxlbmdl',
+      rp: { id: 'tele.example.com', name: 'Teleport' },
+      user: { id: 'dXNlcg', name: 'colin', displayName: 'colin' },
+    },
+  });
+  assert.equal(response.success, true);
+  const [created] = vault.records();
+  assert.equal(created.backupEligible, true);
+  assert.equal(created.backupState, false);
+  assert.equal(created.backupSource, 'created');
+  const attestedFlags = Buffer.from(response.credential.response.authenticatorData, 'base64')[32];
+  assert.equal(attestedFlags & (BE | BS), BE);
+});
+
+test('the per-passkey switch sets both flags, marks the choice and bumps the revision', async () => {
+  const vault = await backgroundWithVault([
+    {
+      id: 'p',
+      rpId: 'tele.example.com',
+      privateKey: 'k',
+      createdAt: 1,
+      updatedAt: 5,
+      counter: 0,
+      backupEligible: false,
+      backupState: false,
+      backupSource: 'legacy',
+    },
+  ]);
+  const result = await vault.owner.handleSetPasskeyBackup({ credentialId: 'p', synced: true });
+  assert.equal(result.success, true);
+  const [record] = vault.records();
+  assert.equal(record.backupEligible, true);
+  assert.equal(record.backupState, true);
+  assert.equal(record.backupSource, 'manual');
+  assert.ok(record.updatedAt > 5);
 });

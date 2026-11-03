@@ -600,13 +600,9 @@
     if (base64url instanceof ArrayBuffer) {
       return base64url;
     }
-    // If Uint8Array, return its buffer
-    if (base64url instanceof Uint8Array) {
-      return base64url.buffer as ArrayBuffer;
-    }
-    // Handle any other ArrayBufferView (e.g. Int8Array, DataView)
+    // Handle any ArrayBufferView (Uint8Array, DataView, ...)
     if (ArrayBuffer.isView(base64url)) {
-      return base64url.buffer as ArrayBuffer;
+      return viewToArrayBuffer(base64url);
     }
     if (
       typeof base64url === 'object' &&

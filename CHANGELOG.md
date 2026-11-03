@@ -6,6 +6,41 @@ All notable changes to Passkey Vault are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- The vault no longer asks for the PIN again about 30 seconds after unlocking.
+  Chrome stops an idle extension service worker, and the unlock key lived only
+  in its memory, so the auto-lock timeout never took effect. The key is now
+  kept in session storage, which stays in memory, is cleared when the browser
+  quits and cannot be read by content scripts. The vault locks once the
+  timeout passes with no activity, using a browser alarm (new `alarms`
+  permission) when the worker is asleep. Firefox before 115 keeps the old
+  behaviour.
+- The "Never" auto-lock option locked the vault immediately instead of
+  keeping it unlocked.
+
+## [0.12.1] - 2026-10-29
+
+### Fixed
+
+- Bitwarden passkeys imported from JSON now use the credential IDs sites expect
+  in the browser, on Android, and on iOS. Earlier imports are repaired when the
+  vault starts, unlocks, or syncs.
+- Imported passkeys now keep their own synced state across devices. If a site
+  still rejects a passkey imported before this release, import the original
+  file again to update that state. Existing vault-created passkeys keep their
+  previous sign-in behavior.
+- Multiple accounts on one site can each register a passkey.
+- WebAuthn requests containing a view of a larger buffer now use only the
+  requested bytes.
+
+### Changed
+
+- Passkey details now offer a "Synced passkey" switch for sites that need a
+  different setting. New passkeys are backup eligible, and report as backed up
+  once sync is configured.
+- Import now reports when it updates or repairs a passkey.
+
 ## [0.12.0] - 2026-09-21
 
 ### Knowing a passkey by its site

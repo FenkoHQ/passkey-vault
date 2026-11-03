@@ -6,7 +6,7 @@
  * CSV template — and turns it into vault records.
  */
 
-import { initAndLocalize, t } from '../i18n';
+import { formatCount, initAndLocalize, t } from '../i18n';
 import { initTheme } from '../theme';
 import {
   acceptedExtensions,
@@ -207,7 +207,12 @@ import {
       appendPreviewItem(entry.issuer || t('commonUnknownSite'), entry.account, 'mfa');
     }
 
-    const duplicates = result.duplicatePasskeys + result.duplicateTotp;
+    for (const repair of result.backupRepairs) {
+      appendPreviewItem(repair.rpId, t('importBackupRepairHint'), 'repair');
+    }
+
+    const repairs = result.backupRepairs.length;
+    const duplicates = result.duplicatePasskeys + result.duplicateTotp - repairs;
     for (let i = 0; i < duplicates; i++) {
       appendPreviewItem(t('importAlreadyExists'), '', 'duplicate');
     }
@@ -215,21 +220,28 @@ import {
     previewEl.classList.add('visible');
 
     const total = result.passkeys.length + result.totpEntries.length;
-    if (total === 0) {
+    if (total === 0 && repairs === 0) {
       showStatus(t('importNothingNew'), 'info');
       reportWarnings(result);
       return;
     }
 
-    let message = t('importFoundEntries', {
-      passkeys: result.passkeys.length,
-      totp: result.totpEntries.length,
-    });
-    if (duplicates > 0) {
+    // A file that only fixes passkeys already in the vault says just that.
+    let message =
+      total === 0
+        ? ''
+        : t('importFoundEntries', {
+            passkeys: result.passkeys.length,
+            totp: result.totpEntries.length,
+          });
+    if (total > 0 && duplicates > 0) {
       message += t('importDuplicatesSkipped', {
         count: duplicates,
         plural: duplicates !== 1 ? 's' : '',
       });
+    }
+    if (repairs > 0) {
+      message = `${message} ${formatCount('importBackupRepairs', repairs)}`.trim();
     }
     showStatus(message, 'info');
     reportWarnings(result);
@@ -248,12 +260,13 @@ import {
   function appendPreviewItem(
     title: string,
     subtitle: string,
-    kind: 'passkey' | 'mfa' | 'duplicate'
+    kind: 'passkey' | 'mfa' | 'duplicate' | 'repair'
   ): void {
     const labels = {
       passkey: t('importKindPasskey'),
       mfa: t('importKindMfa'),
       duplicate: t('importAlreadyExists'),
+      repair: t('importKindRepair'),
     };
 
     const item = document.createElement('div');
@@ -320,7 +333,10 @@ import {
   }
 
   async function performImport(): Promise<void> {
-    if (!pending || pending.passkeys.length + pending.totpEntries.length === 0) {
+    if (
+      !pending ||
+      pending.passkeys.length + pending.totpEntries.length + pending.backupRepairs.length === 0
+    ) {
       showStatus(t('importNoNew'), 'error');
       return;
     }
@@ -328,17 +344,27 @@ import {
     try {
       const response = await chrome.runtime.sendMessage({
         type: 'IMPORT_VAULT',
-        payload: { passkeys: pending.passkeys, totpEntries: pending.totpEntries },
+        payload: {
+          passkeys: pending.passkeys,
+          totpEntries: pending.totpEntries,
+          backupRepairs: pending.backupRepairs,
+        },
       });
       if (!response.success) throw new Error(response.error || 'Import failed');
 
-      showStatus(
-        t('importSucceeded', {
-          passkeys: Number(response.passkeys || 0),
-          totp: Number(response.totpEntries || 0),
-        }),
-        'success'
-      );
+      const added = Number(response.passkeys || 0) + Number(response.totpEntries || 0);
+      const repaired = Number(response.backupRepaired || 0);
+      const parts = [];
+      if (added > 0 || repaired === 0) {
+        parts.push(
+          t('importSucceeded', {
+            passkeys: Number(response.passkeys || 0),
+            totp: Number(response.totpEntries || 0),
+          })
+        );
+      }
+      if (repaired > 0) parts.push(formatCount('importBackupRepaired', repaired));
+      showStatus(parts.join(' '), 'success');
 
       actionsEl.classList.add('hidden');
       closeLink.textContent = t('importCloseReturn');
@@ -350,7 +376,8 @@ import {
 
   function showStatus(message: string, type: 'success' | 'error' | 'info'): void {
     statusEl.textContent = message;
-    statusEl.className = 'status ' + type;
+    // .status is display:none until .visible is set.
+    statusEl.className = `status visible ${type}`;
   }
 
   function resetState(): void {

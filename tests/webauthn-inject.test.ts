@@ -94,6 +94,8 @@ g.AuthenticatorAssertionResponse = FakeAssertionResponse;
 // Side-effect import: hooks navigator.credentials and listens for responses.
 require('../src/content/webauthn-inject');
 
+export {};
+
 const PAGE_SOURCE = 'PASSKEY_VAULT_PAGE';
 const CONTENT_SOURCE = 'PASSKEY_VAULT_CONTENT';
 const COSE_ES256 = -7;
@@ -218,6 +220,42 @@ function touchAllNativeMembers(obj: object): void {
     proto = Object.getPrototypeOf(proto);
   }
 }
+
+/** Wait for the shim to post its request and return the whole message. */
+function nextRequest(): Promise<any> {
+  return new Promise((resolve) => {
+    const listener = (event: MessageEvent) => {
+      if (event.data?.source !== PAGE_SOURCE) {
+        return;
+      }
+      window.removeEventListener('message', listener);
+      resolve(event.data);
+    };
+    window.addEventListener('message', listener);
+  });
+}
+
+describe('webauthn-inject request serialisation', () => {
+  it('sends only the bytes a typed-array view covers', async () => {
+    // A view onto a larger buffer, as subarray() or a pooled decoder returns.
+    const backing = new Uint8Array([0xaa, 9, 8, 0xbb, 0xcc, 1, 2, 3, 0xdd]);
+    const pending = nextRequest();
+    const result = navigator.credentials.get({
+      publicKey: {
+        challenge: backing.subarray(1, 3),
+        allowCredentials: [{ type: 'public-key', id: new DataView(backing.buffer, 5, 3) }],
+      },
+    });
+    const request = await pending;
+    answer(request.requestId, getPayload(null));
+    await result;
+
+    expect(request.payload.publicKey.challenge).toBe(b64url(new Uint8Array([9, 8])));
+    expect(request.payload.publicKey.allowCredentials[0].id).toBe(
+      b64url(new Uint8Array([1, 2, 3]))
+    );
+  });
+});
 
 describe('webauthn-inject credential shape', () => {
   describe('create()', () => {

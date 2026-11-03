@@ -4,6 +4,8 @@
  * page gives up on it.
  */
 
+export {};
+
 const chromeMock = (window as unknown as { chrome: Record<string, any> }).chrome;
 chromeMock.storage.local.get.mockResolvedValue({});
 chromeMock.storage.onChanged = { addListener: jest.fn() };

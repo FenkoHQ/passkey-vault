@@ -9,6 +9,7 @@
 import { base32Encode } from '../crypto/totp';
 import { StoredTotpEntry } from '../crypto/totp-store';
 import { base64ToUint8Array } from '../utils/base64';
+import { backupSourceOf, hasBackupFlags, normalizeBackupFlags } from '../sync/backup-flags';
 import { buildOtpauthUri } from './otpauth';
 import { buildCxf } from './formats/cxf';
 import { passkeysToCsv, totpToCsv } from './formats/fenko';
@@ -97,6 +98,12 @@ export function toPortablePasskey(record: StoredPasskeyRecord): PortablePasskey 
     privateKey: record.privateKey,
     counter: record.counter || 0,
     createdAt: record.createdAt || Date.now(),
+    backup: hasBackupFlags(record)
+      ? {
+          flags: normalizeBackupFlags(record.backupEligible === true, record.backupState === true),
+          source: backupSourceOf(record) ?? 'imported',
+        }
+      : 'unknown',
   };
 }
 

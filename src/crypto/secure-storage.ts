@@ -24,6 +24,33 @@ const STORAGE_KEYS = {
   ENCRYPTION_SALT: 'passext_encryption_salt',
 } as const;
 
+/** chrome.storage.local key holding the auto-lock timeout in minutes; 0 means never. */
+export const AUTO_LOCK_SETTING_KEY = 'auto_lock_timeout';
+export const AUTO_LOCK_ALARM = 'passext-auto-lock';
+const UNLOCKED_SESSION_KEY = 'passext_unlocked_session';
+// Activity extends the deadline in memory at once but reaches session storage
+// at most this often, so a restarted worker may lock up to this much early.
+const SESSION_WRITE_INTERVAL_MS = 15 * 1000;
+
+interface UnlockedSession {
+  key: string;
+  salt: string;
+  activeAt: number;
+}
+
+/**
+ * Memory-only storage that outlives the service worker until the browser
+ * quits. Content scripts cannot read it at its default access level. Absent
+ * before Firefox 115, where an unlock lasts only as long as the worker.
+ */
+function sessionArea(): chrome.storage.StorageArea | null {
+  return typeof chrome !== 'undefined' && chrome.storage?.session ? chrome.storage.session : null;
+}
+
+function alarms(): typeof chrome.alarms | null {
+  return typeof chrome !== 'undefined' && chrome.alarms ? chrome.alarms : null;
+}
+
 export interface SecureStorageConfig {
   seedHash: string;
   chainId: string;
@@ -111,7 +138,63 @@ export class SecureStorage {
   private salt: Uint8Array | null = null;
   private isUnlocked = false;
   private lockTimeout: ReturnType<typeof setTimeout> | null = null;
-  private autoLockMs = 30 * 60 * 1000; // 30 minutes default
+  private autoLockMs = 30 * 60 * 1000; // 30 minutes default; 0 never locks
+  private activeAt = 0;
+  private sessionSavedAt = 0;
+  private sessionWrites: Promise<void> = Promise.resolve();
+  /** Called when the vault locks itself after the timeout. */
+  onAutoLock: (() => void) | null = null;
+
+  /**
+   * Pick up an unlock made by an earlier instance of the service worker.
+   * Chrome stops an idle MV3 service worker after about 30 seconds, and the
+   * key used to go with it, locking the vault long before the timeout.
+   * Drops the session instead when it has expired or no longer opens the
+   * vault (the PIN changed). Returns whether the vault is unlocked.
+   */
+  async restoreSession(): Promise<boolean> {
+    const setting = (await chrome.storage.local.get(AUTO_LOCK_SETTING_KEY))[AUTO_LOCK_SETTING_KEY];
+    if (typeof setting === 'number') this.autoLockMs = setting * 60 * 1000;
+
+    const area = sessionArea();
+    if (this.isStorageUnlocked() || !area) return this.isStorageUnlocked();
+    const session = (await area.get(UNLOCKED_SESSION_KEY))[UNLOCKED_SESSION_KEY] as
+      | UnlockedSession
+      | undefined;
+    if (!session) return false;
+
+    const key = base64ToUint8Array(session.key);
+    const check = (await chrome.storage.local.get(STORAGE_KEYS.MASTER_KEY_CHECK))[
+      STORAGE_KEYS.MASTER_KEY_CHECK
+    ];
+    if (this.isIdle(session.activeAt) || !check || !opensVault(check, key)) {
+      secureWipe(key);
+      await this.clearSession();
+      return false;
+    }
+    if (this.isStorageUnlocked()) {
+      // An unlock finished while this was reading; keep its key.
+      secureWipe(key);
+      return true;
+    }
+
+    this.encryptionKey = key;
+    this.salt = base64ToUint8Array(session.salt);
+    this.isUnlocked = true;
+    this.activeAt = session.activeAt;
+    this.sessionSavedAt = session.activeAt;
+    this.scheduleAutoLock();
+    return true;
+  }
+
+  /**
+   * Lock when the timeout has passed. The alarm calls this, since neither the
+   * in-memory timer nor the key survives a stopped service worker.
+   */
+  async lockIfIdle(): Promise<void> {
+    if (!(await this.restoreSession())) return;
+    if (this.isIdle(this.activeAt)) await this.autoLock();
+  }
 
   /**
    * Initialize secure storage with a master password
@@ -160,7 +243,7 @@ export class SecureStorage {
       this.encryptionKey = key;
       this.salt = salt;
       this.isUnlocked = true;
-      this.resetAutoLock();
+      this.resetAutoLock(true);
       return true;
     } catch (error) {
       console.error('SecureStorage initialization failed:', error);
@@ -208,7 +291,7 @@ export class SecureStorage {
   /**
    * Lock the secure storage, wiping encryption key from memory
    */
-  lock(): void {
+  lock(): Promise<void> {
     if (this.encryptionKey) {
       secureWipe(this.encryptionKey);
       this.encryptionKey = null;
@@ -218,27 +301,91 @@ export class SecureStorage {
       clearTimeout(this.lockTimeout);
       this.lockTimeout = null;
     }
+    return this.clearSession();
+  }
+
+  private autoLock(): Promise<void> {
+    const cleared = this.lock();
+    this.onAutoLock?.();
+    return cleared;
+  }
+
+  private isIdle(activeAt: number): boolean {
+    return this.autoLockMs > 0 && Date.now() >= activeAt + this.autoLockMs;
   }
 
   /**
-   * Reset the auto-lock timer
+   * Record activity: push the deadline back and, at most every
+   * SESSION_WRITE_INTERVAL_MS unless forced, save it with the key.
    */
-  private resetAutoLock(): void {
+  private resetAutoLock(forceSave = false): void {
+    this.activeAt = Date.now();
+    this.scheduleAutoLock();
+    if (forceSave || this.activeAt - this.sessionSavedAt >= SESSION_WRITE_INTERVAL_MS) {
+      void this.saveSession();
+    }
+  }
+
+  private scheduleAutoLock(): void {
     if (this.lockTimeout) {
       clearTimeout(this.lockTimeout);
+      this.lockTimeout = null;
     }
-    this.lockTimeout = setTimeout(() => {
-      this.lock();
-    }, this.autoLockMs);
+    if (this.autoLockMs <= 0) return;
+    const delay = Math.max(0, this.activeAt + this.autoLockMs - Date.now());
+    this.lockTimeout = setTimeout(() => void this.autoLock(), delay);
+  }
+
+  private saveSession(): Promise<void> {
+    const area = sessionArea();
+    if (!area || !this.encryptionKey || !this.salt) return Promise.resolve();
+    this.sessionSavedAt = this.activeAt;
+    const session = {
+      [UNLOCKED_SESSION_KEY]: {
+        key: uint8ArrayToBase64(this.encryptionKey),
+        salt: uint8ArrayToBase64(this.salt),
+        activeAt: this.activeAt,
+      } satisfies UnlockedSession,
+    };
+    return this.writeSession(async () => {
+      await area.set(session);
+      await this.scheduleAlarm();
+    });
+  }
+
+  private async scheduleAlarm(): Promise<void> {
+    const api = alarms();
+    if (!api) return;
+    if (this.autoLockMs > 0) {
+      await api.create(AUTO_LOCK_ALARM, { when: this.activeAt + this.autoLockMs });
+    } else {
+      await api.clear(AUTO_LOCK_ALARM);
+    }
+  }
+
+  private clearSession(): Promise<void> {
+    this.sessionSavedAt = 0;
+    return this.writeSession(async () => {
+      await sessionArea()?.remove(UNLOCKED_SESSION_KEY);
+      await alarms()?.clear(AUTO_LOCK_ALARM);
+    });
+  }
+
+  private writeSession(write: () => Promise<void>): Promise<void> {
+    const next = this.sessionWrites.catch(() => undefined).then(write);
+    this.sessionWrites = next;
+    return next;
   }
 
   /**
-   * Set auto-lock timeout in milliseconds
+   * Set auto-lock timeout in milliseconds; 0 never locks. Counts from the
+   * last activity rather than restarting the clock.
    */
   setAutoLockTimeout(ms: number): void {
     this.autoLockMs = ms;
-    if (this.isUnlocked) {
-      this.resetAutoLock();
+    if (this.isStorageUnlocked()) {
+      this.scheduleAutoLock();
+      void this.scheduleAlarm();
     }
   }
 
@@ -465,7 +612,7 @@ export class SecureStorage {
       this.encryptionKey = newKey;
       this.salt = newSalt;
 
-      this.resetAutoLock();
+      this.resetAutoLock(true);
       return true;
     } catch (error) {
       console.error('Failed to change master password:', error);
@@ -500,7 +647,7 @@ export class SecureStorage {
       totpEntries: (await this.readEncrypted(STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES)) || [],
       syncConfig: syncConfig ? cleanSyncConfig(syncConfig) : null,
     });
-    this.lock();
+    await this.lock();
     await chrome.storage.local.remove([
       STORAGE_KEYS.MASTER_KEY_CHECK,
       STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG,
@@ -525,7 +672,7 @@ export class SecureStorage {
    * Wipe all secure data (emergency reset)
    */
   async emergencyWipe(): Promise<void> {
-    this.lock();
+    await this.lock();
     await chrome.storage.local.remove([
       STORAGE_KEYS.MASTER_KEY_CHECK,
       STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG,

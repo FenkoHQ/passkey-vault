@@ -47,6 +47,9 @@ const chainA: SyncConfigData = {
 const passkey = {
   id: 'pk-1',
   credentialId: 'cred-1',
+  backupEligible: false,
+  backupState: false,
+  backupSource: 'legacy',
   type: 'public-key',
   rpId: 'example.com',
   origin: 'https://example.com',

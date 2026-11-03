@@ -4,6 +4,8 @@
  * an in-memory chrome.storage.local and a fake unlocked vault.
  */
 
+export {};
+
 const UPGRADE_KEY = 'upgrade_backup_required_0_9_5';
 const BLOCKED = 'Export an encrypted backup before changing this upgraded vault.';
 

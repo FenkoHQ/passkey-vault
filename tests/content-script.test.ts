@@ -5,6 +5,8 @@
  * the page.
  */
 
+export {};
+
 const PAGE_SOURCE = 'PASSKEY_VAULT_PAGE';
 const CONTENT_SOURCE = 'PASSKEY_VAULT_CONTENT';
 
