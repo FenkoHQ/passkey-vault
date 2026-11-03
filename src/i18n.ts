@@ -146,6 +146,8 @@ const en: TranslationMap = {
   popupTotpDigits: 'Digits:',
   popupTotpPeriod: 'Period:',
   popupTotpCounter: 'Counter:',
+  popupHotpGetCode: 'Click to get the next code',
+  popupHotpNextCode: 'Next code',
   popupTotpCount_one: '{count} code',
   popupTotpCount_other: '{count} codes',
   popupTotpChooseImage: 'Upload image',
@@ -535,6 +537,7 @@ const en: TranslationMap = {
   pageChoosePasskey: 'Choose a Passkey',
   pageSignInTo: 'Sign in to {rp}',
   pageNoPasskeysSite: 'No passkeys found for this site',
+  pageVaultLockedMsg: 'Unlock Fenko Vault from the toolbar to sign in with a vault passkey.',
   pageContinue: 'Continue',
   pageUseOtherPasskey: 'Use other passkey',
   pageCreatePasskeyTitle: 'Create a Passkey?',
@@ -704,6 +707,8 @@ const ru: TranslationMap = {
   pageChoosePasskey: 'Выберите passkey',
   pageContinue: 'Продолжить',
   pageNoPasskeysSite: 'Для этого сайта passkeys не найдены',
+  pageVaultLockedMsg:
+    'Разблокируйте Fenko Vault на панели инструментов, чтобы войти с passkey из хранилища.',
 
   popupCopyDetails: 'Копировать данные',
   popupCopyWarnTitle: 'Скопировать данные ключа доступа?',
@@ -839,6 +844,7 @@ const zh_CN: TranslationMap = {
   pageChoosePasskey: '选择 Passkey',
   pageContinue: '继续',
   pageNoPasskeysSite: '此网站没有 passkey',
+  pageVaultLockedMsg: '请从工具栏解锁 Fenko Vault，以使用保险库中的 passkey 登录。',
 
   popupCopyDetails: '复制详情',
   popupCopyWarnTitle: '复制通行密钥详情？',
@@ -969,6 +975,7 @@ const ar: TranslationMap = {
   pageChoosePasskey: 'اختر مفتاح مرور',
   pageContinue: 'متابعة',
   pageNoPasskeysSite: 'لا توجد مفاتيح مرور لهذا الموقع',
+  pageVaultLockedMsg: 'افتح قفل Fenko Vault من شريط الأدوات لتسجيل الدخول بمفتاح مرور من الخزنة.',
 
   popupCopyDetails: 'نسخ التفاصيل',
   popupCopyWarnTitle: 'نسخ تفاصيل مفتاح المرور؟',
@@ -1186,6 +1193,7 @@ const fa: TranslationMap = {
   pageChoosePasskey: 'یک کلید عبور انتخاب کنید',
   pageSignInTo: 'ورود به {rp}',
   pageNoPasskeysSite: 'برای این سایت کلید عبوری پیدا نشد',
+  pageVaultLockedMsg: 'برای ورود با کلید عبور گاوصندوق، قفل Fenko Vault را از نوار ابزار باز کنید.',
   pageContinue: 'ادامه',
 
   popupCopyDetails: 'کپی جزئیات',
@@ -1317,6 +1325,8 @@ const es: TranslationMap = {
   pageChoosePasskey: 'Elige una passkey',
   pageContinue: 'Continuar',
   pageNoPasskeysSite: 'No hay passkeys para este sitio',
+  pageVaultLockedMsg:
+    'Desbloquea Fenko Vault desde la barra de herramientas para iniciar sesión con una passkey de la bóveda.',
 
   popupCopyDetails: 'Copiar detalles',
   popupCopyWarnTitle: '¿Copiar los datos de la clave de acceso?',
@@ -1448,6 +1458,8 @@ const fr: TranslationMap = {
   pageChoosePasskey: 'Choisir une passkey',
   pageContinue: 'Continuer',
   pageNoPasskeysSite: 'Aucune passkey pour ce site',
+  pageVaultLockedMsg:
+    'Déverrouillez Fenko Vault depuis la barre d’outils pour vous connecter avec une passkey du coffre.',
 
   popupCopyDetails: 'Copier les détails',
   popupCopyWarnTitle: 'Copier les détails de la clé d’accès ?',

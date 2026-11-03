@@ -85,8 +85,11 @@ function formatCode(value: number, digits: number): string {
  */
 export function generateHotp(opts: HotpOptions): string {
   const digits = opts.digits ?? DEFAULT_DIGITS;
-  if (digits < 6 || digits > 10) {
+  if (!Number.isInteger(digits) || digits < 6 || digits > 10) {
     throw new Error(`Invalid digits: ${digits} (must be 6-10)`);
+  }
+  if (!Number.isSafeInteger(opts.counter) || opts.counter < 0) {
+    throw new Error(`Invalid counter: ${opts.counter}`);
   }
   const hash = hashFor(opts.algorithm ?? 'SHA1');
   const mac = hmac(hash, opts.secret, counterBytes(opts.counter));
@@ -99,6 +102,9 @@ export function generateHotp(opts: HotpOptions): string {
  */
 export function generateTotp(opts: TotpOptions): string {
   const period = opts.period ?? DEFAULT_PERIOD;
+  if (!Number.isInteger(period) || period < 1) {
+    throw new Error(`Invalid period: ${period}`);
+  }
   const timestamp = opts.timestamp ?? Date.now();
   const counter = Math.floor((timestamp - T0 * 1000) / (period * 1000));
   return generateHotp({ ...opts, counter });
@@ -160,6 +166,19 @@ export function base32Encode(bytes: Uint8Array): string {
   return output;
 }
 
+/**
+ * Read an optional non-negative integer query parameter. parseInt would accept
+ * "6abc" as 6 and turn "six" into NaN, which then slips past range checks.
+ */
+function integerParam(url: URL, name: string, fallback: number): number {
+  const raw = url.searchParams.get(name)?.trim();
+  if (!raw) return fallback;
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`Unsupported ${name}: ${raw}`);
+  }
+  return Number(raw);
+}
+
 function percentDecode(input: string): string {
   try {
     return decodeURIComponent(input);
@@ -199,21 +218,27 @@ export function parseOtpauth(uri: string): OtpauthParams {
     throw new Error('Missing secret in otpauth URI');
   }
   const secret = base32Decode(secretParam);
+  if (secret.length === 0) {
+    throw new Error('Empty secret in otpauth URI');
+  }
 
   const algoRaw = (url.searchParams.get('algorithm') || 'SHA1').toUpperCase();
   if (algoRaw !== 'SHA1' && algoRaw !== 'SHA256' && algoRaw !== 'SHA512') {
     throw new Error(`Unsupported algorithm: ${algoRaw}`);
   }
 
-  const digits = parseInt(url.searchParams.get('digits') || `${DEFAULT_DIGITS}`, 10);
-  const period = parseInt(url.searchParams.get('period') || `${DEFAULT_PERIOD}`, 10);
-  const counter = parseInt(url.searchParams.get('counter') || '0', 10);
+  const digits = integerParam(url, 'digits', DEFAULT_DIGITS);
+  const period = integerParam(url, 'period', DEFAULT_PERIOD);
+  const counter = integerParam(url, 'counter', 0);
 
   if (digits < 6 || digits > 10) {
     throw new Error(`Unsupported digits: ${digits}`);
   }
   if (period < 1) {
     throw new Error(`Unsupported period: ${period}`);
+  }
+  if (!Number.isSafeInteger(counter)) {
+    throw new Error(`Unsupported counter: ${counter}`);
   }
 
   return {

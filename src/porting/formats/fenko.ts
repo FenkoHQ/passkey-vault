@@ -46,6 +46,14 @@ function str(value: unknown): string {
   return value == null ? '' : String(value);
 }
 
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function positiveNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
 /**
  * A native backup records each passkey's flags since they became
  * per-passkey. One without them predates that, so the passkey keeps signing
@@ -117,6 +125,8 @@ export const fenkoJson: FormatParser = {
         privateKey: passkey.privateKey,
         counter: Number(passkey.counter) || 0,
         createdAt: Number(passkey.createdAt) || Date.now(),
+        ...(nonEmptyString(passkey.id) && { id: passkey.id }),
+        ...(nonEmptyString(passkey.prfKey) && { prfKey: passkey.prfKey }),
         backup: nativeBackup(passkey),
       });
     }
@@ -125,8 +135,8 @@ export const fenkoJson: FormatParser = {
       const entry = asObject(raw);
       if (!entry?.secretB64) continue;
       try {
-        result.otp.push(
-          makeOtp({
+        result.otp.push({
+          ...makeOtp({
             type: entry.type,
             issuer: entry.issuer,
             account: entry.account,
@@ -136,8 +146,11 @@ export const fenkoJson: FormatParser = {
             digits: entry.digits,
             period: entry.period,
             counter: entry.counter,
-          })
-        );
+          }),
+          ...(nonEmptyString(entry.id) && { id: entry.id }),
+          ...(positiveNumber(entry.createdAt) && { createdAt: entry.createdAt }),
+          ...(positiveNumber(entry.lastUsed) && { lastUsed: entry.lastUsed }),
+        });
       } catch (error) {
         result.warnings.push(`TOTP ${str(entry.issuer)}: ${(error as Error).message}`);
       }
