@@ -67,6 +67,8 @@ interface DialogSession {
   /** Passkeys the picker offered; the only ones the user can approve. */
   passkeyIds: string[];
   approvedPasskeyId?: string;
+  /** The user asked to switch the approved passkey's synced setting first. */
+  approvedSwitchBackup?: boolean;
   /** The dialog document that claimed the session. */
   dialog?: { tabId: number; frameId: number; documentId?: string };
   /** Window mode: where the dialog page was opened, once it was. */
@@ -96,6 +98,19 @@ export interface DialogBrokerDeps {
       user?: { name?: string; displayName?: string };
     }>
   >;
+  /**
+   * The passkeys for an RP ID that the site may have just refused, with
+   * whether each one asserts "synced" now (see VaultDialogPasskey.retry).
+   */
+  retryCandidates?(rpId: string): Promise<Map<string, { synced: boolean }>>;
+}
+
+/** What the user approved in a sign-in or create dialog. */
+export interface Approval {
+  /** The passkey picked, for a sign-in. */
+  passkeyId?: string;
+  /** Switch that passkey's synced setting before signing. */
+  switchBackup: boolean;
 }
 
 const STORAGE_KEY = 'vault_dialog_sessions';
@@ -213,11 +228,16 @@ export class DialogBroker {
         return { success: true, status: 'none' };
       }
       passkeyIds = offered.map((passkey) => passkey.id);
-      const passkeys: VaultDialogPasskey[] = offered.map((passkey) => ({
-        id: passkey.id,
-        userName: passkey.user?.name || '',
-        userDisplayName: passkey.user?.displayName || '',
-      }));
+      const retries = (await this.deps.retryCandidates?.(rpId)) ?? new Map();
+      const passkeys: VaultDialogPasskey[] = offered.map((passkey) => {
+        const retry = retries.get(passkey.id);
+        return {
+          id: passkey.id,
+          userName: passkey.user?.name || '',
+          userDisplayName: passkey.user?.displayName || '',
+          ...(retry && { retry: { synced: retry.synced } }),
+        };
+      });
       view = { kind, mode, rpId, passkeys };
     } else {
       const user = (publicKey.user as Payload | undefined) ?? {};
@@ -295,10 +315,10 @@ export class DialogBroker {
   /**
    * The approval a ceremony message needs: the dialog approved this request
    * (same tab, frame, origin and request ID) for these exact options, and it
-   * has not been used yet. Returns the passkey the user picked, for a
-   * sign-in. Throws otherwise.
+   * has not been used yet. Returns what the user approved: for a sign-in,
+   * the passkey they picked. Throws otherwise.
    */
-  async consumeApproval(message: BoundRequest, kind: VaultDialogKind): Promise<string | undefined> {
+  async consumeApproval(message: BoundRequest, kind: VaultDialogKind): Promise<Approval> {
     const binding = ceremonyBinding(message.payload ?? {});
     // Used up even when it does not match: one approval, one attempt.
     const session = await this.update((sessions) => {
@@ -319,7 +339,10 @@ export class DialogBroker {
     ) {
       throw new Error('The user did not approve this request');
     }
-    return session.approvedPasskeyId;
+    return {
+      passkeyId: session.approvedPasskeyId,
+      switchBackup: session.approvedSwitchBackup === true,
+    };
   }
 
   // ==================== DIALOG PAGE ====================
@@ -498,6 +521,11 @@ export class DialogBroker {
       case 'use':
         if (session.kind !== 'get' || !session.passkeyIds.includes(decision.id)) return undefined;
         session.approvedPasskeyId = decision.id;
+        // Only where the picker offered the switch for this passkey.
+        session.approvedSwitchBackup =
+          decision.switchBackup === true &&
+          session.view.kind === 'get' &&
+          session.view.passkeys.some((passkey) => passkey.id === decision.id && !!passkey.retry);
         return 'approved';
       case 'create':
         return session.kind === 'create' ? 'approved' : undefined;

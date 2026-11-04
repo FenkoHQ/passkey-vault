@@ -14,6 +14,7 @@ import {
   DIALOG_TOKEN_MESSAGE,
   type VaultDialogDecision,
   type VaultDialogMode,
+  type VaultDialogPasskey,
   type VaultDialogView,
 } from '../utils/vault-dialog';
 import type { ConsentGate } from './consent-gate';
@@ -87,6 +88,9 @@ export class VaultDialog {
   private gate: ConsentGate | null = null;
   private settled = false;
   private selectedId: string | null = null;
+  private passkeys: VaultDialogPasskey[] = [];
+  /** The user turned on the retry offer's switch, for the passkey selected. */
+  private switchBackup = false;
   private readonly consentButtons: HTMLButtonElement[] = [];
   private mode: VaultDialogMode = 'frame';
   private unverifiedTimer: ReturnType<typeof setTimeout> | null = null;
@@ -130,7 +134,9 @@ export class VaultDialog {
       view.passkeys.forEach((passkey, index) => {
         list.appendChild(this.passkeyItem(passkey, index === 0));
       });
+      this.passkeys = view.passkeys;
       this.selectedId = view.passkeys[0]?.id ?? null;
+      this.setUpRetry(view.rpId);
       footer.append(
         this.button('pkv-cancel', t('commonCancel'), 'secondary', () =>
           this.decide({ action: 'cancel' })
@@ -143,7 +149,13 @@ export class VaultDialog {
           t('pageContinue'),
           'primary wide',
           () => {
-            if (this.selectedId) this.decide({ action: 'use', id: this.selectedId });
+            if (!this.selectedId) return;
+            const switchBackup = this.switchBackup && !!this.selected()?.retry;
+            this.decide({
+              action: 'use',
+              id: this.selectedId,
+              ...(switchBackup && { switchBackup: true }),
+            });
           },
           true
         )
@@ -213,10 +225,44 @@ export class VaultDialog {
     return row;
   }
 
-  private passkeyItem(
-    passkey: { id: string; userName: string; userDisplayName: string },
-    selected: boolean
-  ): HTMLElement {
+  private selected(): VaultDialogPasskey | undefined {
+    return this.passkeys.find((passkey) => passkey.id === this.selectedId);
+  }
+
+  /**
+   * The offer under the picker for a passkey the site may have just
+   * refused: retry with the other synced setting. Off until the user turns
+   * it on, since a second sign-in is not always a refused one.
+   */
+  private setUpRetry(rpId: string): void {
+    this.el('retry-hint').textContent = t('dialogRetryHint', { rp: rpId });
+    const toggle = this.el<HTMLInputElement>('retry-switch');
+    // Only the user's own click changes what is signed. A scripted click()
+    // still fires a trusted "change", so the click itself is checked, and
+    // the state is kept here rather than read from the box.
+    toggle.addEventListener('click', (event) => {
+      if (!event.isTrusted) event.preventDefault();
+    });
+    toggle.addEventListener('change', () => {
+      this.switchBackup = toggle.checked;
+      this.gate?.refresh();
+    });
+    this.paintRetry();
+  }
+
+  private paintRetry(): void {
+    const retry = this.selected()?.retry;
+    this.switchBackup = false;
+    this.el<HTMLInputElement>('retry-switch').checked = false;
+    this.el('retry').hidden = !retry;
+    if (retry) {
+      this.el('retry-label').textContent = t(
+        retry.synced ? 'dialogRetryUseDeviceBound' : 'dialogRetryUseSynced'
+      );
+    }
+  }
+
+  private passkeyItem(passkey: VaultDialogPasskey, selected: boolean): HTMLElement {
     const item = this.doc.createElement('button');
     item.type = 'button';
     item.className = 'passkey-item';
@@ -274,6 +320,7 @@ export class VaultDialog {
         other.tabIndex = other === item ? 0 : -1;
       });
     this.selectedId = item.dataset.id ?? null;
+    this.paintRetry();
     this.gate?.refresh();
   }
 
@@ -435,6 +482,7 @@ export class VaultDialog {
     this.el('title').textContent = t('appName');
     this.el('subtitle').textContent = t('dialogInactive');
     this.el('passkeys').textContent = '';
+    this.el('retry').hidden = true;
     this.el('footer').textContent = '';
     this.el('status').hidden = true;
     if (this.env.inWindow) {

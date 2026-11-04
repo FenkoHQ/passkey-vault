@@ -7,7 +7,9 @@
  * nothing the page does not already know: the site, the account name the
  * page itself gave when registering, or an error. The account used to
  * sign in is not named; that is vault data, and the page could read it
- * even from a closed shadow root (window.find(), selections). Nothing is
+ * even from a closed shadow root (window.find(), selections). The one
+ * extra bit a page can learn is which sign-in notice it got: whether the
+ * vault created the passkey it signed with. Nothing is
  * written on the page's own elements: the theme is resolved here, not set
  * on the page's <html>.
  */
@@ -15,7 +17,7 @@
 import { t } from '../i18n';
 import { getStoredTheme, resolveTheme } from '../theme';
 
-type NoticeKind = 'success' | 'error';
+type NoticeKind = 'success' | 'info' | 'error';
 
 const STYLES = `
   :host {
@@ -58,6 +60,7 @@ const STYLES = `
   .title { font-weight: 700; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
   .message { font-size: 13px; opacity: 0.9; overflow-wrap: anywhere; }
   .success { background: #dafbe1; border-color: rgba(26, 127, 55, 0.28); color: #1a7f37; }
+  .info { background: #ddf4ff; border-color: rgba(9, 105, 218, 0.28); color: #0969da; }
   .error { background: #ffebe9; border-color: rgba(207, 34, 46, 0.28); color: #cf222e; }
   :host([data-theme='dark']) .toast { background: #161b22; border-color: #30363d; color: #e6edf3; }
 `;
@@ -78,7 +81,7 @@ async function show(title: string, message: string, kind: NoticeKind, duration: 
   toast.setAttribute('role', kind === 'error' ? 'alert' : 'status');
   const icon = document.createElement('div');
   icon.className = 'icon';
-  icon.textContent = kind === 'success' ? '✓' : '✗';
+  icon.textContent = { success: '✓', info: 'ℹ', error: '✗' }[kind];
   const content = document.createElement('div');
   const heading = document.createElement('div');
   heading.className = 'title';
@@ -124,6 +127,30 @@ export function showPasskeyCreatedNotification(userName: string, rpId: string): 
 /** The user signed in with a vault passkey. Names the site, not the account. */
 export function showPasskeyUsedNotification(rpId: string): void {
   void show(t('pageSignedIn'), t('pageSignedInSiteMsg', { rp: rpId }), 'success', 3000);
+}
+
+/**
+ * The user signed in with a passkey whose synced setting is a guess. The
+ * site may still refuse it, so this does not say "signed in"; it says what
+ * to do if the site does.
+ */
+export function showPasskeySentNotification(rpId: string): void {
+  void show(t('pagePasskeySent'), t('pagePasskeySentMsg', { rp: rpId }), 'info', 6000);
+}
+
+/**
+ * The site asked for a new passkey but the vault already holds one it
+ * excluded for this account. `flagsMayMismatch`: that passkey's synced
+ * setting is a guess, which is the usual reason a site refuses it.
+ */
+export function showAlreadyRegisteredNotification(rpId: string, flagsMayMismatch: boolean): void {
+  const message = t('pageAlreadyRegisteredMsg', { rp: rpId });
+  void show(
+    t('pageAlreadyRegistered'),
+    flagsMayMismatch ? `${message} ${t('pageAlreadyRegisteredRetryMsg', { rp: rpId })}` : message,
+    'info',
+    10000
+  );
 }
 
 export function showErrorNotification(title: string, message: string): void {

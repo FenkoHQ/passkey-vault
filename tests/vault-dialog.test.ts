@@ -74,7 +74,7 @@ const decisions = (send: jest.Mock) =>
     .map(([message]) => message)
     .filter((message) => message.type === 'PASSKEY_DIALOG_DECIDE');
 
-const byId = (id: string) => document.getElementById(id)!;
+const byId = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 describe('the passkey picker', () => {
   it('lists the passkeys, the first one selected', async () => {
@@ -163,6 +163,83 @@ describe('the passkey picker', () => {
     await show(GET_VIEW);
 
     expect(document.activeElement).toBe(document.querySelector('.passkey-item'));
+  });
+});
+
+describe('a passkey the site may have just refused', () => {
+  const RETRY_VIEW: VaultDialogView = {
+    ...GET_VIEW,
+    passkeys: [
+      { id: 'cred-alice', userName: 'alice@bank.example', userDisplayName: 'Alice' },
+      {
+        id: 'cred-bob',
+        userName: 'bob@bank.example',
+        userDisplayName: 'Bob',
+        retry: { synced: false },
+      },
+    ],
+  } as VaultDialogView;
+
+  it('shows the offer only while that passkey is selected, switched off', async () => {
+    await show(RETRY_VIEW);
+    expect(byId('retry').hidden).toBe(true);
+
+    trustedClick(document.querySelectorAll('.passkey-item')[1]);
+
+    expect(byId('retry').hidden).toBe(false);
+    expect(byId('retry-hint').textContent).toContain('bank.example');
+    expect(byId('retry-label').textContent).toMatch(/synced/i);
+    expect(byId<HTMLInputElement>('retry-switch').checked).toBe(false);
+  });
+
+  it('asks for the switch when the user turns it on', async () => {
+    const send = await show(RETRY_VIEW);
+
+    trustedClick(document.querySelectorAll('.passkey-item')[1]);
+    trustedClick(byId('retry-switch'));
+    trustedClick(byId('pkv-continue'));
+    await flush();
+
+    expect(decisions(send)[0].decision).toEqual({
+      action: 'use',
+      id: 'cred-bob',
+      switchBackup: true,
+    });
+  });
+
+  it('signs as is unless the user turns it on', async () => {
+    const send = await show(RETRY_VIEW);
+
+    trustedClick(document.querySelectorAll('.passkey-item')[1]);
+    trustedClick(byId('pkv-continue'));
+    await flush();
+
+    expect(decisions(send)[0].decision).toEqual({ action: 'use', id: 'cred-bob' });
+  });
+
+  it('drops the switch when the user picks another passkey', async () => {
+    const send = await show(RETRY_VIEW);
+
+    trustedClick(document.querySelectorAll('.passkey-item')[1]);
+    trustedClick(byId('retry-switch'));
+    trustedClick(document.querySelectorAll('.passkey-item')[0]);
+    trustedClick(byId('pkv-continue'));
+    await flush();
+
+    expect(decisions(send)[0].decision).toEqual({ action: 'use', id: 'cred-alice' });
+  });
+
+  it('ignores a switch that script turned on', async () => {
+    const send = await show(RETRY_VIEW);
+
+    trustedClick(document.querySelectorAll('.passkey-item')[1]);
+    const toggle = byId<HTMLInputElement>('retry-switch');
+    toggle.click();
+    toggle.checked = true;
+    trustedClick(byId('pkv-continue'));
+    await flush();
+
+    expect(decisions(send)[0].decision).toEqual({ action: 'use', id: 'cred-bob' });
   });
 });
 

@@ -40,10 +40,12 @@ export interface PasskeyOption {
   userDisplayName: string;
   rpId: string;
   createdAt: number;
+  /** The picker's offer to retry with the other synced setting, if any. */
+  retry?: { synced: boolean };
 }
 
 export type SelectorResult =
-  | { action: 'use'; id: string }
+  | { action: 'use'; id: string; switchBackup?: boolean }
   | { action: 'cancel' }
   | { action: 'passthrough' };
 
@@ -65,6 +67,10 @@ export interface UserScript {
   launch: jest.Mock;
   createdToast: jest.Mock;
   usedToast: jest.Mock;
+  /** "Passkey sent": signed with a passkey whose synced setting is a guess. */
+  sentToast: jest.Mock;
+  /** (rpId, flagsMayMismatch): the site excluded a passkey the vault holds. */
+  alreadyRegisteredToast: jest.Mock;
   errorToast: jest.Mock;
 }
 
@@ -167,6 +173,8 @@ function defaultUser(): UserScript {
     launch: jest.fn(() => 'open'),
     createdToast: jest.fn(),
     usedToast: jest.fn(),
+    sentToast: jest.fn(),
+    alreadyRegisteredToast: jest.fn(),
     errorToast: jest.fn(),
   };
 }
@@ -222,6 +230,9 @@ export function setupVault(
   jest.doMock(NOTICES, () => ({
     showPasskeyCreatedNotification: (...args: unknown[]) => vault.user.createdToast(...args),
     showPasskeyUsedNotification: (...args: unknown[]) => vault.user.usedToast(...args),
+    showPasskeySentNotification: (...args: unknown[]) => vault.user.sentToast(...args),
+    showAlreadyRegisteredNotification: (...args: unknown[]) =>
+      vault.user.alreadyRegisteredToast(...args),
     showErrorNotification: (...args: unknown[]) => vault.user.errorToast(...args),
   }));
 
@@ -320,6 +331,7 @@ export function setupVault(
           userDisplayName: passkey.userDisplayName || passkey.userName || 'Unknown User',
           rpId: view.rpId,
           createdAt: 0,
+          ...(passkey.retry && { retry: passkey.retry }),
         }));
         const choice: SelectorResult = await vault.user.choosePasskey(offered, view.rpId, closed);
         decision = choice;

@@ -550,6 +550,14 @@ const en: TranslationMap = {
   pageSignedIn: 'Signed In',
   pageSignedInMsg: 'Used passkey for {user}',
   pageSignedInSiteMsg: 'Signed in to {rp} with Fenko Vault',
+  pagePasskeySent: 'Passkey Sent',
+  pagePasskeySentMsg:
+    'Sent your passkey to {rp}. If {rp} rejects it, sign in again with the same passkey: Fenko Vault will offer a fix.',
+  pageAlreadyRegistered: 'Passkey Already Saved',
+  pageAlreadyRegisteredMsg:
+    'Fenko Vault already has a passkey for this account on {rp}. To replace it, remove the old passkey from your account on {rp} first.',
+  pageAlreadyRegisteredRetryMsg:
+    'If {rp} rejects it when you sign in, sign in again with it: Fenko Vault will offer a fix.',
   pagePasskeyError: 'Passkey Error',
   pageSignInFailed: 'Sign In Failed',
   pageChoosePasskey: 'Choose a Passkey',
@@ -565,6 +573,10 @@ const en: TranslationMap = {
   dialogInactive: 'This request is no longer active.',
   dialogNotVisible: 'Cannot confirm this dialog is fully visible.',
   dialogOpenWindow: 'Open it in a window',
+  dialogRetryHint:
+    'Did {rp} just reject this passkey? Some sites refuse one whose synced setting differs from when it was added, and this setting was a guess.',
+  dialogRetryUseSynced: 'Try as a synced passkey (saved)',
+  dialogRetryUseDeviceBound: 'Try as a device-bound passkey (saved)',
 };
 
 const ru: TranslationMap = {

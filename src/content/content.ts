@@ -13,8 +13,10 @@ import { acceptsEs256 } from '../utils/algorithms';
 import { isRpIdValidForHost } from '../utils/rp-id';
 import { VaultDialogClient } from './vault-dialog-client';
 import {
+  showAlreadyRegisteredNotification as _showAlreadyRegisteredNotification,
   showErrorNotification as _showErrorNotification,
   showPasskeyCreatedNotification as _showPasskeyCreatedNotification,
+  showPasskeySentNotification as _showPasskeySentNotification,
   showPasskeyUsedNotification as _showPasskeyUsedNotification,
 } from './page-notices';
 
@@ -401,19 +403,22 @@ class ContentScript {
           );
           this.rememberPostedRegistration(requestId);
         } else {
-          // Show error if it's not a duplicate passkey error
-          if (response.name !== 'InvalidStateError') {
+          if (response.name === 'InvalidStateError') {
+            _showAlreadyRegisteredNotification(rpId, response.flagsMayMismatch === true);
+          } else {
             _showErrorNotification(
               t('pagePasskeyError'),
               (response.error as string) || t('pagePasskeyError')
             );
           }
+          // Only what the page needs to throw the error; the rest is vault data.
+          const { success, error, name } = response;
           window.postMessage(
             {
               source: 'PASSKEY_VAULT_CONTENT',
               type: 'PASSKEY_CREATE_RESPONSE',
               requestId,
-              result: response,
+              result: { success, error, name },
             },
             '*'
           );
@@ -557,8 +562,14 @@ class ContentScript {
         });
 
         if (response.success && response.credential) {
-          // No account name here: this notice is in the page's DOM.
-          _showPasskeyUsedNotification(rpId);
+          // No account name here: this notice is in the page's DOM. A passkey
+          // whose synced setting is a guess may still be refused by the site,
+          // so its notice does not claim the user is signed in.
+          if (response.flagsMayMismatch === true) {
+            _showPasskeySentNotification(rpId);
+          } else {
+            _showPasskeyUsedNotification(rpId);
+          }
           void this.captureSiteIcon(rpId);
 
           // Reconstruct a proper PublicKeyCredential object
