@@ -18,9 +18,12 @@ npm run test:e2e            # the popup in a real Chromium
 background worker into one jsdom page and connects them the way Chrome does:
 `window.postMessage` with structured clone between the page and the content
 script, and `chrome.runtime` messaging with Chrome's JSON hop and sender
-objects to the background. Only the user is scripted (`vault.user` answers the
-dialogs). A test calls `navigator.credentials.create()` or `.get()` and gets
-what a page would get.
+objects to the background. Only the user is scripted: where the content
+script would frame the vault's dialog page (or the background open it in a
+window), a scripted dialog claims the session with the real token and sender
+checks, shows `vault.user` what the background sent, and sends the decision
+back. A test calls `navigator.credentials.create()` or `.get()` and gets what
+a page would get.
 
 Every result is then verified twice:
 
@@ -35,15 +38,16 @@ real vault credentials, so a green run means what it says.
 
 ## What is covered
 
-| Area                                                                                                                                                       | Where                                                     |
-| ---------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| Registration: attestation object, flags, AAGUID, COSE key, BufferSource forms, Advanced settings                                                           | `tests/conformance/registration.test.ts`                  |
-| Sign-in: discoverable and allow-list flows, parent-domain RP IDs, counters, hand-offs to the browser                                                       | `tests/conformance/authentication.test.ts`                |
-| Client checks (§5.1.3, §5.1.4.1, WebIDL): types, lengths, required members, `pubKeyCredParams`, RP IDs, exclude lists, abort, timeouts, Permissions Policy | `tests/conformance/client-checks.test.ts`                 |
-| Extensions: `prf` and `credProps`, and the ones the vault ignores                                                                                          | `tests/conformance/extensions.test.ts`                    |
-| 60 option payloads real sites and server libraries send, each with its source                                                                              | `tests/conformance/real-world.test.ts`, `tests/fixtures/` |
-| Encoders, the background's message interface, corrupted options                                                                                            | `tests/fuzz/`                                             |
-| The built extension in Chromium, and differential runs against Chrome's own client                                                                         | `tests/e2e/webauthn.e2e.ts`                               |
+| Area                                                                                                                                                       | Where                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Registration: attestation object, flags, AAGUID, COSE key, BufferSource forms, Advanced settings                                                           | `tests/conformance/registration.test.ts`                                              |
+| Sign-in: discoverable and allow-list flows, parent-domain RP IDs, counters, hand-offs to the browser                                                       | `tests/conformance/authentication.test.ts`                                            |
+| Client checks (§5.1.3, §5.1.4.1, WebIDL): types, lengths, required members, `pubKeyCredParams`, RP IDs, exclude lists, abort, timeouts, Permissions Policy | `tests/conformance/client-checks.test.ts`                                             |
+| Extensions: `prf` and `credProps`, and the ones the vault ignores                                                                                          | `tests/conformance/extensions.test.ts`                                                |
+| 60 option payloads real sites and server libraries send, each with its source                                                                              | `tests/conformance/real-world.test.ts`, `tests/fixtures/`                             |
+| Encoders, the background's message interface, corrupted options                                                                                            | `tests/fuzz/`                                                                         |
+| The dialog's sessions, tokens and sender checks; its frame, window and autofill card; the clickjacking gate                                                | `tests/dialog-*.test.ts`, `tests/vault-dialog*.test.ts`, `tests/consent-gate.test.ts` |
+| The built extension in Chromium, and differential runs against Chrome's own client                                                                         | `tests/e2e/webauthn.e2e.ts`                                                           |
 
 The real-world corpus (`tests/fixtures/real-world-options.json`) holds the
 shapes that broke other passkey managers: Sony's string `alg` values,
@@ -67,6 +71,18 @@ and the vault holds a passkey exactly when the site received it.
 | `corrupt-records`  | null, bare-string and half-empty records, damaged keys, a damaged sync snapshot                                                                                | One null record broke sign-in on every site; a damaged peer snapshot failed every merge           |
 | `concurrency`      | Parallel sign-ins and registrations, seeded storms of aborts at every protocol step                                                                            | Aborted registrations left passkeys the site never received                                       |
 | `hostile-page`     | Forged page messages; a compromised renderer impersonating the content script                                                                                  | The background exported the vault, wiped it, or signed for another site on any web page's request |
+| `page-snooping`    | A page watching its own DOM with a MutationObserver while the picker is open, then cancelling                                                                  | Every account name and credential ID for the site was in the page's DOM before the user clicked   |
+
+## Attacks on the dialog in a real browser
+
+`tests/e2e/webauthn.e2e.ts` also attacks the vault's dialog as a page would,
+with Chromium's real rendering and trusted mouse input: it reads its own DOM,
+`window.frames`, `window.find()` and the resource timeline for the accounts
+the picker lists; it lays an all-but-transparent layer over the dialog, shrinks
+it with CSS zoom, and clicks the moment it appears, checking each time that the
+user's click reached Continue and was refused, and that the same click in plain
+view signs in. The cross-site iframe cases go through "Open it in a window"
+where the frame is too small for the dialog.
 
 ## Differential testing against Chrome
 
@@ -93,4 +109,6 @@ accepted (the spec asks for 1 to 64 bytes).
 | Extensions other than `prf` and `credProps` are ignored, not validated                       | The vault does not implement them; ignoring an odd value can only help a site that sends one.          |
 | A public suffix the built-in list does not know (`github.io`) can be an RP ID                | The vault has no full Public Suffix List; this only admits an RP ID scoped to that suffix's own pages. |
 | On Firefox the hook arrives a moment after the page's first script                           | Firefox's manifest still supports versions without MAIN-world content scripts.                         |
+| Continue and Create take a click only after the dialog has been fully in view for 500 ms     | The page frames the dialog and can fade, cover or shrink it; Chrome's own prompt is browser UI.        |
+| On Firefox, and where a frame is too small for it, the dialog opens in a window              | Only IntersectionObserver v2 can tell a framed dialog it is really visible; Firefox lacks it.          |
 | UV is reported by default                                                                    | See issue #5; it can be turned off under Advanced.                                                     |
