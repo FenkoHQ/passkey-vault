@@ -26,6 +26,28 @@ All notable changes to Passkey Vault are documented here. The format follows
   scripting the dialog.
 - New sync recovery phrases no longer fail when the word list runs short.
 
+### Security
+
+- The vault no longer keeps a log of every passkey you create or sign in with
+  in the extension's ordinary storage. That log named the site, the passkey
+  and the account, was written whether or not debug logging was on, and with a
+  PIN set sat outside the vault's encryption. It is now kept only while
+  console logging is on, only in memory, without the account name, and is
+  cleared when the vault locks. The log earlier versions saved is deleted when
+  you update.
+- A web page could make the vault fetch a Related Origin Requests file from any
+  host name it chose, including addresses on your own network. The vault now
+  only fetches from public Internet names, only for sites you let it handle,
+  never while it is locked, and only a few times per site.
+- Passkey site names are checked against the full Public Suffix List, as
+  Chrome does, so a page on a shared host such as github.io can no longer
+  create passkeys that would be offered on every other site there.
+- "Remove device" in sync settings now works. It takes the device off the list
+  for good, and says plainly that this does not cut it off: the device still
+  has your recovery phrase. To cut it off, start a new sync chain and join only
+  the devices you keep, which the page now offers to do. Device names and relay
+  addresses on the sync Debug tab are shown as plain text.
+
 ## [0.12.1] - 2026-10-29
 
 ### Fixed

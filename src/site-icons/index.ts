@@ -13,7 +13,7 @@
 // calling page, so a logo there would let evil.com wear another brand's mark
 // while the user approves a credential. Vault listings are safe: the user opened
 // them, and the domain text sits right next to the image.
-import { baseDomain } from '../utils/domain';
+import { registrableDomain } from '../utils/domain';
 import { getSiteIcon, isSiteIconStale, putSiteIcon } from './store';
 import { readCachedSiteIcon } from './browser-cache';
 import { normalizeIcon } from './normalize';
@@ -32,7 +32,7 @@ function iconKey(rpId: unknown): string | null {
   if (typeof rpId !== 'string' || rpId.length === 0 || rpId.length > MAX_RP_ID_LENGTH) {
     return null;
   }
-  return baseDomain(rpId);
+  return registrableDomain(rpId);
 }
 
 /** A PNG data URL for the site behind an RP ID, or null to use a placeholder. */

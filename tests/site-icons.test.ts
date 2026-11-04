@@ -1,4 +1,4 @@
-import { baseDomain, registrableLabel } from '../src/utils/domain';
+import { registrableDomain, registrableLabel } from '../src/utils/domain';
 import { pickIconUrl } from '../src/site-icons/page-capture';
 import { candidatePageUrls } from '../src/site-icons/browser-cache';
 import { isAllowedIconType, isWithinSourceLimit } from '../src/site-icons/normalize';
@@ -39,26 +39,32 @@ function linkHtml(rel: string, href: string, attrs = ''): void {
   document.head.innerHTML = `<link rel="${rel}" href="${href}" ${attrs}>`;
 }
 
-describe('baseDomain', () => {
+describe('registrableDomain (the icon key)', () => {
   it('reduces a hostname to the registrable domain', () => {
-    expect(baseDomain('accounts.google.com')).toBe('google.com');
-    expect(baseDomain('google.com')).toBe('google.com');
-    expect(baseDomain('a.b.c.example.com')).toBe('example.com');
+    expect(registrableDomain('accounts.google.com')).toBe('google.com');
+    expect(registrableDomain('google.com')).toBe('google.com');
+    expect(registrableDomain('a.b.c.example.com')).toBe('example.com');
   });
 
-  it('keeps the second level of a known two-level suffix', () => {
-    expect(baseDomain('login.shopping.co.uk')).toBe('shopping.co.uk');
-    expect(baseDomain('shopping.co.uk')).toBe('shopping.co.uk');
-    expect(baseDomain('www.example.com.au')).toBe('example.com.au');
+  it('keeps the second level of a two-level suffix', () => {
+    expect(registrableDomain('login.shopping.co.uk')).toBe('shopping.co.uk');
+    expect(registrableDomain('shopping.co.uk')).toBe('shopping.co.uk');
+    expect(registrableDomain('www.example.com.au')).toBe('example.com.au');
+  });
+
+  it('keeps sites under a private suffix apart, so one cannot set another’s icon', () => {
+    expect(registrableDomain('evil.github.io')).toBe('evil.github.io');
+    expect(registrableDomain('login.bank.github.io')).toBe('bank.github.io');
+    expect(registrableDomain('shop.example.com.ar')).toBe('example.com.ar');
   });
 
   it('rejects hostnames with no registrable label', () => {
-    expect(baseDomain('localhost')).toBeNull();
-    expect(baseDomain('')).toBeNull();
+    expect(registrableDomain('localhost')).toBeNull();
+    expect(registrableDomain('')).toBeNull();
   });
 
   it('is case insensitive', () => {
-    expect(baseDomain('Accounts.GOOGLE.com')).toBe('google.com');
+    expect(registrableDomain('Accounts.GOOGLE.com')).toBe('google.com');
   });
 
   it('still derives the label used by the related-origin cap', () => {

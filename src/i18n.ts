@@ -323,7 +323,8 @@ const en: TranslationMap = {
   optionsDeveloperTitle: 'Developer Tools',
   optionsDeveloperDesc: 'Debugging, inspection, and diagnostic tools.',
   optionsConsoleLogging: 'Console Logging',
-  optionsConsoleLoggingDesc: 'Log WebAuthn operations and sync events to the browser console.',
+  optionsConsoleLoggingDesc:
+    'Log WebAuthn operations and sync events to the browser console, and record the WebAuthn event log below.',
   optionsStorageInspector: 'Storage Inspector',
   optionsStorageInspectorDesc: 'Raw contents of chrome.storage.local.',
   optionsStorageBytes: '{count} B',
@@ -334,7 +335,8 @@ const en: TranslationMap = {
   optionsSyncProtocolLog: 'Sync Protocol Log',
   optionsSyncProtocolLogDesc: 'Recent Nostr relay events and sync operations.',
   optionsWebAuthnEventLog: 'WebAuthn Event Log',
-  optionsWebAuthnEventLogDesc: 'Recent credential create/get operations.',
+  optionsWebAuthnEventLogDesc:
+    'Passkeys created and used in this browser session, recorded only while console logging is on. Kept in memory, never saved to disk, and cleared when the vault locks.',
   optionsExtensionInfo: 'Extension Info',
   optionsVersion: 'Version',
   optionsManifest: 'Manifest',
@@ -350,7 +352,8 @@ const en: TranslationMap = {
   optionsFactoryReset: 'Factory Reset',
   optionsFactoryResetDesc: 'Wipe everything — passkeys, settings, sync, master password.',
   optionsNoSyncLogs: 'No sync logs.',
-  optionsNoWebAuthnLogs: 'No WebAuthn events logged yet.',
+  optionsNoWebAuthnLogs: 'No WebAuthn events logged. Turn on console logging to record them.',
+  optionsWebAuthnLogLocked: 'Unlock the vault to see the WebAuthn event log.',
   optionsImportConfirm: 'This will overwrite ALL existing data. Are you sure?',
   optionsImportSuccess: 'Data imported. Reload the extension to apply changes.',
   optionsExportPlaintextWarning:
@@ -509,6 +512,11 @@ const en: TranslationMap = {
   syncConnected: 'Connected',
   syncError: 'Error',
   syncRemoveDevice: 'Remove device',
+  syncRemoveDeviceConfirm:
+    'Remove "{name}" from this list?\n\nThis does not disconnect it. That device still has your recovery phrase: it keeps everything already synced to it, and it can still read and change this vault through sync.\n\nRemoving it only stops it being listed here. To cut it off, start a new sync chain and join only the devices you keep.',
+  syncRemoveDeviceNewChain:
+    '"{name}" is no longer listed, but it can still sync.\n\nStart a new sync chain now? This device leaves the current chain and you create a new one, with a new recovery phrase. Then, on each device you keep, leave the old chain and join the new one. Your passkeys and codes stay on this device.',
+  syncRemoveDeviceFailed: 'Failed to remove the device: {error}',
   syncDeviceTypeDesktop: 'Desktop',
   syncDeviceTypeLaptop: 'Laptop',
   syncDeviceTypeMobile: 'Mobile',

@@ -9,6 +9,11 @@
  * web-platform-tests use), so the pages are genuinely secure contexts and
  * WebAuthn runs as it would on the web, with no certificate error.
  *
+ * The IANA documentation domains example.com, example.net and example.org
+ * (and their subdomains) are mapped to the same server. Related Origin
+ * Requests need them: the vault only fetches /.well-known/webauthn from a
+ * name under a real public suffix, which .test is not.
+ *
  * Two browsers: one with the built extension (dist/), and one without it
  * whose page gets a CDP virtual authenticator. The second is Chrome's own
  * WebAuthn client: what the vault must match.
@@ -58,7 +63,8 @@ function certificate(dir: string): { key: string; cert: string; spkiHash: string
       '-subj',
       '/CN=fenko-vault-e2e',
       '-addext',
-      'subjectAltName=DNS:*.test,DNS:test,DNS:*.bank.test,DNS:*.shop.test,DNS:*.example.test,DNS:*.co.test',
+      'subjectAltName=DNS:*.test,DNS:test,DNS:*.bank.test,DNS:*.shop.test,DNS:*.example.test,DNS:*.co.test,' +
+        'DNS:example.com,DNS:*.example.com,DNS:example.net,DNS:*.example.net,DNS:example.org,DNS:*.example.org',
     ],
     { stdio: 'ignore' }
   );
@@ -99,10 +105,18 @@ export async function startSite(): Promise<Site> {
   };
 }
 
+const LOCAL_EXAMPLE_HOSTS = ['example.com', 'example.net', 'example.org'].flatMap((domain) => [
+  domain,
+  `*.${domain}`,
+]);
+
 function chromeArgs(site: Site): string[] {
   return [
-    // Every *.test host on any port reaches the local server.
-    `--host-resolver-rules=MAP *.test 127.0.0.1:${site.port}, MAP test 127.0.0.1:${site.port}`,
+    // Every *.test and example.{com,net,org} host on any port reaches the
+    // local server; nothing leaves the machine.
+    `--host-resolver-rules=${['*.test', 'test', ...LOCAL_EXAMPLE_HOSTS]
+      .map((host) => `MAP ${host} 127.0.0.1:${site.port}`)
+      .join(', ')}`,
     `--ignore-certificate-errors-spki-list=${site.spkiHash}`,
   ];
 }

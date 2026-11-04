@@ -53,6 +53,7 @@ npm run test:e2e:webauthn # Run WebAuthn ceremonies through the built extension 
 npm run lint             # Run ESLint
 npm run typecheck        # TypeScript check
 npm run version:bump     # Sync version across all manifests (run before tagging)
+npm run update:psl       # Regenerate src/utils/public-suffix-list.ts from publicsuffix.org
 npm run capture          # Re-generate screenshots and demo video
 ```
 
@@ -81,6 +82,8 @@ git push origin v0.9.0
 The CI pipeline builds both extensions, publishes to the Chrome Web Store, and creates a GitHub release. Release notes come from the matching `## [x.y.z]` section in `CHANGELOG.md`.
 
 `PASSKEY_VAULT_RELEASE=1` makes a build a store package, as in the release workflow: its version is the plain `x.y.z`, and its manifest has no `key`. Every other build is a development build. Its version names its commit, such as `0.12.0+2d873fb`, with `.dirty` when tracked files have uncommitted changes; Chrome shows it on `chrome://extensions` and in the options page. Its manifest carries a development key, so every development build gets the extension ID `opnaemnnjkoolijgdldhjfinpjmhkagi` and keeps its vault when a newer build is loaded from another folder. `npm run validate:packages` accepts either kind, and only a store package when the variable is set. `npm run capture` needs a release build in `dist/`, so that the screenshots show the plain version.
+
+The publishing jobs (Chrome Web Store, Firefox Add-ons, Google Play, the GitHub release, and the iOS TestFlight upload) run in the `release` deployment environment. Configure it under Settings → Environments with required reviewers, and keep the store credentials there as environment secrets, so a pushed tag waits for a maintainer's approval before anything is published. Without that protection rule the jobs still run unattended. Firefox signing uses the `web-ext` version pinned in `package.json`; update it there, not in the workflow.
 
 Store listing copy and upload assets live in `docs/cws/`.
 

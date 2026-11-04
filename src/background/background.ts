@@ -57,6 +57,13 @@ import {
   type BackupRepair,
 } from '../sync/backup-flags';
 import { verifyRelatedOrigin } from './related-origins';
+import { removeDevice } from '../sync/devices';
+import {
+  appendWebAuthnLog,
+  clearWebAuthnLog,
+  readWebAuthnLog,
+  removeStoredWebAuthnLog,
+} from './webauthn-log';
 import { serializeClientData } from './client-data';
 import { acceptsEs256 } from '../utils/algorithms';
 import { isRpIdValidForHost } from '../utils/rp-id';
@@ -212,7 +219,7 @@ const WEB_PAGE_MESSAGES = new Set([
   'CREATE_PASSKEY',
   'DISCARD_REGISTRATION',
   'GET_PASSKEY',
-  'VERIFY_RELATED_ORIGIN',
+  'CHECK_RP_ID',
   'NEEDS_SITE_ICON',
   'SAVE_SITE_ICON',
   'ACTIVATE_UI',
@@ -233,10 +240,23 @@ function webOrigin(sender: chrome.runtime.MessageSender): string | null {
   }
 }
 
-/** Refuse an RP ID the sending origin may not use, as the content script does. */
+/**
+ * Whether a page on `origin` may use `rpId`: same-site by the Public Suffix
+ * List, or authorized by the RP's Related Origin Requests file. Decided here
+ * rather than in the content script, which would otherwise have to carry the
+ * whole suffix list into every page.
+ */
+async function mayUseRpId(rpId: string, origin: string): Promise<boolean> {
+  if (isRpIdValidForHost(rpId, new URL(origin).hostname)) return true;
+  // A locked vault can neither list nor create passkeys, so it has no use
+  // for a Related Origin Request: no fetch for a page while it is locked.
+  if ((await secureStorage.isSetup()) && !secureStorage.isStorageUnlocked()) return false;
+  return verifyRelatedOrigin(rpId, origin);
+}
+
+/** Refuse an RP ID the sending origin may not use. */
 async function requireRpIdFor(rpId: string, origin: string): Promise<void> {
-  if (isRpIdValidForHost(rpId, new URL(origin).hostname)) return;
-  if (await verifyRelatedOrigin(rpId, origin)) return;
+  if (await mayUseRpId(rpId, origin)) return;
   throw new Error(`RP ID ${rpId} is not valid for ${origin}`);
 }
 
@@ -295,7 +315,8 @@ async function bindToWebPage(
         throw new Error('A page may only supply its own site icon');
       }
       break;
-    case 'VERIFY_RELATED_ORIGIN':
+    case 'CHECK_RP_ID':
+      // Answered for the origin Chrome reports, not one the page names.
       payload.origin = origin;
       break;
   }
@@ -359,7 +380,10 @@ class BackgroundService {
     // MV3: listeners must be attached synchronously at SW wake, before any
     // await — otherwise the first message after a cold start is dropped with
     // "Could not establish connection. Receiving end does not exist."
-    secureStorage.onAutoLock = () => void syncService.disconnect();
+    secureStorage.onAutoLock = () => {
+      void syncService.disconnect();
+      void clearWebAuthnLog();
+    };
     // Messages wait for this, so a worker restarted by a request answers it
     // with the unlock the previous worker held.
     this.sessionRestored = secureStorage.restoreSession().catch((error) => {
@@ -603,7 +627,15 @@ class BackgroundService {
       }
       await logger.init();
       logger.info('Background service initializing...');
+      await removeStoredWebAuthnLog().catch((error) =>
+        logger.error('Failed to remove the stored WebAuthn log:', error)
+      );
       await this.sessionRestored;
+      // A session that expired while the worker was stopped locks without an
+      // auto-lock callback; the log goes with the unlock either way.
+      if ((await secureStorage.isSetup()) && !secureStorage.isStorageUnlocked()) {
+        await clearWebAuthnLog();
+      }
       // Before anything else reads the Advanced toggles: from this build on
       // they only describe new passkeys, so record what they meant until now.
       await ensureBackupFlagsSnapshot();
@@ -819,6 +851,8 @@ class BackgroundService {
       'FACTORY_RESET',
       'CHANGE_MASTER_PASSWORD',
       'REMOVE_MASTER_PASSWORD',
+      // Which sites were signed in to, and with which passkey.
+      'GET_WEBAUTHN_LOG',
     ]);
     const upgradeBlockedTypes = new Set([
       'CREATE_PASSKEY',
@@ -893,8 +927,8 @@ class BackgroundService {
       case 'LIST_PASSKEYS':
       case 'GET_PASSKEYS':
         return this.handleListPasskeys();
-      case 'VERIFY_RELATED_ORIGIN':
-        return this.handleVerifyRelatedOrigin(payload || {});
+      case 'CHECK_RP_ID':
+        return this.handleCheckRpId(payload || {});
       case 'NEEDS_SITE_ICON':
         return this.handleNeedsSiteIcon(payload || {});
       case 'SAVE_SITE_ICON':
@@ -1179,7 +1213,6 @@ class BackgroundService {
       this.logWebAuthn('CREATE', 'info', `Created passkey for ${rpId}`, {
         rpId,
         credentialId: credentialIdBase64,
-        user: (user?.name as string) || '',
       });
       this.logSync('PASSKEY_CREATED', { id: credentialIdBase64, rpId });
       await this.noteVaultChange();
@@ -1349,7 +1382,6 @@ class BackgroundService {
       this.logWebAuthn('GET', 'info', `Signed assertion for ${rpId}`, {
         rpId,
         credentialId: passkey.id,
-        user: passkey.user?.name || '',
         backupEligible: backupFlags.backupEligible,
         backupState: backupFlags.backupState,
       });
@@ -1452,15 +1484,16 @@ class BackgroundService {
     }
   }
 
-  // WebAuthn Related Origin Requests: the content script asks whether an origin
-  // that is not same-site with the requested RP ID is nonetheless authorized by
-  // the RP's /.well-known/webauthn file. Done here (not in the content script)
-  // so the fetch has host permissions and isn't blocked by the page's CSP.
-  private async handleVerifyRelatedOrigin(payload: MessagePayload): Promise<unknown> {
+  /**
+   * Whether the requesting page may use an RP ID: the content script asks
+   * before it offers the vault, and leaves the request to the browser when
+   * the answer is no. Opening the vault's dialog and CREATE_PASSKEY check
+   * again.
+   */
+  private async handleCheckRpId(payload: MessagePayload): Promise<unknown> {
     const rpId = typeof payload.rpId === 'string' ? payload.rpId : '';
     const origin = typeof payload.origin === 'string' ? payload.origin : '';
-    const authorized = await verifyRelatedOrigin(rpId, origin);
-    return { authorized };
+    return { allowed: await mayUseRpId(rpId, origin) };
   }
 
   private async handleNeedsSiteIcon(payload: MessagePayload): Promise<unknown> {
@@ -1634,6 +1667,7 @@ class BackgroundService {
   private async handleFactoryReset(): Promise<unknown> {
     await syncService.disconnect();
     await secureStorage.lock();
+    await clearWebAuthnLog();
     await chrome.storage.local.clear();
     return { success: true };
   }
@@ -2005,17 +2039,23 @@ class BackgroundService {
     }
   }
 
+  /**
+   * Take another device off this device's list, for good. This is not
+   * revocation: the device keeps the recovery phrase and the keys derived
+   * from it. The settings page says so, and offers a new chain instead.
+   */
   private async removeSyncDevice(deviceId: string): Promise<unknown> {
     try {
-      const result = await chrome.storage.local.get(SYNC_DEVICES_KEY);
-      const chain: SyncChain = result[SYNC_DEVICES_KEY];
-
-      if (!chain) return { success: false, error: 'Sync chain not found' };
-
-      const updatedDevices = chain.devices.filter((d) => d.id !== deviceId);
-      const updatedChain: SyncChain = { ...chain, devices: updatedDevices };
-
-      await chrome.storage.local.set({ [SYNC_DEVICES_KEY]: updatedChain });
+      if (!deviceId) return { success: false, error: 'No device given' };
+      const config = (await chrome.storage.local.get(SYNC_CONFIG_KEY))[SYNC_CONFIG_KEY] as
+        | SyncConfig
+        | undefined;
+      const result = await removeDevice(deviceId, config?.deviceId ?? null);
+      if (result === 'no-chain') return { success: false, error: 'Sync chain not found' };
+      if (result === 'this-device') {
+        return { success: false, error: 'This device leaves the chain instead' };
+      }
+      this.logSync('SYNC_DEVICE_REMOVED', { deviceId: deviceId.substring(0, 8) });
       return { success: true };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2127,22 +2167,14 @@ class BackgroundService {
     logger.debug(`[SYNC] ${action}`, details || '');
   }
 
-  private async logWebAuthn(
+  /** Only with debug logging on, and only in memory: see webauthn-log.ts. */
+  private logWebAuthn(
     action: string,
     level: 'info' | 'warn' | 'error',
     message: string,
-    data?: unknown
+    data?: { rpId?: string; credentialId?: string; [key: string]: unknown }
   ): Promise<void> {
-    try {
-      const result = await chrome.storage.local.get('webauthn_log');
-      const logs: Array<Record<string, unknown>> = result.webauthn_log || [];
-      logs.push({ timestamp: Date.now(), level, category: action, message, data });
-      // Keep last 200 entries
-      if (logs.length > 200) logs.splice(0, logs.length - 200);
-      await chrome.storage.local.set({ webauthn_log: logs });
-    } catch {
-      // Don't let logging errors break operations
-    }
+    return appendWebAuthnLog({ level, category: action, message, data });
   }
 
   private async handleTriggerSync(): Promise<unknown> {
@@ -2359,6 +2391,7 @@ class BackgroundService {
     try {
       await syncService.disconnect();
       await secureStorage.lock();
+      await clearWebAuthnLog();
       return { success: true, message: 'Secure storage locked' };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2478,6 +2511,7 @@ class BackgroundService {
     try {
       const { enabled } = payload;
       await logger.setDebugEnabled(enabled);
+      if (!enabled) await clearWebAuthnLog();
       logger.info(`Debug logging ${enabled ? 'enabled' : 'disabled'}`);
       return { success: true, enabled };
     } catch (error: unknown) {
@@ -2531,8 +2565,7 @@ class BackgroundService {
 
   private async handleGetWebAuthnLog(): Promise<unknown> {
     try {
-      const result = await chrome.storage.local.get('webauthn_log');
-      return { success: true, logs: result.webauthn_log || [] };
+      return { success: true, logs: await readWebAuthnLog() };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
@@ -2541,7 +2574,7 @@ class BackgroundService {
 
   private async handleClearWebAuthnLog(): Promise<unknown> {
     try {
-      await chrome.storage.local.set({ webauthn_log: [] });
+      await clearWebAuthnLog();
       return { success: true };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);

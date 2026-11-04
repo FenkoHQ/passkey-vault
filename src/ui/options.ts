@@ -698,7 +698,7 @@ async function loadDeveloperSettings(): Promise<void> {
   // WebAuthn log
   document.getElementById('refresh-webauthn-log-btn')!.addEventListener('click', loadWebAuthnLog);
   document.getElementById('clear-webauthn-log-btn')!.addEventListener('click', async () => {
-    await chrome.storage.local.set({ webauthn_log: [] });
+    await sendMessage('CLEAR_WEBAUTHN_LOG');
     loadWebAuthnLog();
   });
 
@@ -785,10 +785,17 @@ async function loadSyncLog(): Promise<void> {
     .join('');
 }
 
+// The background keeps this log in memory, and only hands it out while the
+// vault is unlocked: it says which sites were signed in to.
 async function loadWebAuthnLog(): Promise<void> {
   const container = document.getElementById('webauthn-log')!;
-  const result = await chrome.storage.local.get('webauthn_log');
-  const logs: DebugLogEntry[] = (result.webauthn_log || []).slice(-100).reverse();
+  const response = await sendMessage('GET_WEBAUTHN_LOG');
+  if (response.code === 'VAULT_LOCKED') {
+    container.innerHTML = `<p class="empty-hint">${escapeHtml(t('optionsWebAuthnLogLocked'))}</p>`;
+    return;
+  }
+  const entries = Array.isArray(response.logs) ? (response.logs as DebugLogEntry[]) : [];
+  const logs = entries.slice(-100).reverse();
 
   if (logs.length === 0) {
     container.innerHTML = `<p class="empty-hint">${t('optionsNoWebAuthnLogs')}</p>`;
@@ -798,7 +805,7 @@ async function loadWebAuthnLog(): Promise<void> {
   container.innerHTML = logs
     .map(
       (entry) => `
-    <div class="log-entry ${entry.level}">
+    <div class="log-entry ${escapeHtml(String(entry.level))}">
       <span class="log-time">${formatTime(entry.timestamp)}</span>
       <span class="log-category">[${escapeHtml(entry.category)}]</span>
       <span class="log-message">${escapeHtml(entry.message)}</span>

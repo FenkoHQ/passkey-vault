@@ -223,6 +223,9 @@ describe('RP ID validation (§5.1.3 step 8, §5.1.4.1 step 8)', () => {
     ['a child of the host', 'https://example.com/', 'login.example.com'],
     ['a bare TLD', 'https://example.com/', 'com'],
     ['a public suffix', 'https://shop.example.co.uk/', 'co.uk'],
+    ['a private public suffix', 'https://foo.github.io/', 'github.io'],
+    ['a less common public suffix', 'https://shop.example.com.ar/', 'com.ar'],
+    ["a domain inside the page's public suffix", 'https://foo.up.railway.app/', 'railway.app'],
     ['a look-alike suffix', 'https://notexample.com/', 'example.com'],
     ['a parent of an IP address', 'https://192.168.1.10/', '168.1.10'],
     ['an IP address, even its own', 'https://192.168.1.10/', '192.168.1.10'],
@@ -261,6 +264,7 @@ describe('RP ID validation (§5.1.3 step 8, §5.1.4.1 step 8)', () => {
     ['the registrable parent', 'https://www.login.example.com/', 'example.com'],
     ['an intermediate parent', 'https://www.login.example.com/', 'login.example.com'],
     ['a parent under a two-level public suffix', 'https://www.example.co.uk/', 'example.co.uk'],
+    ['a parent under a private public suffix', 'https://a.foo.github.io/', 'foo.github.io'],
     ['localhost', 'http://localhost:3000/', 'localhost'],
   ])('creates a passkey for %s', async (_label, url, rpId) => {
     vault.goto(url);
