@@ -6,6 +6,18 @@ All notable changes to Passkey Vault are documented here. The format follows
 
 ## [Unreleased]
 
+### Sync moves to a new chain identity
+
+Update every device in your sync chain. Sync now runs under a new chain
+identity, and each device moves to it by itself the first time the update
+starts (a PIN-protected extension, on its first unlock). There is no recovery
+phrase to type again and nothing to export or import.
+
+Updated devices stop syncing with devices still on an older version. Those
+keep reporting sync as connected, but changes no longer pass between the two
+groups. Nothing is lost meanwhile: each device keeps its own changes and
+deletions, and shares them as soon as the other device has updated too.
+
 ### Fixed
 
 - The vault no longer asks for the PIN again about 30 seconds after unlocking.
@@ -25,6 +37,16 @@ All notable changes to Passkey Vault are documented here. The format follows
   dialogs. A web page cannot read the account list or approve a request by
   scripting the dialog.
 - New sync recovery phrases no longer fail when the word list runs short.
+
+### Security
+
+- Anyone watching a public relay could check a guess at a sync recovery
+  phrase with one SHA-256: the chain ID in every sync event was the first half
+  of the phrase's hash, and a phrase typed in by hand can be weak. The chain
+  ID and both sync keys now come from scrypt (128 MiB per guess). After moving
+  to the new chain, each device asks the relays to delete the events it
+  published under the old ID. Relays may ignore that or keep copies, so a weak
+  phrase used for sync before this update is best replaced by a new chain.
 
 ## [0.12.1] - 2026-10-29
 

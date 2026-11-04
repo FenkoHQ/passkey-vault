@@ -5,7 +5,9 @@
  * service is stubbed.
  */
 
-import { generateMnemonic } from '../src/crypto/bip39';
+import { createHash } from 'crypto';
+import { generateMnemonic, mnemonicToBytes } from '../src/crypto/bip39';
+import { deriveChainKeys } from '../src/sync/chain-keys';
 
 jest.mock('../src/sync/sync-service', () => ({
   syncService: {
@@ -27,6 +29,10 @@ type SyncServiceModule = { syncService: Record<string, jest.Mock> };
 
 const PIN = '1234';
 const WRONG_PIN = '0000';
+
+/** The seed every device on the phrase's chain stores. */
+const seedOf = (mnemonic: string): string =>
+  createHash('sha256').update(mnemonicToBytes(mnemonic)).digest('hex');
 
 type SyncConfigData = {
   enabled: boolean;
@@ -402,7 +408,67 @@ describe('the sync config when the PIN is removed', () => {
     const config = storage.sync_config as SyncConfigData;
     expect(config.enabled).toBe(true);
     expect(config.chainId).toBe(chainB);
-    expect(config.seedHash?.startsWith(chainB as string)).toBe(true);
+    expect(config.seedHash).toBe(seedOf(mnemonic));
+  });
+});
+
+describe('moving a PIN-protected chain to its v5 chain ID', () => {
+  const v5 = 'f'.repeat(32);
+
+  /** Unlock a PIN'd vault on chainA, a v4 chain, and return the adapter sync got. */
+  async function unlockedOnChainA() {
+    storage.passkeys = [passkey];
+    storage.sync_config = { ...chainA };
+    storage.sync_devices = { id: chainA.chainId, createdAt: 1, devices: [] };
+    const background = await loadBackground();
+    await background.send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+    await background.send({ type: 'LOCK_SECURE_STORAGE' });
+    background.sync.initialize.mockClear();
+    await background.send({ type: 'UNLOCK_SECURE_STORAGE', payload: { password: PIN } });
+    expect(background.sync.initialize).toHaveBeenCalledWith(
+      chainA.chainId,
+      chainA.deviceId,
+      chainA.seedHash,
+      chainA.deviceName,
+      expect.anything()
+    );
+    const adapter = background.sync.initialize.mock.calls[0][4] as {
+      saveChainId(chainId: string, legacyChainId: string): Promise<void>;
+    };
+    return { ...background, adapter };
+  }
+
+  it('rewrites the raw and encrypted configs and the device list in one write', async () => {
+    const { send, secure, adapter } = await unlockedOnChainA();
+    const set = chrome.storage.local.set as jest.Mock;
+    set.mockClear();
+
+    await adapter.saveChainId(v5, chainA.chainId as string);
+
+    expect(set).toHaveBeenCalledTimes(1);
+    expect(storage.sync_config).toEqual({ ...chainA, chainId: v5, seedHash: undefined });
+    expect((storage.sync_devices as { id: string }).id).toBe(v5);
+    expect(await secure.getSyncConfig()).toMatchObject({ chainId: v5, seedHash: chainA.seedHash });
+
+    // Done once: a second call finds nothing left on the v4 ID.
+    set.mockClear();
+    await adapter.saveChainId(v5, chainA.chainId as string);
+    expect(set).not.toHaveBeenCalled();
+
+    // The two configs still agree, so removing the PIN gives the seed back.
+    await send({ type: 'REMOVE_MASTER_PASSWORD', payload: { currentPassword: PIN } });
+    expect(storage.sync_config).toEqual({ ...chainA, chainId: v5 });
+  });
+
+  it('leaves copies that hold another chain alone', async () => {
+    const { secure, adapter } = await unlockedOnChainA();
+    storage.sync_devices = { id: 'b'.repeat(32), createdAt: 1, devices: [] };
+
+    await adapter.saveChainId(v5, 'c'.repeat(32));
+
+    expect((storage.sync_config as SyncConfigData).chainId).toBe(chainA.chainId);
+    expect((storage.sync_devices as { id: string }).id).toBe('b'.repeat(32));
+    expect((await secure.getSyncConfig())?.chainId).toBe(chainA.chainId);
   });
 });
 
@@ -435,7 +501,8 @@ describe('creating or joining a sync chain on a PIN-protected vault', () => {
       created.deviceId,
       encrypted?.seedHash,
       'Laptop',
-      expect.anything()
+      expect.anything(),
+      expect.objectContaining({ chainId: created.chainId })
     );
   });
 
@@ -481,7 +548,9 @@ describe('creating or joining a sync chain on a PIN-protected vault', () => {
     expect(created.success).toBe(true);
     const config = storage.sync_config as SyncConfigData;
     expect(config.chainId).toBe(created.chainId);
-    expect(config.seedHash?.startsWith(created.chainId as string)).toBe(true);
+    expect(config.seedHash).toBe(seedOf(created.mnemonic as string));
+    // Protocol v5: the public chain ID is no longer a prefix of the seed.
+    expect(config.seedHash?.startsWith(created.chainId as string)).toBe(false);
   });
 });
 
@@ -546,6 +615,25 @@ describe('the cleartext seed older builds left in the chain record', () => {
       chainA.deviceName,
       expect.anything()
     );
+  });
+
+  it('moves the seed into the encrypted config for a chain already on its v5 ID', async () => {
+    const v5Chain: SyncConfigData = {
+      ...chainA,
+      chainId: (await deriveChainKeys(chainA.seedHash as string)).chainId,
+    };
+    const { send, secure } = await loadBackground();
+    await send({ type: 'SETUP_MASTER_PASSWORD', payload: { password: PIN } });
+    await send({ type: 'LOCK_SECURE_STORAGE' });
+    const publicConfig: SyncConfigData = { ...v5Chain };
+    delete publicConfig.seedHash;
+    storage.sync_config = publicConfig;
+    storage.sync_devices = recordFor(v5Chain);
+
+    expect(await unlocksWith(send, PIN)).toBe(true);
+
+    expect((await secure.getSyncConfig())?.seedHash).toBe(chainA.seedHash);
+    expect((storage.sync_devices as ChainRecord).seedHash).toBeUndefined();
   });
 
   it('is left alone while locked and for a chain the device is not on', async () => {

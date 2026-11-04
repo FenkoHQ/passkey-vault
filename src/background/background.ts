@@ -8,6 +8,13 @@ import {
 } from '../sync/merge';
 import { repairCredentialIds, toBase64Url } from '../sync/credential-ids';
 import {
+  deriveChainKeys,
+  isChainIdOfSeed,
+  wipeChainKeys,
+  type ChainKeys,
+} from '../sync/chain-keys';
+import { LEGACY_CLEANUP_KEY } from '../sync/protocol';
+import {
   generateMnemonic,
   validateMnemonic,
   mnemonicToBytes,
@@ -557,7 +564,8 @@ class BackgroundService {
    * record, and PIN setup never stripped it. Strip it once the encrypted sync
    * config is known to hold that seed, which needs the key, so stripping never
    * drops the only copy. When the record is for the device's current chain
-   * and the encrypted config lacks the seed, the seed is moved there first.
+   * (its v4 or v5 ID) and the encrypted config lacks the seed, the seed is
+   * moved there first.
    * A record for any other chain is left alone. Run inside a vault job, after
    * migrateLegacyRawStorage(); a no-op while locked or without a PIN.
    */
@@ -578,7 +586,7 @@ class BackgroundService {
         !!config?.chainId &&
         config.chainId === chain.id &&
         !config.seedHash &&
-        chain.seedHash.startsWith(chain.id);
+        (await isChainIdOfSeed(chain.id, chain.seedHash));
       if (!currentChain) return;
       await secureStorage.storeSyncConfig({
         chainId: config.chainId,
@@ -746,7 +754,39 @@ class BackgroundService {
           );
           await this.repairStoredCredentialIds();
         }),
+      saveChainId: (chainId, legacyChainId) =>
+        this.withVault(() => this.adoptSyncChainId(chainId, legacyChainId)),
     };
+  }
+
+  /**
+   * Sync protocol v5 replaced the chain ID, which v4 took straight from the
+   * seed (see sync/chain-keys.ts). The sync service derives the new one and
+   * calls this when the stored config still has the old one. Every copy that
+   * holds the old ID is rewritten in one storage write, so the raw and
+   * encrypted configs keep agreeing (PIN removal compares them); a copy for
+   * any other chain is left alone. While locked the encrypted copy waits for
+   * unlock, which rewrites it from raw (reconcileSecureStorageFromRaw).
+   */
+  private async adoptSyncChainId(chainId: string, legacyChainId: string): Promise<void> {
+    const config = (await chrome.storage.local.get(SYNC_CONFIG_KEY))[SYNC_CONFIG_KEY] as
+      | SyncConfig
+      | undefined;
+    const chain = (await chrome.storage.local.get(SYNC_DEVICES_KEY))[SYNC_DEVICES_KEY] as
+      | SyncChain
+      | null
+      | undefined;
+    const writes: Record<string, unknown> = {};
+    if (config?.chainId === legacyChainId) writes[SYNC_CONFIG_KEY] = { ...config, chainId };
+    if (chain?.id === legacyChainId) writes[SYNC_DEVICES_KEY] = { ...chain, id: chainId };
+
+    const stored = secureStorage.isStorageUnlocked() ? await secureStorage.getSyncConfig() : null;
+    if (stored?.chainId === legacyChainId) {
+      await secureStorage.storeSyncConfig({ ...stored, chainId }, writes);
+    } else if (Object.keys(writes).length > 0) {
+      await chrome.storage.local.set(writes);
+    }
+    logger.info('Moved sync to the v5 chain ID');
   }
 
   private setupMessageHandlers(): void {
@@ -1816,7 +1856,8 @@ class BackgroundService {
       const seedHashHex = Array.from(new Uint8Array(seedHashBuffer))
         .map((b: number) => b.toString(16).padStart(2, '0'))
         .join('');
-      const chainId = seedHashHex.substring(0, 32);
+      const keys = await deriveChainKeys(seedHashHex);
+      const chainId = keys.chainId;
 
       const newDevice: SyncDevice = {
         id: deviceId,
@@ -1836,17 +1877,10 @@ class BackgroundService {
         devices: [newDevice],
       };
 
-      await this.saveSyncChain(
+      await this.startNewChain(
         { enabled: true, chainId, deviceId, deviceName, seedHash: seedHashHex },
-        chain
-      );
-
-      await syncService.initialize(
-        chainId,
-        deviceId,
-        seedHashHex,
-        deviceName,
-        this.syncVaultAdapter()
+        chain,
+        keys
       );
       this.logSync('SYNC_CHAIN_CREATED', { chainId, deviceId });
 
@@ -1884,7 +1918,8 @@ class BackgroundService {
         isThisDevice: true,
       };
 
-      const chainId = seedHashHex.substring(0, 32);
+      const keys = await deriveChainKeys(seedHashHex);
+      const chainId = keys.chainId;
 
       const chain: SyncChain = {
         id: chainId,
@@ -1900,15 +1935,7 @@ class BackgroundService {
         seedHash: seedHashHex,
       };
 
-      await this.saveSyncChain(config, chain);
-
-      await syncService.initialize(
-        chainId,
-        deviceId,
-        seedHashHex,
-        deviceName,
-        this.syncVaultAdapter()
-      );
+      await this.startNewChain(config, chain, keys);
       await syncService.requestSync();
       this.logSync('SYNC_CHAIN_JOINED', { chainId, deviceId });
 
@@ -1918,6 +1945,24 @@ class BackgroundService {
       console.error('Failed to join sync chain:', error);
       return { success: false, error: message };
     }
+  }
+
+  /** Save a chain this device just created or joined and connect to it with its keys. */
+  private async startNewChain(config: SyncConfig, chain: SyncChain, keys: ChainKeys) {
+    try {
+      await this.saveSyncChain(config, chain);
+    } catch (error) {
+      wipeChainKeys(keys);
+      throw error;
+    }
+    await syncService.initialize(
+      config.chainId,
+      config.deviceId,
+      config.seedHash,
+      config.deviceName,
+      this.syncVaultAdapter(),
+      keys
+    );
   }
 
   /**
@@ -1962,6 +2007,7 @@ class BackgroundService {
             seedHash: null,
           },
           [SYNC_DEVICES_KEY]: null,
+          [LEGACY_CLEANUP_KEY]: null,
         });
         // Removing the PIN would otherwise bring the left chain back from the
         // encrypted copy.
