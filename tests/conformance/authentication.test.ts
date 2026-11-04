@@ -157,6 +157,57 @@ describe('signing in with a vault passkey', () => {
   });
 });
 
+describe('a passkey whose synced setting differs from what the site registered', () => {
+  /** Register, then set the opposite synced setting, as a wrong import guess would. */
+  async function mismatched() {
+    const registration = await register();
+    await vault.send({
+      type: 'SET_PASSKEY_BACKUP',
+      payload: {
+        credentialId: registration.record.id,
+        synced: !registration.record.backupEligible,
+      },
+    });
+    return registration;
+  }
+
+  it('says the passkey was sent, not that the user is signed in', async () => {
+    const registration = await mismatched();
+
+    await expect(authenticate(registration)).rejects.toThrow(/BE|backup/i);
+
+    expect(vault.user.sentToast).toHaveBeenCalledWith('example.com');
+    expect(vault.user.usedToast).not.toHaveBeenCalled();
+  });
+
+  it('signs in on the retry once the user takes the offered switch', async () => {
+    const registration = await mismatched();
+    await expect(authenticate(registration)).rejects.toThrow();
+    vault.user.choosePasskey.mockImplementation((options: PasskeyOption[]) => ({
+      action: 'use',
+      id: options[0].id,
+      switchBackup: !!options[0].retry,
+    }));
+
+    const { assertion } = await authenticate(registration);
+
+    const offered: PasskeyOption[] = vault.user.choosePasskey.mock.calls[1][0];
+    expect(offered[0].retry).toEqual({ synced: !registration.record.backupEligible });
+    expect(Boolean(flagsOf(assertion) & FLAG_BE)).toBe(registration.record.backupEligible);
+  });
+
+  it('says "signed in" and offers nothing for a passkey the vault created', async () => {
+    const registration = await register();
+
+    await authenticate(registration);
+    await authenticate(registration);
+
+    expect(vault.user.usedToast).toHaveBeenCalledTimes(2);
+    expect(vault.user.sentToast).not.toHaveBeenCalled();
+    expect(vault.user.choosePasskey.mock.calls[1][0][0].retry).toBeUndefined();
+  });
+});
+
 describe('when the vault cannot or should not answer', () => {
   it('hands the request to the browser when no vault passkey matches allowCredentials', async () => {
     const registration = await register();

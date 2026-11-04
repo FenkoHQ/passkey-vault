@@ -46,6 +46,14 @@ export interface VaultDialogPasskey {
   id: string;
   userName: string;
   userDisplayName: string;
+  /**
+   * Present when the vault signed with this passkey on this site a moment
+   * ago and its backup flags are a guess: the site may have refused that
+   * sign-in because the flags differ from the ones it registered (relying
+   * parties on go-webauthn, such as Teleport, do). `synced` is what the
+   * passkey asserts now; the picker offers to switch it.
+   */
+  retry?: { synced: boolean };
 }
 
 export type VaultDialogView =
@@ -53,7 +61,12 @@ export type VaultDialogView =
   | { kind: 'create'; mode: VaultDialogMode; rpId: string; userName: string };
 
 export type VaultDialogDecision =
-  | { action: 'use'; id: string }
+  | {
+      action: 'use';
+      id: string;
+      /** Switch the passkey's synced setting, and keep it, before signing. Needs `retry`. */
+      switchBackup?: boolean;
+    }
   | { action: 'create' }
   | { action: 'cancel' }
   | { action: 'passthrough' };

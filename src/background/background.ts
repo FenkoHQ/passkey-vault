@@ -47,6 +47,7 @@ import {
 } from './webauthn-settings';
 import {
   applyBackupRepairs,
+  backupFlagsMayMismatch,
   backupFlagsOf,
   normalizeBackupFlags,
   stampLegacyBackupFlags,
@@ -63,6 +64,7 @@ import { isRpIdValidForHost } from '../utils/rp-id';
 import { hasStringId, wellFormedRecords } from '../utils/records';
 import { DIALOG_MESSAGES, isVaultDialogSender } from '../utils/vault-dialog';
 import { DialogBroker } from './dialog-broker';
+import { noteSignIn, recentSignIns } from './recent-sign-ins';
 import { needsSiteIcon, saveSiteIcon, clearSiteIcons } from '../site-icons';
 import {
   selectPrfEval,
@@ -333,6 +335,18 @@ class BackgroundService {
       }
     },
     passkeysFor: async (rpId) => (await this.loadPasskeys()).filter((p) => p.rpId === rpId),
+    retryCandidates: async (rpId) => {
+      const recent = await recentSignIns(rpId);
+      const candidates = new Map<string, { synced: boolean }>();
+      if (recent.size === 0) return candidates;
+      const fallback = await this.fallbackBackupFlags();
+      for (const passkey of await this.loadPasskeys()) {
+        if (passkey.rpId !== rpId || !recent.has(passkey.id)) continue;
+        if (!backupFlagsMayMismatch(passkey)) continue;
+        candidates.set(passkey.id, { synced: backupFlagsOf(passkey, fallback).backupEligible });
+      }
+      return candidates;
+    },
   });
 
   private withVault<T>(operation: () => Promise<T>): Promise<T> {
@@ -846,8 +860,15 @@ class BackgroundService {
     // dialog, and creates one only when the user confirmed it there, for
     // the request they approved.
     if (message.requester && type === 'GET_PASSKEY') {
-      const selectedPasskeyId = await this.dialogs.consumeApproval(message, 'get');
-      message.payload = { ...message.payload, selectedPasskeyId };
+      const approval = await this.dialogs.consumeApproval(message, 'get');
+      message.payload = {
+        ...message.payload,
+        selectedPasskeyId: approval.passkeyId,
+        switchBackup: approval.switchBackup,
+      };
+    } else if (type === 'GET_PASSKEY' && message.payload) {
+      // Only the dialog can ask for the switch.
+      message.payload = { ...message.payload, switchBackup: false };
     }
     if (message.requester && type === 'CREATE_PASSKEY') {
       await this.dialogs.consumeApproval(message, 'create');
@@ -1075,11 +1096,17 @@ class BackgroundService {
 
       if (existingPasskey) {
         logger.debug('Passkey already registered with', rpId);
+        // The page shows this message as is (Teleport does), so say what to
+        // do. It learns nothing new: InvalidStateError already tells it the
+        // authenticator holds one of the credentials it excluded.
         return {
           success: false,
-          error: 'This passkey is already registered with this site',
+          error:
+            'Fenko Vault already holds a passkey for this account on this site. ' +
+            'Remove that passkey from your account on this site before adding a new one.',
           name: 'InvalidStateError',
           existingCredentialId: existingPasskey.id,
+          flagsMayMismatch: backupFlagsMayMismatch(existingPasskey),
         };
       }
 
@@ -1301,7 +1328,25 @@ class BackgroundService {
       // detection. Sending zero is what platform passkey providers do; the
       // stored counter keeps moving either way so the UI still shows use.
       const reportedCounter = flagSettings.signCounter === 'zero' ? 0 : passkey.counter;
-      const backupFlags = backupFlagsOf(passkey, await this.fallbackBackupFlags());
+      let backupFlags = backupFlagsOf(passkey, await this.fallbackBackupFlags());
+      // The user asked, in the picker, to retry with the other synced
+      // setting. It is kept, as if set from the popup: if the site takes it,
+      // it is the right one.
+      const switchedBackup = payload.switchBackup === true;
+      if (switchedBackup) {
+        const synced = !backupFlags.backupEligible;
+        backupFlags = normalizeBackupFlags(synced, synced);
+        passkey = {
+          ...withBackupFlags(passkey, backupFlags, 'manual'),
+          updatedAt: Math.max(Date.now(), (passkey.updatedAt ?? passkey.createdAt) + 1),
+        };
+        this.logWebAuthn(
+          'BACKUP',
+          'info',
+          `Marked passkey for ${rpId} as ${synced ? 'synced' : 'device-bound'} on retry`,
+          { rpId, credentialId: passkey.id }
+        );
+      }
       const authenticatorData = await createAuthenticatorData(
         rpId,
         null,
@@ -1332,7 +1377,11 @@ class BackgroundService {
       if (index >= 0) {
         passkeys[index] = passkey;
         await this.savePasskeys(passkeys);
+        if (switchedBackup) await this.noteVaultChange();
       }
+      await noteSignIn(passkey.id, rpId).catch((error) => {
+        logger.warn('Could not record the sign-in for a retry offer', error);
+      });
 
       logger.debug('Signed assertion for', passkey.id);
 
@@ -1369,6 +1418,8 @@ class BackgroundService {
           authenticatorAttachment: flagSettings.attachment,
           clientExtensionResults,
         },
+        // For the content script's notice only; it never reaches the page.
+        flagsMayMismatch: backupFlagsMayMismatch(passkey),
       };
     } catch (error: unknown) {
       let errorMessage = 'Unknown error';

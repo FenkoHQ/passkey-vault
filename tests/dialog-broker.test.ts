@@ -361,6 +361,130 @@ describe('deciding', () => {
   });
 });
 
+describe('signing in again soon after a sign-in the site may have refused', () => {
+  const FLAG_BE = 0x08;
+  const FLAG_BS = 0x10;
+
+  /** Run a sign-in through the dialog, deciding `decision`; the background's answer. */
+  async function signIn(requestId: string, decision: Record<string, unknown>) {
+    const { token } = await open(requestId);
+    const { view } = await attach(token);
+    await decide(token, decision);
+    const response: any = await vault.send(
+      { type: 'GET_PASSKEY', requestId, payload: { publicKey: getPayload().publicKey } },
+      PAGE
+    );
+    return { view, response };
+  }
+
+  const flagsOf = (response: any) =>
+    Uint8Array.from(atob(response.credential.response.authenticatorData), (c) =>
+      c.charCodeAt(0)
+    )[32];
+
+  const stored = async (id: string) => (await vault.passkeys()).find((p: any) => p.id === id);
+
+  it('offers nothing on a first sign-in', async () => {
+    const { view } = await signIn('req-1', { action: 'use', id: 'cred-alice' });
+
+    expect(view.passkeys.every((passkey: any) => !('retry' in passkey))).toBe(true);
+  });
+
+  it('offers the switch only for the passkey just used, with its current setting', async () => {
+    await signIn('req-1', { action: 'use', id: 'cred-alice' });
+
+    const { view } = await signIn('req-2', { action: 'cancel' });
+
+    expect(view.passkeys).toEqual([
+      expect.objectContaining({ id: 'cred-alice', retry: { synced: false } }),
+      expect.not.objectContaining({ retry: expect.anything() }),
+    ]);
+  });
+
+  it('switches the setting, keeps it, and signs with it when the user asks', async () => {
+    const first = await signIn('req-1', { action: 'use', id: 'cred-alice' });
+    expect(flagsOf(first.response) & (FLAG_BE | FLAG_BS)).toBe(0);
+
+    const second = await signIn('req-2', { action: 'use', id: 'cred-alice', switchBackup: true });
+
+    expect(second.response.success).toBe(true);
+    expect(flagsOf(second.response) & (FLAG_BE | FLAG_BS)).toBe(FLAG_BE | FLAG_BS);
+    expect(await stored('cred-alice')).toMatchObject({
+      backupEligible: true,
+      backupState: true,
+      backupSource: 'manual',
+    });
+    // Offered again, the other way, in case the site still refuses.
+    const third = await signIn('req-3', { action: 'cancel' });
+    expect(third.view.passkeys[0].retry).toEqual({ synced: true });
+  });
+
+  it('leaves the setting alone unless the user asks', async () => {
+    await signIn('req-1', { action: 'use', id: 'cred-alice' });
+
+    const second = await signIn('req-2', { action: 'use', id: 'cred-alice' });
+
+    expect(flagsOf(second.response) & FLAG_BE).toBe(0);
+    expect((await stored('cred-alice')).backupSource).toBe('legacy');
+  });
+
+  it('ignores a switch the dialog did not offer, and one a page asks for', async () => {
+    const offered = await signIn('req-1', {
+      action: 'use',
+      id: 'cred-alice',
+      switchBackup: true,
+    });
+    expect(flagsOf(offered.response) & FLAG_BE).toBe(0);
+
+    const { token } = await open('req-2');
+    await attach(token);
+    await decide(token, { action: 'use', id: 'cred-bob' });
+    const asked: any = await vault.send(
+      {
+        type: 'GET_PASSKEY',
+        requestId: 'req-2',
+        payload: { publicKey: getPayload().publicKey, switchBackup: true },
+      },
+      PAGE
+    );
+
+    expect(flagsOf(asked) & FLAG_BE).toBe(0);
+    expect((await stored('cred-alice')).backupSource).toBe('legacy');
+    expect((await stored('cred-bob')).backupSource).toBe('legacy');
+  });
+
+  it('offers nothing for a passkey the vault created', async () => {
+    await vault.reset({
+      passkeys: PASSKEYS.map((passkey) => ({
+        ...passkey,
+        backupEligible: false,
+        backupState: false,
+        backupSource: 'created',
+      })),
+    });
+    await signIn('req-1', { action: 'use', id: 'cred-alice' });
+
+    const { view } = await signIn('req-2', { action: 'cancel' });
+
+    expect(view.passkeys[0]).not.toHaveProperty('retry');
+  });
+
+  it('stops offering once the sign-in is a few minutes old', async () => {
+    const now = Date.now();
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      await signIn('req-1', { action: 'use', id: 'cred-alice' });
+      clock.mockReturnValue(now + 3 * 60 * 1000 + 1);
+
+      const { view } = await signIn('req-2', { action: 'cancel' });
+
+      expect(view.passkeys[0]).not.toHaveProperty('retry');
+    } finally {
+      clock.mockRestore();
+    }
+  });
+});
+
 describe('closing a dialog', () => {
   it('closes it when the page gives up', async () => {
     const { token } = await open('req-1');

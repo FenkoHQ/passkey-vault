@@ -25,6 +25,14 @@ All notable changes to Passkey Vault are documented here. The format follows
   dialogs. A web page cannot read the account list or approve a request by
   scripting the dialog.
 - New sync recovery phrases no longer fail when the word list runs short.
+- When a site such as Teleport refuses an imported passkey because its synced
+  setting differs from the one it registered, the vault now helps fix it. If
+  you sign in again with the same passkey within three minutes, the passkey
+  picker offers to retry with the other setting and saves it if you accept.
+  For a passkey whose synced setting is a guess, the sign-in notice now says
+  "Passkey Sent" rather than "Signed In". When a site refuses a new passkey
+  because the vault already holds one for that account, the message now tells
+  you to remove the old passkey from the site first.
 
 ## [0.12.1] - 2026-10-29
 

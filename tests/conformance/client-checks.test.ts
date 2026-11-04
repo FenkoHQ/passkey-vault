@@ -288,6 +288,40 @@ describe('excludeCredentials (§6.3.2 step 3)', () => {
     expect(await vault.passkeys()).toHaveLength(before.length);
   });
 
+  it('says what to do, to the page and in a notice, and gives the page nothing else', async () => {
+    const existing = await register();
+    vault.posted.length = 0;
+
+    const { error } = await createWith(
+      (o) =>
+        (o.excludeCredentials = [{ type: 'public-key', id: existing.record.rawId.slice().buffer }])
+    );
+
+    expect(error?.message).toMatch(/Remove that passkey/);
+    // The vault made this passkey, so its synced setting is not in doubt.
+    expect(vault.user.alreadyRegisteredToast).toHaveBeenCalledWith('example.com', false);
+    expect(vault.user.errorToast).not.toHaveBeenCalled();
+    const answer = vault.posted
+      .map((posted) => posted.data as any)
+      .find((data) => data?.type === 'PASSKEY_CREATE_RESPONSE');
+    expect(Object.keys(answer.result).sort()).toEqual(['error', 'name', 'success']);
+  });
+
+  it('points to the retry fix when the held passkey’s synced setting is a guess', async () => {
+    const existing = await register();
+    await vault.send({
+      type: 'SET_PASSKEY_BACKUP',
+      payload: { credentialId: existing.record.id, synced: true },
+    });
+
+    await createWith(
+      (o) =>
+        (o.excludeCredentials = [{ type: 'public-key', id: existing.record.rawId.slice().buffer }])
+    );
+
+    expect(vault.user.alreadyRegisteredToast).toHaveBeenCalledWith('example.com', true);
+  });
+
   it('ignores excluded IDs the vault does not hold', async () => {
     const { error } = await createWith(
       (o) => (o.excludeCredentials = [{ type: 'public-key', id: random(32), transports: ['usb'] }])

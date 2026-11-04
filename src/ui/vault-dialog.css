@@ -108,6 +108,35 @@ body {
   justify-content: center;
 }
 
+/* Offered under the picker when the site may have just refused the passkey. */
+.retry {
+  flex: none;
+  padding: 6px 16px 8px;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--text);
+  background: var(--accent-soft);
+  border-top: 1px solid var(--accent-border);
+}
+
+.retry-hint {
+  margin: 0 0 4px;
+  color: var(--text-muted);
+}
+
+.retry-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.retry-switch input {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .card-footer {
   flex: none;
   display: grid;

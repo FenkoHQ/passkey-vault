@@ -61,6 +61,15 @@ export function backupFlagsOf(
   return normalizeBackupFlags(record!.backupEligible === true, record!.backupState === true);
 }
 
+/**
+ * Whether a site could reject this passkey's flags. Only flags the vault set
+ * when it created the passkey are known to match what the site registered;
+ * imported, legacy and user-set flags are someone's guess.
+ */
+export function backupFlagsMayMismatch(record: BackupFields | null | undefined): boolean {
+  return backupSourceOf(record) !== 'created';
+}
+
 /** Copy of `record` carrying `flags`, tagged with where they came from. */
 export function withBackupFlags<T extends object>(
   record: T,
