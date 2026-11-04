@@ -126,12 +126,29 @@ const en: TranslationMap = {
   popupTabPasskeys: 'Passkeys',
   popupTabTotp: '2FA codes',
   popupNoTotpYet: 'No 2FA Codes Yet',
-  popupNoTotpHelp: 'Add an otpauth:// URI to start generating time-based codes.',
+  popupNoTotpHelp: 'Add a setup key, QR code or otpauth:// URI to start generating codes.',
   popupAddTotp: 'Add Code',
   popupAddTotpTitle: 'Add 2FA Code',
   popupAddTotpHelp:
-    'Paste the otpauth:// URI from your service, several at once, or a Google Authenticator export QR (otpauth-migration://).',
-  popupTotpUriRequired: 'Paste an otpauth:// URI first',
+    'Paste the setup key or otpauth:// URI from your service (several URIs at once work too), or a Google Authenticator export QR (otpauth-migration://).',
+  popupTotpInputPlaceholder: 'Setup key or otpauth://totp/...',
+  popupTotpUriRequired: 'Paste a setup key or an otpauth:// URI first',
+  popupTotpSetupKeyDetected: 'Setup key detected. Name this code:',
+  popupTotpServiceLabel: 'Service',
+  popupTotpServicePlaceholder: 'e.g. GitHub',
+  popupTotpServiceRequired: 'Enter the service name for this code',
+  popupTotpAccountLabel: 'Account (optional)',
+  popupTotpAccountPlaceholder: 'e.g. you@example.com',
+  popupTotpAdvanced: 'Advanced',
+  popupTotpAdvancedHint:
+    'Only change these if the service says so. Most use SHA-1, 6 digits, 30 seconds.',
+  popupTotpAlgorithmLabel: 'Algorithm',
+  popupTotpDigitsLabel: 'Digits',
+  popupTotpPeriodLabel: 'Seconds',
+  popupTotpPeriodInvalid: 'Seconds must be a whole number from 1 to 300',
+  popupTotpKeyInvalidChars:
+    'Setup keys only use the letters A–Z and the digits 2–7. Check these characters: {chars}',
+  popupTotpKeyTooShort: 'That setup key is too short. Check that you copied all of it.',
   popupTotpAddFailed: 'Failed to parse URI',
   popupTotpAdded: 'Code added',
   popupTotpAllExist: 'Those codes are already in your vault',
@@ -540,6 +557,7 @@ const en: TranslationMap = {
   pagePasskeyCreatedMsg: 'Saved passkey for {user} on {rp}',
   pageSignedIn: 'Signed In',
   pageSignedInMsg: 'Used passkey for {user}',
+  pageSignedInSiteMsg: 'Signed in to {rp} with Fenko Vault',
   pagePasskeyError: 'Passkey Error',
   pageSignInFailed: 'Sign In Failed',
   pageChoosePasskey: 'Choose a Passkey',
@@ -548,9 +566,13 @@ const en: TranslationMap = {
   pageVaultLockedMsg: 'Unlock Fenko Vault from the toolbar to sign in with a vault passkey.',
   pageContinue: 'Continue',
   pageUseOtherPasskey: 'Use other passkey',
+  pageChoosePasskeyButton: 'Choose a passkey',
   pageCreatePasskeyTitle: 'Create a Passkey?',
   pageCreatePasskeyMsg: 'Create a passkey for {user} on {rp}?',
   pageCreate: 'Create',
+  dialogInactive: 'This request is no longer active.',
+  dialogNotVisible: 'Cannot confirm this dialog is fully visible.',
+  dialogOpenWindow: 'Open it in a window',
 };
 
 const ru: TranslationMap = {
@@ -1507,12 +1529,21 @@ export async function setStoredLanguage(language: SupportedLanguage): Promise<vo
   await chrome.storage.local.set({ [LANGUAGE_STORAGE_KEY]: language });
 }
 
-export async function initI18n(): Promise<ResolvedLanguage> {
+/**
+ * Load the user's language. On the extension's own pages it also sets the
+ * document's lang and dir; a content script passes applyToDocument: false,
+ * since the document is the web page's.
+ */
+export async function initI18n(
+  options: { applyToDocument?: boolean } = {}
+): Promise<ResolvedLanguage> {
   const stored = await getStoredLanguage();
   currentLanguage =
     stored === 'auto' ? resolveLanguage(navigator.language) : resolveLanguage(stored);
-  document.documentElement.lang = currentLanguage.replace('_', '-');
-  document.documentElement.dir = isRtlLanguage(currentLanguage) ? 'rtl' : 'ltr';
+  if (options.applyToDocument !== false) {
+    document.documentElement.lang = currentLanguage.replace('_', '-');
+    document.documentElement.dir = isRtlLanguage(currentLanguage) ? 'rtl' : 'ltr';
+  }
   return currentLanguage;
 }
 

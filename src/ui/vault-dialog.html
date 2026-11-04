@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fenko Vault</title>
+    <link rel="stylesheet" href="vault-dialog.css" />
+  </head>
+  <body>
+    <div
+      id="card"
+      class="card"
+      role="dialog"
+      aria-labelledby="title"
+      aria-describedby="subtitle"
+      tabindex="-1"
+      hidden
+    >
+      <header class="card-header">
+        <h1 id="title" class="card-title"></h1>
+        <p id="subtitle" class="card-subtitle"></p>
+      </header>
+      <p id="status" class="status" role="status" hidden></p>
+      <div id="body" class="card-body">
+        <div id="passkeys" class="passkey-list" role="radiogroup" aria-labelledby="title"></div>
+      </div>
+      <footer id="footer" class="card-footer"></footer>
+    </div>
+    <script src="vault-dialog.js"></script>
+  </body>
+</html>

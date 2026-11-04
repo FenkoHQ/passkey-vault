@@ -40,9 +40,15 @@ beforeAll(() => {
   require('../src/background/background');
 });
 
+const openSignInDialog = {
+  type: 'PASSKEY_DIALOG_OPEN',
+  requestId: 'req-1',
+  payload: { kind: 'get', publicKey: { rpId: 'example.com', challenge: 'AQID' } },
+};
+
 describe('background: locked vault', () => {
-  it('tags LIST_PASSKEYS_FOR_RP with VAULT_LOCKED', async () => {
-    const response = await send({ type: 'LIST_PASSKEYS_FOR_RP', payload: { rpId: 'example.com' } });
+  it('tags a sign-in dialog with VAULT_LOCKED', async () => {
+    const response = await send(openSignInDialog);
 
     expect(response).toMatchObject({ success: false, code: 'VAULT_LOCKED' });
   });
@@ -50,7 +56,7 @@ describe('background: locked vault', () => {
   it('does not report the locked vault as an extension error', async () => {
     (console.error as jest.Mock).mockClear();
 
-    await send({ type: 'LIST_PASSKEYS_FOR_RP', payload: { rpId: 'example.com' } });
+    await send(openSignInDialog);
 
     expect(console.error).not.toHaveBeenCalled();
   });

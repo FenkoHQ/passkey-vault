@@ -10,15 +10,12 @@ import { logger } from '../utils/logger';
 import { readPageIcon } from '../site-icons/page-capture';
 import { describeFrame } from './frame';
 import { acceptsEs256 } from '../utils/algorithms';
-
-interface PasskeyOption {
-  id: string;
-  credentialId: string;
-  userName: string;
-  userDisplayName: string;
-  rpId: string;
-  createdAt: number;
-}
+import { VaultDialogClient } from './vault-dialog-client';
+import {
+  showErrorNotification as _showErrorNotification,
+  showPasskeyCreatedNotification as _showPasskeyCreatedNotification,
+  showPasskeyUsedNotification as _showPasskeyUsedNotification,
+} from './page-notices';
 
 interface DomainRules {
   mode: 'disabled' | 'all' | 'allowlist' | 'blocklist';
@@ -33,36 +30,8 @@ interface DomainRules {
  */
 type RpIdResolution = { rpId: string } | { refused: true };
 
-type PasskeySelectorResult =
-  | { action: 'use'; id: string }
-  | { action: 'cancel' }
-  | { action: 'passthrough' };
-
-interface WindowWithVault extends Window {
-  showPasskeySelector: (
-    options: PasskeyOption[],
-    rpId: string,
-    signal?: AbortSignal
-  ) => Promise<PasskeySelectorResult>;
-  showPasskeyCreateConfirm: (
-    rpId: string,
-    userName: string,
-    signal?: AbortSignal
-  ) => Promise<boolean>;
-  showPasskeyCreatedNotification: (userName: string, rpId: string) => void;
-  showPasskeyUsedNotification: (userName: string, rpId: string) => void;
-  showErrorNotification: (title: string, message: string) => void;
-}
-
 /** How long a posted registration can still be taken back; the background allows as long. */
 const POSTED_REGISTRATION_MEMORY_MS = 10 * 60 * 1000;
-
-const vaultWindow = window as unknown as WindowWithVault;
-const _showPasskeySelector = vaultWindow.showPasskeySelector;
-const _showPasskeyCreateConfirm = vaultWindow.showPasskeyCreateConfirm;
-const _showPasskeyCreatedNotification = vaultWindow.showPasskeyCreatedNotification;
-const _showPasskeyUsedNotification = vaultWindow.showPasskeyUsedNotification;
-const _showErrorNotification = vaultWindow.showErrorNotification;
 
 class ContentScript {
   private isInjected = false;
@@ -79,6 +48,8 @@ class ContentScript {
 
   /** Settles once i18n and logging are ready; page requests wait for it. */
   private ready: Promise<void>;
+  /** The vault's own dialogs, which the page can neither read nor click for the user. */
+  private dialogs = new VaultDialogClient((message) => this.sendMessage(message));
 
   constructor() {
     // Both happen before the first await, at document_start: the page can
@@ -94,7 +65,8 @@ class ContentScript {
    */
   private async initialize(): Promise<void> {
     try {
-      await initI18n();
+      // Translations only: the page's own <html> lang and dir stay as they are.
+      await initI18n({ applyToDocument: false });
 
       // Initialize logger first
       await logger.init();
@@ -345,15 +317,26 @@ class ContentScript {
           return;
         }
 
-        // SECURITY: require an explicit user gesture before creating a passkey,
-        // so a page cannot silently register an attacker-triggered credential.
-        const createUser = (pk?.user as Record<string, string>) || {};
-        const createUserName = createUser.displayName || createUser.name || t('commonUnknownUser');
-        const confirmed = await _showPasskeyCreateConfirm(rpId, createUserName, signal);
+        // SECURITY: the user confirms every registration in the vault's own
+        // dialog, so a page cannot register a credential the user did not
+        // intend, silently or with a click it tricked them into. The
+        // background makes the passkey only for a request the dialog
+        // approved.
+        const dialog = await this.dialogs.run({
+          kind: 'create',
+          requestId,
+          rpId,
+          payload,
+          conditional: false,
+          signal,
+        });
         if (signal.aborted) {
           return;
         }
-        if (!confirmed) {
+        if (dialog.status !== 'decided') {
+          throw new Error(t('pagePasskeyError'));
+        }
+        if (dialog.outcome !== 'approved') {
           window.postMessage(
             {
               source: 'PASSKEY_VAULT_CONTENT',
@@ -446,7 +429,6 @@ class ContentScript {
       let userChosePasskey = false;
       // Sign in with existing passkey - show selection UI
       try {
-        // First, get list of available passkeys for this site
         const pk = payload.publicKey as Record<string, unknown> | undefined;
         const resolved = await this.resolveTrustedRpId(payload);
         if ('refused' in resolved) {
@@ -469,18 +451,26 @@ class ContentScript {
           return;
         }
 
-        const listResponse = await this.sendMessage({
-          type: 'LIST_PASSKEYS_FOR_RP',
-          payload: { rpId },
+        // The vault's dialog lists the site's passkeys. They go from the
+        // background to the dialog only: this script, in the page's
+        // process, learns whether there is one to offer, never which.
+        const dialog = await this.dialogs.run({
+          kind: 'get',
           requestId,
-          timestamp: Date.now(),
+          rpId,
+          payload,
+          conditional: payload.mediation === 'conditional',
+          signal,
         });
+        if (signal.aborted) {
+          return;
+        }
 
         // A locked vault cannot tell whether it holds a passkey for this site,
         // so it must not be reported as "no passkey". Say it is locked, then
         // follow the user's fallback setting: blocking the native prompt on
         // every locked sign-in would also lock out their security keys.
-        if (!listResponse.success && listResponse.code === 'VAULT_LOCKED') {
+        if (dialog.status === 'locked') {
           _showErrorNotification(t('popupVaultLocked'), t('pageVaultLockedMsg'));
           if (rules.passthroughOnNoPasskey !== false) {
             this.postPassthroughResponse('PASSKEY_GET_RESPONSE', requestId, 'Vault is locked');
@@ -490,31 +480,15 @@ class ContentScript {
           return;
         }
 
-        const passkeys = listResponse.passkeys as Record<string, unknown>[] | undefined;
-
-        // If the RP specified allowCredentials, the server only accepts those
-        // specific credential IDs (e.g. it knows the user is "alice" and lists
-        // alice's credentials). Suggesting a vault passkey not in that list
-        // would just fail at the server, so filter them out before deciding
-        // whether to show the picker.
-        const allowCredentials = (pk?.allowCredentials as Array<{ id: string }> | undefined) || [];
-        const allowedIds = allowCredentials
-          .map((c) => c?.id)
-          .filter((id): id is string => typeof id === 'string' && id.length > 0);
-        const matchingPasskeys =
-          allowedIds.length > 0 && passkeys
-            ? passkeys.filter((p) => {
-                const credId = (p.credentialId || p.id) as string;
-                return allowedIds.includes(credId);
-              })
-            : passkeys;
-
-        if (!listResponse.success || !matchingPasskeys || matchingPasskeys.length === 0) {
+        // The background offers only passkeys in allowCredentials, when the
+        // RP sends a list: the server accepts no others.
+        if (dialog.status === 'none') {
           if (rules.passthroughOnNoPasskey !== false) {
+            const allowCredentials = (pk?.allowCredentials as unknown[] | undefined) || [];
             this.postPassthroughResponse(
               'PASSKEY_GET_RESPONSE',
               requestId,
-              allowedIds.length > 0
+              allowCredentials.length > 0
                 ? 'No vault passkey matches allowCredentials'
                 : 'No vault passkey for this site'
             );
@@ -525,26 +499,7 @@ class ContentScript {
           return;
         }
 
-        // Convert to PasskeyOption format for the selector
-        const passkeyOptions: PasskeyOption[] = matchingPasskeys.map((pk) => {
-          const user = pk.user as Record<string, string> | undefined;
-          return {
-            id: pk.id as string,
-            credentialId: (pk.credentialId || pk.id) as string,
-            userName: user?.name || '',
-            userDisplayName: user?.displayName || user?.name || t('commonUnknownUser'),
-            rpId: pk.rpId as string,
-            createdAt: pk.createdAt as number,
-          };
-        });
-
-        // Show passkey selector UI
-        const selectorResult = await _showPasskeySelector(passkeyOptions, rpId, signal);
-        if (signal.aborted) {
-          return;
-        }
-
-        if (selectorResult.action === 'passthrough') {
+        if (dialog.outcome === 'passthrough') {
           this.postPassthroughResponse(
             'PASSKEY_GET_RESPONSE',
             requestId,
@@ -553,7 +508,7 @@ class ContentScript {
           return;
         }
 
-        if (selectorResult.action === 'cancel') {
+        if (dialog.outcome === 'cancel') {
           // A conditional (autofill) request is meant to stay open for the
           // life of the page, so dismissing the picker hands it to the
           // browser's own autofill instead of failing it.
@@ -582,26 +537,20 @@ class ContentScript {
           return;
         }
 
-        const selectedId = selectorResult.id;
         userChosePasskey = true;
 
-        // Get the selected passkey and sign
+        // Sign with the passkey the user picked in the dialog. The background
+        // knows which one, and signs only for a request the dialog approved.
         const response = await this.sendMessage({
           type: 'GET_PASSKEY',
-          payload: {
-            ...payload,
-            selectedPasskeyId: selectedId,
-          },
+          payload,
           requestId,
           timestamp: Date.now(),
         });
 
         if (response.success && response.credential) {
-          // Show success notification
-          const selectedPasskey = passkeyOptions.find((pk) => pk.id === selectedId);
-          const userName =
-            selectedPasskey?.userDisplayName || selectedPasskey?.userName || t('commonUnknownUser');
-          _showPasskeyUsedNotification(userName, rpId);
+          // No account name here: this notice is in the page's DOM.
+          _showPasskeyUsedNotification(rpId);
           void this.captureSiteIcon(rpId);
 
           // Reconstruct a proper PublicKeyCredential object
@@ -671,9 +620,10 @@ class ContentScript {
    */
   private setupBackgroundCommunication(): void {
     // Listen for messages from background script
+    // Nothing here answers, so the channel is not held open: a sender that
+    // waits for a reply would otherwise wait until the page unloads.
     chrome.runtime.onMessage.addListener((message) => {
       this.handleBackgroundMessage(message);
-      return true;
     });
   }
 
