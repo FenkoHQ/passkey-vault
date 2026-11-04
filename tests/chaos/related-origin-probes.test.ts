@@ -101,7 +101,11 @@ describe('Related Origin Requests from a web page', () => {
 
     await get(META);
     await vault.chrome.deliver(
-      { type: 'LIST_PASSKEYS_FOR_RP', payload: { rpId: META } },
+      {
+        type: 'PASSKEY_DIALOG_OPEN',
+        requestId: 'req-1',
+        payload: { kind: 'get', publicKey: { rpId: META, challenge: 'AAAA' } },
+      },
       vault.chrome.contentSender()
     );
     await vault.chrome.deliver(
