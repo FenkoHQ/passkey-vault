@@ -4,13 +4,19 @@
  *
  *   page script ── navigator.credentials.create/get (hooked by webauthn-inject)
  *        │  window.postMessage (structured clone, event.source === window)
- *   content script ── dialogs (test-controlled), RP ID checks, domain rules
+ *   content script ── RP ID checks, domain rules
  *        │  chrome.runtime.sendMessage (JSON both ways)
  *   background ── key generation, signing, storage (in-memory chrome.storage)
+ *        │  chrome.runtime messages, with the dialog page's own sender
+ *   dialog page ── the picker and create confirmation (scripted: `vault.user`)
  *
- * Only the user's clicks are simulated: the in-page dialogs only act on
- * trusted events, so tests decide what the user does through `vault.user`.
- * The relay-facing sync service is stubbed; everything else is the real code.
+ * Only the user is simulated. Where the content script would frame the
+ * vault's dialog page, a scripted dialog speaks the real protocol to the
+ * background instead: it claims the session with the token the content
+ * script was given, shows `vault.user` what the background sent, and sends
+ * the decision back as the dialog page would. `vault.dialogs` records the
+ * frames the content script mounted. The relay-facing sync service is
+ * stubbed; everything else is the real code.
  *
  * A test file calls `setupVault()` once at module level. The shim and content
  * script stay loaded for the file, as they do for a page; `vault.reset()`
@@ -52,6 +58,11 @@ export interface UserScript {
    * (options: PasskeyOption[], rpId, signal) => SelectorResult | Promise<SelectorResult>.
    */
   choosePasskey: jest.Mock;
+  /**
+   * Answer to the in-page card that offers an autofill sign-in where the
+   * dialog opens in a window: (rpId) => 'open' | 'cancel' | 'passthrough'.
+   */
+  launch: jest.Mock;
   createdToast: jest.Mock;
   usedToast: jest.Mock;
   errorToast: jest.Mock;
@@ -79,11 +90,36 @@ export interface Vault {
   passkeys(): Promise<any[]>;
   /** The current worker's stubbed sync service (its calls, and the vault adapter it was given). */
   syncService: Record<string, jest.Mock>;
+  /** The dialogs shown, as frames or windows, in order. */
+  dialogs: MountedDialog[];
+  /**
+   * Where dialogs open: in a frame (Chrome, with IntersectionObserver v2)
+   * or in a popup window (Firefox). Reset to 'frame'.
+   */
+  dialogMode: 'frame' | 'window';
+  /** RP IDs of the autofill launcher cards shown (window mode). */
+  launchers: string[];
+}
+
+export interface MountedDialog {
+  token: string;
+  kind: string;
+  focus: boolean;
+  mode: 'frame' | 'window';
+  /** What the background showed the dialog, once it claimed its session. */
+  view?: any;
+  /** The frame is off the page, or the window closed. */
+  unmounted: boolean;
+  /** Stand in for the page removing the frame, or the user closing the window. */
+  remove(): void;
 }
 
 const BACKGROUND = '../../src/background/background';
 const CONTENT = '../../src/content/content';
 const INJECT = '../../src/content/webauthn-inject';
+const DIALOG_FRAME = '../../src/content/vault-dialog-frame';
+const LAUNCHER = '../../src/content/vault-launcher';
+const NOTICES = '../../src/content/page-notices';
 const SYNC_SERVICE = '../../src/sync/sync-service';
 
 export const EXTENSION_PAGE: MessageSender = {
@@ -91,6 +127,17 @@ export const EXTENSION_PAGE: MessageSender = {
   url: `${EXTENSION_ORIGIN}/popup.html`,
   origin: EXTENSION_ORIGIN,
 };
+
+/** The vault's dialog page in frame `frameId` of the page's tab. */
+export function dialogSender(frameId: number): MessageSender {
+  return {
+    id: EXTENSION_ID,
+    url: `${EXTENSION_ORIGIN}/vault-dialog.html`,
+    origin: EXTENSION_ORIGIN,
+    tab: { id: 7, url: window.location.href },
+    frameId,
+  };
+}
 
 function syncServiceStub() {
   return {
@@ -117,6 +164,7 @@ function defaultUser(): UserScript {
       (options: PasskeyOption[]): SelectorResult =>
         options.length > 0 ? { action: 'use', id: options[0].id } : { action: 'cancel' }
     ),
+    launch: jest.fn(() => 'open'),
     createdToast: jest.fn(),
     usedToast: jest.fn(),
     errorToast: jest.fn(),
@@ -127,7 +175,17 @@ function defaultUser(): UserScript {
  * Load the extension into this test file's jsdom window. Requires the
  * vault environment (tests/helpers/vault-environment.js) for `goto`.
  */
-export function setupVault(initialUrl = 'https://example.com/login'): Vault {
+export function setupVault(
+  initialUrl = 'https://example.com/login',
+  options: {
+    /**
+     * Mount the real dialog frame instead of the scripted dialog page. jsdom
+     * does not load the frame, so nobody answers the dialog: for tests of
+     * what the page itself can see.
+     */
+    realDialogFrame?: boolean;
+  } = {}
+): Vault {
   const chrome = new FakeChrome();
   chrome.install();
   const native = installNativeWebAuthn();
@@ -153,16 +211,19 @@ export function setupVault(initialUrl = 'https://example.com/login'): Vault {
     frameId: 0,
   });
 
-  // The dialogs are bound when content.js loads, so install forwarding stubs
-  // that consult whatever `vault.user` holds at call time.
-  const vault = { user } as Vault;
-  win.showPasskeyCreateConfirm = (rpId: string, userName: string, signal?: AbortSignal) =>
-    Promise.resolve(vault.user.confirmCreate(rpId, userName, signal));
-  win.showPasskeySelector = (options: PasskeyOption[], rpId: string, signal?: AbortSignal) =>
-    Promise.resolve(vault.user.choosePasskey(options, rpId, signal));
-  win.showPasskeyCreatedNotification = (...args: unknown[]) => vault.user.createdToast(...args);
-  win.showPasskeyUsedNotification = (...args: unknown[]) => vault.user.usedToast(...args);
-  win.showErrorNotification = (...args: unknown[]) => vault.user.errorToast(...args);
+  const vault = {
+    user,
+    dialogs: [] as MountedDialog[],
+    dialogMode: 'frame',
+    launchers: [] as string[],
+  } as Vault;
+  // The page's notices, bound when content.js loads: forward to whatever
+  // `vault.user` holds at call time.
+  jest.doMock(NOTICES, () => ({
+    showPasskeyCreatedNotification: (...args: unknown[]) => vault.user.createdToast(...args),
+    showPasskeyUsedNotification: (...args: unknown[]) => vault.user.usedToast(...args),
+    showErrorNotification: (...args: unknown[]) => vault.user.errorToast(...args),
+  }));
 
   const startWorker = () => {
     chrome.startWorker(() => {
@@ -199,7 +260,13 @@ export function setupVault(initialUrl = 'https://example.com/login'): Vault {
       chrome.local.seed(seed);
       chrome.sessionArea.seed({});
       chrome.sentToBackground.length = 0;
+      chrome.sentToTabs.length = 0;
       posted.length = 0;
+      vault.dialogs.length = 0;
+      vault.dialogMode = 'frame';
+      vault.launchers.length = 0;
+      chrome.windows.length = 0;
+      chrome.refuseWindowPlacement = false;
       vault.user = defaultUser();
       native.reset();
       startWorker();
@@ -223,6 +290,116 @@ export function setupVault(initialUrl = 'https://example.com/login'): Vault {
       return response?.passkeys ?? [];
     },
   });
+
+  /**
+   * The dialog page with `vault.user` in front of it: claim the session with
+   * the token, show the user what the background sent, send the decision.
+   * Nothing is clicked once `closed` fires (the frame or window is gone).
+   */
+  const scriptDialog = (
+    token: string,
+    sender: MessageSender,
+    closed: AbortSignal,
+    mounted: MountedDialog
+  ) => {
+    const deliver = (message: Record<string, unknown>) =>
+      chrome.deliver(message, sender).catch(() => undefined) as Promise<any>;
+    void (async () => {
+      await tick();
+      const attached = await deliver({ type: 'PASSKEY_DIALOG_ATTACH', token });
+      if (!attached?.success || closed.aborted) return;
+      const view = attached.view;
+      mounted.view = view;
+      mounted.kind = view.kind;
+      let decision: Record<string, unknown>;
+      if (view.kind === 'get') {
+        const offered: PasskeyOption[] = view.passkeys.map((passkey: any) => ({
+          id: passkey.id,
+          credentialId: passkey.id,
+          userName: passkey.userName,
+          userDisplayName: passkey.userDisplayName || passkey.userName || 'Unknown User',
+          rpId: view.rpId,
+          createdAt: 0,
+        }));
+        const choice: SelectorResult = await vault.user.choosePasskey(offered, view.rpId, closed);
+        decision = choice;
+      } else {
+        const confirmed = await vault.user.confirmCreate(
+          view.rpId,
+          view.userName || 'Unknown User',
+          closed
+        );
+        decision = { action: confirmed ? 'create' : 'cancel' };
+      }
+      if (closed.aborted) return;
+      await deliver({ type: 'PASSKEY_DIALOG_DECIDE', token, decision });
+    })();
+  };
+
+  let nextFrameId = 100;
+  /** The dialog page in a frame the content script mounted. */
+  const mountDialogFrame = (options: { token: string; kind: string; focus: boolean }) => {
+    const unmounted = new AbortController();
+    let removed!: () => void;
+    const gone = new Promise<void>((resolve) => (removed = resolve));
+    const mounted: MountedDialog = {
+      ...options,
+      mode: 'frame',
+      unmounted: false,
+      remove: () => removed(),
+    };
+    vault.dialogs.push(mounted);
+    scriptDialog(options.token, dialogSender(nextFrameId++), unmounted.signal, mounted);
+    return {
+      gone,
+      unmount() {
+        mounted.unmounted = true;
+        unmounted.abort();
+      },
+    };
+  };
+  if (!options.realDialogFrame) {
+    jest.doMock(DIALOG_FRAME, () => ({
+      extensionOrigin: () => EXTENSION_ORIGIN,
+      supportsFrameDialogs: () => vault.dialogMode === 'frame',
+      mountDialogFrame,
+    }));
+  }
+  jest.doMock(LAUNCHER, () => ({
+    showLauncher: (rpId: string) => {
+      vault.launchers.push(rpId);
+      return {
+        choice: Promise.resolve(vault.user.launch(rpId)),
+        remove: () => undefined,
+      };
+    },
+  }));
+
+  /** The dialog page in a popup window the background opened. */
+  chrome.onWindowOpened = (opened) => {
+    const closed = new AbortController();
+    const mounted: MountedDialog = {
+      token: new URL(opened.url).hash.slice(1),
+      kind: '',
+      focus: true,
+      mode: 'window',
+      unmounted: false,
+      remove: () => chrome.closeWindow(opened.id),
+    };
+    vault.dialogs.push(mounted);
+    chrome.whenWindowCloses(opened.id, () => {
+      mounted.unmounted = true;
+      closed.abort();
+    });
+    const sender: MessageSender = {
+      id: EXTENSION_ID,
+      url: opened.url,
+      origin: EXTENSION_ORIGIN,
+      tab: { id: opened.tabId, url: opened.url },
+      frameId: 0,
+    };
+    scriptDialog(mounted.token, sender, closed.signal, mounted);
+  };
 
   startWorker();
   // eslint-disable-next-line @typescript-eslint/no-var-requires

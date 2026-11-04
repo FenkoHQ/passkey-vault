@@ -64,6 +64,10 @@ const CHECK_VALUE = 'passkey-vault-check';
 export const AUTO_LOCK_SETTING_KEY = 'auto_lock_timeout';
 export const AUTO_LOCK_ALARM = 'passext-auto-lock';
 const UNLOCKED_SESSION_KEY = 'passext_unlocked_session';
+export enum StorageActivity {
+  Record = 'record',
+  Maintenance = 'maintenance',
+}
 // Activity extends the deadline in memory at once but reaches session storage
 // at most this often, so a restarted worker may lock up to this much early.
 const SESSION_WRITE_INTERVAL_MS = 15 * 1000;
@@ -161,6 +165,8 @@ export class SecureStorage {
   private sessionSavedAt = 0;
   /** Tail of the queue that serialises encrypted reads, writes and key swaps. */
   private storageJobs: Promise<unknown> = Promise.resolve();
+  /** Tail of the queue that keeps session saves and clears in call order. */
+  private sessionWrites: Promise<void> = Promise.resolve();
   /** Called when the vault locks itself after the timeout. */
   onAutoLock: (() => void) | null = null;
 
@@ -222,8 +228,10 @@ export class SecureStorage {
    * in-memory timer nor the key survives a stopped service worker.
    */
   async lockIfIdle(): Promise<void> {
-    if (!(await this.restoreSession())) return;
-    if (this.isIdle(this.activeAt)) this.autoLock();
+    if (!this.isStorageUnlocked()) {
+      return;
+    }
+    if (this.isIdle(this.activeAt)) await this.autoLock();
   }
 
   /** The stored check value, encrypted under the vault key; absent without a PIN. */
@@ -439,7 +447,7 @@ export class SecureStorage {
   /**
    * Lock the secure storage, wiping encryption key from memory
    */
-  lock(): void {
+  lock(): Promise<void> {
     if (this.encryptionKey) {
       secureWipe(this.encryptionKey);
       this.encryptionKey = null;
@@ -449,12 +457,13 @@ export class SecureStorage {
       clearTimeout(this.lockTimeout);
       this.lockTimeout = null;
     }
-    void this.clearSession();
+    return this.clearSession();
   }
 
-  private autoLock(): void {
-    this.lock();
+  private autoLock(): Promise<void> {
+    const cleared = this.lock();
     this.onAutoLock?.();
+    return cleared;
   }
 
   private isIdle(activeAt: number): boolean {
@@ -480,21 +489,24 @@ export class SecureStorage {
     }
     if (this.autoLockMs <= 0) return;
     const delay = Math.max(0, this.activeAt + this.autoLockMs - Date.now());
-    this.lockTimeout = setTimeout(() => this.autoLock(), delay);
+    this.lockTimeout = setTimeout(() => void this.autoLock(), delay);
   }
 
-  private async saveSession(): Promise<void> {
+  private saveSession(): Promise<void> {
     const area = sessionArea();
-    if (!area || !this.encryptionKey || !this.salt) return;
+    if (!area || !this.encryptionKey || !this.salt) return Promise.resolve();
     this.sessionSavedAt = this.activeAt;
-    await area.set({
+    const session = {
       [UNLOCKED_SESSION_KEY]: {
         key: uint8ArrayToBase64(this.encryptionKey),
         salt: uint8ArrayToBase64(this.salt),
         activeAt: this.activeAt,
       } satisfies UnlockedSession,
+    };
+    return this.writeSession(async () => {
+      await area.set(session);
+      await this.scheduleAlarm();
     });
-    await this.scheduleAlarm();
   }
 
   private async scheduleAlarm(): Promise<void> {
@@ -507,10 +519,18 @@ export class SecureStorage {
     }
   }
 
-  private async clearSession(): Promise<void> {
+  private clearSession(): Promise<void> {
     this.sessionSavedAt = 0;
-    await sessionArea()?.remove(UNLOCKED_SESSION_KEY);
-    await alarms()?.clear(AUTO_LOCK_ALARM);
+    return this.writeSession(async () => {
+      await sessionArea()?.remove(UNLOCKED_SESSION_KEY);
+      await alarms()?.clear(AUTO_LOCK_ALARM);
+    });
+  }
+
+  private writeSession(write: () => Promise<void>): Promise<void> {
+    const next = this.sessionWrites.catch(() => undefined).then(write);
+    this.sessionWrites = next;
+    return next;
   }
 
   /**
@@ -529,12 +549,18 @@ export class SecureStorage {
   private async writeBlob(
     storageKey: string,
     plaintext: string,
-    alongside: Record<string, unknown> = {}
+    alongside: Record<string, unknown> = {},
+    activity = StorageActivity.Record
   ): Promise<void> {
     this.ensureUnlocked();
     const encrypted = encryptData(plaintext, this.encryptionKey!);
     await chrome.storage.local.set({ ...alongside, [storageKey]: encrypted });
-    this.resetAutoLock();
+    this.recordActivity(activity);
+  }
+
+  /** Push the auto-lock back for a user's activity, but not for maintenance. */
+  private recordActivity(activity: StorageActivity): void {
+    if (activity === StorageActivity.Record) this.resetAutoLock();
   }
 
   /**
@@ -554,14 +580,16 @@ export class SecureStorage {
    */
   async storeSyncConfig(
     config: SecureStorageConfig,
-    alongside: Record<string, unknown> = {}
+    alongside: Record<string, unknown> = {},
+    activity = StorageActivity.Record
   ): Promise<void> {
     this.ensureUnlocked();
     return this.exclusive(() =>
       this.writeBlob(
         STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG,
         JSON.stringify(cleanSyncConfig(config)),
-        alongside
+        alongside,
+        activity
       )
     );
   }
@@ -569,17 +597,22 @@ export class SecureStorage {
   /**
    * Retrieve sync configuration
    */
-  async getSyncConfig(): Promise<SecureStorageConfig | null> {
+  async getSyncConfig(activity = StorageActivity.Record): Promise<SecureStorageConfig | null> {
     this.ensureUnlocked();
     return this.exclusive(async () => {
       try {
         const decrypted = await this.readBlob(STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG);
         if (decrypted === undefined) return null;
-        this.resetAutoLock();
+        this.recordActivity(activity);
         const stored = JSON.parse(decrypted);
         const config = cleanSyncConfig(stored);
         if (JSON.stringify(stored) !== JSON.stringify(config)) {
-          await this.writeBlob(STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG, JSON.stringify(config));
+          await this.writeBlob(
+            STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG,
+            JSON.stringify(config),
+            {},
+            activity
+          );
         }
         return config;
       } catch (error) {
@@ -596,16 +629,21 @@ export class SecureStorage {
     return this.exclusive(() => chrome.storage.local.remove(STORAGE_KEYS.ENCRYPTED_SYNC_CONFIG));
   }
 
-  async storePasskeys(passkeys: Record<string, unknown>[]): Promise<void> {
+  async storePasskeys(
+    passkeys: Record<string, unknown>[],
+    activity = StorageActivity.Record
+  ): Promise<void> {
     this.ensureUnlocked();
     return this.exclusive(() =>
-      this.writeBlob(STORAGE_KEYS.ENCRYPTED_PASSKEYS, JSON.stringify(passkeys))
+      this.writeBlob(STORAGE_KEYS.ENCRYPTED_PASSKEYS, JSON.stringify(passkeys), {}, activity)
     );
   }
 
-  async getPasskeys(): Promise<Record<string, unknown>[]> {
+  async getPasskeys(activity = StorageActivity.Record): Promise<Record<string, unknown>[]> {
     this.ensureUnlocked();
-    return this.exclusive(() => this.readList(STORAGE_KEYS.ENCRYPTED_PASSKEYS, 'passkeys'));
+    return this.exclusive(() =>
+      this.readList(STORAGE_KEYS.ENCRYPTED_PASSKEYS, 'passkeys', activity)
+    );
   }
 
   /**
@@ -613,11 +651,15 @@ export class SecureStorage {
    * refuse at once while locked; a lock while the read waited its turn reads
    * as [], as it did before reads were queued.
    */
-  private async readList(storageKey: string, label: string): Promise<Record<string, unknown>[]> {
+  private async readList(
+    storageKey: string,
+    label: string,
+    activity: StorageActivity
+  ): Promise<Record<string, unknown>[]> {
     try {
       const decrypted = await this.readBlob(storageKey);
       if (decrypted === undefined) return [];
-      this.resetAutoLock();
+      this.recordActivity(activity);
       return JSON.parse(decrypted);
     } catch (error) {
       console.error(`Failed to decrypt ${label}:`, error);
@@ -654,16 +696,21 @@ export class SecureStorage {
     return passkeys.filter((p) => p.rpId === rpId);
   }
 
-  async storeTotpEntries(entries: Record<string, unknown>[]): Promise<void> {
+  async storeTotpEntries(
+    entries: Record<string, unknown>[],
+    activity = StorageActivity.Record
+  ): Promise<void> {
     this.ensureUnlocked();
     return this.exclusive(() =>
-      this.writeBlob(STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES, JSON.stringify(entries))
+      this.writeBlob(STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES, JSON.stringify(entries), {}, activity)
     );
   }
 
-  async getTotpEntries(): Promise<Record<string, unknown>[]> {
+  async getTotpEntries(activity = StorageActivity.Record): Promise<Record<string, unknown>[]> {
     this.ensureUnlocked();
-    return this.exclusive(() => this.readList(STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES, 'TOTP entries'));
+    return this.exclusive(() =>
+      this.readList(STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES, 'TOTP entries', activity)
+    );
   }
 
   async upsertTotpEntry(entry: Record<string, unknown>): Promise<void> {
@@ -723,7 +770,7 @@ export class SecureStorage {
           await this.rekey(oldKey, nextSpec, replacement);
         } catch (error) {
           // Keep the old key only while it still opens the stored vault.
-          if (!(await this.stillOpens(spec, oldKey).catch(() => false))) this.autoLock();
+          if (!(await this.stillOpens(spec, oldKey).catch(() => false))) await this.autoLock();
           throw error;
         }
         this.install(replacement, nextSpec);
@@ -770,7 +817,7 @@ export class SecureStorage {
         totpEntries: (await this.readEncrypted(STORAGE_KEYS.ENCRYPTED_TOTP_ENTRIES)) || [],
         syncConfig: syncConfig ? cleanSyncConfig(syncConfig) : null,
       });
-      this.lock();
+      await this.lock();
       await chrome.storage.local.remove(VAULT_STORAGE_KEYS);
       return true;
     });
@@ -789,7 +836,7 @@ export class SecureStorage {
    */
   emergencyWipe(): Promise<void> {
     return this.exclusive(async () => {
-      this.lock();
+      await this.lock();
       await chrome.storage.local.remove(VAULT_STORAGE_KEYS);
     });
   }

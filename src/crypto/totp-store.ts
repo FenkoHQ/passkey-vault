@@ -6,7 +6,7 @@
  * unlocked. Falls back to raw storage when secure storage is not in use.
  */
 
-import { secureStorage } from './secure-storage';
+import { secureStorage, StorageActivity } from './secure-storage';
 import { generateHotp } from './totp';
 import { arrayBufferToBase64, base64ToUint8Array } from '../utils/base64';
 import { wellFormedRecords } from '../utils/records';
@@ -33,10 +33,12 @@ function isUnlocked(): boolean {
   return secureStorage.isStorageUnlocked();
 }
 
-export async function loadTotpEntries(): Promise<StoredTotpEntry[]> {
+export async function loadTotpEntries(
+  activity = StorageActivity.Record
+): Promise<StoredTotpEntry[]> {
   if (isUnlocked()) {
     return wellFormedRecords(
-      (await secureStorage.getTotpEntries()) as unknown as StoredTotpEntry[]
+      (await secureStorage.getTotpEntries(activity)) as unknown as StoredTotpEntry[]
     );
   }
   if (await secureStorage.isSetup()) {
@@ -46,9 +48,12 @@ export async function loadTotpEntries(): Promise<StoredTotpEntry[]> {
   return wellFormedRecords((result[TOTP_STORAGE_KEY] || []) as StoredTotpEntry[]);
 }
 
-export async function saveTotpEntries(entries: StoredTotpEntry[]): Promise<void> {
+export async function saveTotpEntries(
+  entries: StoredTotpEntry[],
+  activity = StorageActivity.Record
+): Promise<void> {
   if (isUnlocked()) {
-    await secureStorage.storeTotpEntries(entries as unknown as Record<string, unknown>[]);
+    await secureStorage.storeTotpEntries(entries as unknown as Record<string, unknown>[], activity);
     return;
   }
   if (await secureStorage.isSetup()) {

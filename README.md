@@ -102,6 +102,10 @@ npm run build:all      # Both
 2. Enable Developer mode
 3. Click "Load unpacked" → select `dist/`
 
+A development build shows its commit as its version, such as `0.12.0+2d873fb`, on `chrome://extensions` and in the options page.
+
+Every development build has the extension ID `opnaemnnjkoolijgdldhjfinpjmhkagi`, whichever folder it is loaded from, so the vault carries over to a newer build. To update, load the new folder the same way, or replace the files in the loaded folder and click the reload icon. **Remove** deletes the vault.
+
 **Load in Firefox:**
 
 1. Open `about:debugging#/runtime/this-firefox`

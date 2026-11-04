@@ -1,4 +1,5 @@
 jest.mock('../src/crypto/secure-storage', () => ({
+  StorageActivity: { Record: 'record', Maintenance: 'maintenance' },
   secureStorage: {
     isStorageUnlocked: () => false,
     isSetup: async () => false,

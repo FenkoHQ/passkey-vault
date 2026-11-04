@@ -7,6 +7,12 @@
  * an SPA that aborts and restarts its request on every route change. The
  * vault serialises its read-modify-write work; these experiments check that
  * it does so without losing a counter step, a passkey, or a request.
+ *
+ * A frame shows one vault dialog at a time (a new request replaces the
+ * dialog of the one before), so ceremonies run in parallel from the moment
+ * the user has answered their dialog: `overlapCeremonies` holds each
+ * ceremony's signing or creating message until all of them are waiting,
+ * then lets them reach the worker together.
  */
 
 import { setupVault, vaultReady } from '../helpers/harness';
@@ -27,14 +33,47 @@ beforeEach(async () => {
   await vault.reset();
   vault.goto('https://example.com/login');
 });
+afterEach(() => jest.restoreAllMocks());
+
+/**
+ * Start ceremonies one after another, each once the previous one's dialog
+ * is answered, and deliver their GET_PASSKEY/CREATE_PASSKEY messages to
+ * the worker all at once.
+ */
+async function overlapCeremonies<T>(starts: Array<() => Promise<T>>): Promise<T[]> {
+  const deliver = vault.chrome.deliver.bind(vault.chrome);
+  let held = 0;
+  let onHeld = () => undefined as void;
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  jest.spyOn(vault.chrome, 'deliver').mockImplementation(async (message: any, sender) => {
+    if (message?.type === 'GET_PASSKEY' || message?.type === 'CREATE_PASSKEY') {
+      held++;
+      onHeld();
+      await released;
+    }
+    return deliver(message, sender);
+  });
+  const results: Array<Promise<T>> = [];
+  for (const start of starts) {
+    const before = held;
+    const waiting = new Promise<void>((resolve) => (onHeld = () => held > before && resolve()));
+    results.push(start());
+    await waiting;
+  }
+  release();
+  return Promise.all(results);
+}
 
 describe('parallel sign-ins with one passkey', () => {
   it('gives every assertion its own counter value, and loses none', async () => {
     const registration = await register();
     const requests = Array.from({ length: 12 }, () => authenticationJSON({ rpId: 'example.com' }));
 
-    const assertions = await Promise.all(
-      requests.map((json) => navigator.credentials.get({ publicKey: requestOptionsFromJSON(json) }))
+    const assertions = await overlapCeremonies(
+      requests.map(
+        (json) => () => navigator.credentials.get({ publicKey: requestOptionsFromJSON(json) })
+      )
     );
 
     const counters: number[] = [];
@@ -54,20 +93,22 @@ describe('parallel sign-ins with one passkey', () => {
 
 describe('parallel registrations', () => {
   it('keeps every passkey', async () => {
-    const results = await Promise.all(
-      Array.from({ length: 8 }, (_, i) =>
-        navigator.credentials.create({
-          publicKey: creationOptionsFromJSON(
-            registrationJSON({
-              rp: { name: 'Example', id: 'example.com' },
-              user: {
-                id: btoa(String(i)).replace(/=/g, ''),
-                name: `user${i}`,
-                displayName: `User ${i}`,
-              },
-            })
-          ),
-        })
+    const results = await overlapCeremonies(
+      Array.from(
+        { length: 8 },
+        (_, i) => () =>
+          navigator.credentials.create({
+            publicKey: creationOptionsFromJSON(
+              registrationJSON({
+                rp: { name: 'Example', id: 'example.com' },
+                user: {
+                  id: btoa(String(i)).replace(/=/g, ''),
+                  name: `user${i}`,
+                  displayName: `User ${i}`,
+                },
+              })
+            ),
+          })
       )
     );
 
@@ -80,14 +121,14 @@ describe('parallel registrations', () => {
 describe('registrations and sign-ins interleaved', () => {
   it('neither loses a passkey nor a counter step', async () => {
     const first = await register();
-    const work: Promise<unknown>[] = [];
+    const work: Array<() => Promise<unknown>> = [];
     for (let i = 0; i < 5; i++) {
-      work.push(
+      work.push(() =>
         navigator.credentials.get({
           publicKey: requestOptionsFromJSON(authenticationJSON({ rpId: 'example.com' })),
         })
       );
-      work.push(
+      work.push(() =>
         navigator.credentials.create({
           publicKey: creationOptionsFromJSON(
             registrationJSON({ rp: { name: 'Example', id: 'example.com' } })
@@ -100,7 +141,7 @@ describe('registrations and sign-ins interleaved', () => {
       id: options.find((o) => o.credentialId === first.record.id).id,
     }));
 
-    await Promise.all(work);
+    await overlapCeremonies(work);
 
     const stored = await vault.passkeys();
     expect(stored).toHaveLength(6);
@@ -123,25 +164,34 @@ describe('abort storm', () => {
           })
       );
 
-      const attempts = Array.from({ length: 30 }, () => {
+      // Requests arrive a few milliseconds apart, so some are confirmed,
+      // some aborted at any step, and some replaced by the next request's
+      // dialog before the user answered (the frame shows one at a time).
+      const attempts: Array<Promise<{ value?: unknown; error?: any }>> = [];
+      for (let i = 0; i < 30; i++) {
         const controller = new AbortController();
         setTimeout(() => controller.abort(), Math.floor(random() * 30));
-        return outcome(
-          navigator.credentials.create({
-            publicKey: creationOptionsFromJSON(
-              registrationJSON({ rp: { name: 'Example', id: 'example.com' } })
-            ),
-            signal: controller.signal,
-          })
+        attempts.push(
+          outcome(
+            navigator.credentials.create({
+              publicKey: creationOptionsFromJSON(
+                registrationJSON({ rp: { name: 'Example', id: 'example.com' } })
+              ),
+              signal: controller.signal,
+            })
+          )
         );
-      });
+        await new Promise((resolve) => setTimeout(resolve, Math.floor(random() * 25)));
+      }
       const settled = await Promise.all(attempts);
       await vault.settle();
 
       const created = settled.filter((s) => s.value).map((s) => (s.value as any).id);
-      const aborted = settled.filter((s) => s.error);
-      expect(created.length + aborted.length).toBe(30);
-      for (const failure of aborted) expect(failure.error.name).toBe('AbortError');
+      const failed = settled.filter((s) => s.error);
+      expect(created.length + failed.length).toBe(30);
+      for (const failure of failed) {
+        expect(['AbortError', 'NotAllowedError']).toContain(failure.error.name);
+      }
       // Every passkey in the vault went to the page, and every one the page got is in the vault.
       expect((await vault.passkeys()).map((p) => p.credentialId).sort()).toEqual(created.sort());
       void dialogs;

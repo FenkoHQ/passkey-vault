@@ -1,6 +1,6 @@
 {
   "name": "passkey-vault",
-  "version": "0.12.0",
+  "version": "0.12.1",
   "description": "Cross-platform browser extension for passkey (WebAuthn) and MFA/TOTP management with end-to-end encrypted multi-device sync",
   "scripts": {
     "build": "node build-extension.js",
@@ -71,7 +71,8 @@
     "@noble/hashes": "^1.3.3",
     "@noble/secp256k1": "^3.0.0",
     "cbor-x": "^1.6.0",
-    "jsqr": "^1.4.0"
+    "jsqr": "^1.4.0",
+    "psl": "1.15.0"
   },
   "jest": {
     "preset": "ts-jest",

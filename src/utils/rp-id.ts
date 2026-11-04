@@ -1,7 +1,7 @@
 // Which RP IDs a page may claim (WebAuthn Level 3 §5.1.3 step 8 and
 // §5.1.4.1 step 8, through HTML's "is a registrable domain suffix of or is
 // equal to").
-import { baseDomain } from './domain';
+import { get as registrableDomain } from 'psl';
 
 const LABEL = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?';
 const DOMAIN = new RegExp(`^(?=.{1,253}$)${LABEL}(?:\\.${LABEL})*$`);
@@ -23,11 +23,7 @@ function isDomain(host: string): boolean {
  * An empty RP ID is not the host either: the page asked for an RP ID, and
  * none is valid.
  *
- * The registrable domain comes from baseDomain(), which knows the common
- * two-level public suffixes but not the full Public Suffix List. A suffix
- * it does not know (github.io, say) is treated as registrable, which can
- * only let a page claim an RP ID the browser would refuse; it never lets a
- * page claim an RP ID outside its own host's parents.
+ * Use the Public Suffix List, including private suffixes such as github.io.
  */
 export function isRpIdValidForHost(rpId: string, host: string): boolean {
   // Compared as given, like Chrome: an RP ID that differs from the host only
@@ -37,15 +33,18 @@ export function isRpIdValidForHost(rpId: string, host: string): boolean {
   const page = host.toLowerCase();
   // WebAuthn needs a domain: an address such as 127.0.0.1 is never an RP ID,
   // even its own (§5.1.3 step 7). Chrome throws "This is an invalid domain".
-  if (!isDomain(page)) {
+  if (!isDomain(page) || !isDomain(id)) {
     return false;
+  }
+  const registrable = registrableDomain(page);
+  if (!registrable) {
+    return page === 'localhost' && id === page;
   }
   if (id === page) {
     return true;
   }
-  if (!isDomain(id) || !page.endsWith('.' + id)) {
+  if (!page.endsWith('.' + id)) {
     return false;
   }
-  const registrable = baseDomain(page);
-  return registrable !== null && (id === registrable || id.endsWith('.' + registrable));
+  return id === registrable || id.endsWith('.' + registrable);
 }

@@ -12,7 +12,7 @@
  * page's process another site's credentials, or the vault itself.
  */
 
-import { EXTENSION_PAGE, setupVault, vaultReady } from '../helpers/harness';
+import { EXTENSION_PAGE, dialogSender, setupVault, vaultReady } from '../helpers/harness';
 import { outcome, register } from '../helpers/ceremony';
 import { EXTENSION_ID, type MessageSender } from '../helpers/fake-chrome';
 import { b64url } from '../helpers/bytes';
@@ -39,6 +39,29 @@ const EVIL_PAGE: MessageSender = {
   tab: { id: 9, url: 'https://evil.example/' },
   frameId: 0,
 };
+
+/**
+ * Have the user confirm a registration in the vault's dialog, as the
+ * dialog page in another frame of the sender's tab, then send the
+ * ceremony message the content script would send.
+ */
+async function createConfirmed(
+  sender: MessageSender,
+  requestId: string,
+  payload: Record<string, unknown>
+): Promise<any> {
+  const opened: any = await vault.send(
+    { type: 'PASSKEY_DIALOG_OPEN', requestId, payload: { ...payload, kind: 'create' } },
+    sender
+  );
+  const dialog = { ...dialogSender(77), tab: sender.tab };
+  await vault.send({ type: 'PASSKEY_DIALOG_ATTACH', token: opened.token }, dialog);
+  await vault.send(
+    { type: 'PASSKEY_DIALOG_DECIDE', token: opened.token, decision: { action: 'create' } },
+    dialog
+  );
+  return vault.send({ type: 'CREATE_PASSKEY', requestId, payload }, sender);
+}
 
 describe('a malicious page', () => {
   it('cannot claim another origin in a forged request', async () => {
@@ -157,6 +180,60 @@ describe('a compromised renderer impersonating the content script', () => {
     expect(await vault.passkeys()).toHaveLength(1);
   });
 
+  it('cannot create a passkey for its own site without the user confirming it', async () => {
+    const response: any = await vault.send(
+      {
+        type: 'CREATE_PASSKEY',
+        requestId: 'unconfirmed',
+        payload: {
+          publicKey: {
+            rp: { name: 'Evil', id: 'evil.example' },
+            user: { id: 'AQ', name: 'me', displayName: 'Me' },
+            challenge: b64url(new Uint8Array(32)),
+            pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+          },
+        },
+      },
+      EVIL_PAGE
+    );
+
+    expect(response.success).toBe(false);
+    expect(await vault.passkeys()).toHaveLength(1);
+  });
+
+  it('cannot use a confirmation for one account to create another', async () => {
+    const publicKey = {
+      rp: { name: 'Evil', id: 'evil.example' },
+      user: { id: 'AQ', name: 'me', displayName: 'Me' },
+      challenge: b64url(new Uint8Array(32)),
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+    };
+    const opened: any = await vault.send(
+      { type: 'PASSKEY_DIALOG_OPEN', requestId: 'r', payload: { kind: 'create', publicKey } },
+      EVIL_PAGE
+    );
+    const dialog = { ...dialogSender(77), tab: EVIL_PAGE.tab };
+    await vault.send({ type: 'PASSKEY_DIALOG_ATTACH', token: opened.token }, dialog);
+    await vault.send(
+      { type: 'PASSKEY_DIALOG_DECIDE', token: opened.token, decision: { action: 'create' } },
+      dialog
+    );
+
+    const response: any = await vault.send(
+      {
+        type: 'CREATE_PASSKEY',
+        requestId: 'r',
+        payload: {
+          publicKey: { ...publicKey, user: { id: 'Ag', name: 'victim', displayName: 'V' } },
+        },
+      },
+      EVIL_PAGE
+    );
+
+    expect(response.success).toBe(false);
+    expect(await vault.passkeys()).toHaveLength(1);
+  });
+
   it('still lets the extension pages do all of this', async () => {
     const exported: any = await vault.send({ type: 'EXPORT_VAULT' }, EXTENSION_PAGE);
 
@@ -179,21 +256,14 @@ describe('a compromised renderer impersonating the content script', () => {
 
 describe('taking back a registration', () => {
   const createFrom = (sender: MessageSender, requestId: string) =>
-    vault.send(
-      {
-        type: 'CREATE_PASSKEY',
-        requestId,
-        payload: {
-          publicKey: {
-            rp: { name: 'Evil', id: 'evil.example' },
-            user: { id: 'AQ', name: 'me', displayName: 'Me' },
-            challenge: b64url(new Uint8Array(32)),
-            pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
-          },
-        },
+    createConfirmed(sender, requestId, {
+      publicKey: {
+        rp: { name: 'Evil', id: 'evil.example' },
+        user: { id: 'AQ', name: 'me', displayName: 'Me' },
+        challenge: b64url(new Uint8Array(32)),
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
       },
-      sender
-    );
+    });
 
   it('works for the tab, frame and origin the passkey was made for', async () => {
     await createFrom(EVIL_PAGE, 'req-1');
@@ -269,22 +339,15 @@ describe('a frame that lies about where it runs', () => {
       frameId: 12,
     };
 
-    const response: any = await vault.send(
-      {
-        type: 'CREATE_PASSKEY',
-        requestId: 'framed',
-        payload: {
-          crossOrigin: false,
-          publicKey: {
-            rp: { name: 'Widget', id: 'widget.example' },
-            user: { id: 'AQ', name: 'me', displayName: 'Me' },
-            challenge: b64url(new Uint8Array(32)),
-            pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
-          },
-        },
+    const response: any = await createConfirmed(frame, 'framed', {
+      crossOrigin: false,
+      publicKey: {
+        rp: { name: 'Widget', id: 'widget.example' },
+        user: { id: 'AQ', name: 'me', displayName: 'Me' },
+        challenge: b64url(new Uint8Array(32)),
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
       },
-      frame
-    );
+    });
 
     const clientData = JSON.parse(atob(response.credential.response.clientDataJSON));
     expect(clientData).toMatchObject({
@@ -295,23 +358,16 @@ describe('a frame that lies about where it runs', () => {
   });
 
   it('cannot claim to be cross-origin in a top-level page', async () => {
-    const response: any = await vault.send(
-      {
-        type: 'CREATE_PASSKEY',
-        requestId: 'top',
-        payload: {
-          crossOrigin: true,
-          topOrigin: 'https://bank.example',
-          publicKey: {
-            rp: { name: 'Evil', id: 'evil.example' },
-            user: { id: 'AQ', name: 'me', displayName: 'Me' },
-            challenge: b64url(new Uint8Array(32)),
-            pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
-          },
-        },
+    const response: any = await createConfirmed(EVIL_PAGE, 'top', {
+      crossOrigin: true,
+      topOrigin: 'https://bank.example',
+      publicKey: {
+        rp: { name: 'Evil', id: 'evil.example' },
+        user: { id: 'AQ', name: 'me', displayName: 'Me' },
+        challenge: b64url(new Uint8Array(32)),
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
       },
-      EVIL_PAGE
-    );
+    });
 
     const clientData = JSON.parse(atob(response.credential.response.clientDataJSON));
     expect(clientData.crossOrigin).toBe(false);
