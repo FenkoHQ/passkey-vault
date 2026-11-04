@@ -54,37 +54,51 @@ users, so it does not deanonymize an individual. If a future deployment needs
 to hide the authenticator brand, zero the AAGUID in the three files above (and
 drop the registry entry).
 
-## Registry submission (makes RPs render the brand)
+## FIDO Metadata Service entry (makes RPs render the brand)
 
-Relying parties resolve the AAGUID to a name and icon via the community
-registry consumed by Chrome and others:
+Relying parties and browsers resolve an AAGUID to a display name and icon
+through the FIDO Alliance Metadata Service (MDS). Fenko Vault is listed there
+as a FIDO2 non-CTAP passkey provider: `none` attestation, ES256 only,
+software key protection. The statement submitted on 2026-11-04 is
+[`mds-statement.json`](./mds-statement.json).
 
-> https://github.com/passkeydeveloper/passkey-authenticator-aaguids
+The older community registry (`passkeydeveloper/passkey-authenticator-aaguids`)
+stopped accepting submissions on 2026-11-01, empties its lists on 2027-01-06
+and is archived on 2027-07-06. Fenko Vault's entry there is not migrated
+automatically; the MDS entry replaces it.
 
-To register (or update) the Fenko Vault entry:
+### Updating the entry
 
-1. Fork that repository.
-2. Merge the entry in [`registry-entry.json`](./registry-entry.json) into the
-   repository's `aaguid.json` (a single object keyed by AAGUID; append the
-   `d2717a32-…` key with its `name`/`icon_dark`/`icon_light`).
-3. Keep `combined_aaguid.json` / `aaguid.csv` in sync if the repo's tooling
-   does not regenerate them.
-4. Open a pull request (the repo requires a complete GitHub profile with an
-   organization name and contact info for vendor verification).
+1. Sign in at <https://mymds.fidoalliance.org/metadata-management> with the
+   Fenko vendor account.
+2. Open the Fenko Vault statement, or **Add New** → **Sample FIDO2 Non-CTAP**
+   for a fresh one.
+3. Paste [`mds-statement.json`](./mds-statement.json). Only these fields are
+   ours to change; leave the rest as the sample sets them:
+   `authenticationAlgorithms`, `aaguid`, `friendlyNames`, `description`,
+   `providerLogoLight`, `providerLogoDark`. Do not add `cxConfigURL`.
+4. **Analyze**, then save and submit for publication.
 
-Registry rule: icons MUST be base64-encoded **SVG** data URIs, square, and pure
-vector (no embedded PNG/JPG).
+Field limits from the Metadata Statement spec v3.1.1: `description` is
+English ASCII, 200 characters max; each `friendlyNames` entry 63 characters
+max.
 
-The icon is the Fenko Vault fox-shield logo ([`vault-icon.svg`](./vault-icon.svg)):
-a fennec fox forming a keyhole on an amber shield. It was vectorized from the
-raster brand logo (`docs/brand/fenko-vault-logo.png`, which has no vector
-master) by color-separating the amber shield and navy fox and tracing each with
-potrace, then centering the portrait art in a square `1260×1260` viewBox. The
-amber shield is its own background, so a single icon reads on both light and
-dark RP backgrounds — `icon_light` and `icon_dark` are identical.
+### Icon
 
-`registry-entry.json` embeds it. To regenerate after a logo change, re-run the
-color-separate → potrace → combine steps and then `scratchpad/gen-aaguid-entry.js`.
+MDS requires the SVG Tiny Portable/Secure profile: root element declares
+`version="1.2"` and `baseProfile="tiny-ps"`, first child is a `<title>` holding
+the English friendly name, square viewBox, pure vector, no comments, scripts or
+raster. [`vault-icon-tiny-ps.svg`](./vault-icon-tiny-ps.svg) is that form of
+the fox-shield logo and is what the statement embeds as a base64 data URL in
+both `providerLogoLight` and `providerLogoDark`. The amber shield is its own
+background, so one file serves light and dark.
+
+[`vault-icon.svg`](./vault-icon.svg) is the plain source SVG, vectorized from
+the raster brand logo (`docs/brand/fenko-vault-logo.png`, which has no vector
+master) by color-separating the amber shield and navy fox and tracing each
+with potrace. After a logo change: regenerate `vault-icon.svg`, re-wrap it in
+the Tiny PS envelope above, base64-encode it into both logo fields, and
+resubmit.
 
 (The previous lock-box icon `icon.png` is deprecated and must not be used.)
 
@@ -93,5 +107,4 @@ color-separate → potrace → combine steps and then `scratchpad/gen-aaguid-ent
 - [x] Proper value: valid random UUIDv4, unique to Fenko Vault.
 - [x] Verified: byte-identical across web, Android, and iOS.
 - [x] Documented: this file, referenced from each platform's source.
-- [ ] Registered: PR to `passkey-authenticator-aaguids` not yet opened
-      (entry prepared in `registry-entry.json`).
+- [x] Submitted to FIDO MDS on 2026-11-04 (awaiting publication).
