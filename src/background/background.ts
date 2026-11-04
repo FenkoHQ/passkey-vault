@@ -24,8 +24,17 @@ import {
   AUTO_LOCK_SETTING_KEY,
   secureStorage,
   StorageActivity,
+  UnsupportedKdfError,
 } from '../crypto/secure-storage';
-import { encryptWithPassword, decryptWithPassword } from '../crypto/encryption';
+import { checkVaultSecret, MAX_SECRET_LENGTH } from '../crypto/vault-secret';
+import {
+  checkBackupPassword,
+  decryptBackup,
+  encryptBackup,
+  MIN_BACKUP_PASSWORD_LENGTH,
+  UnsupportedBackupError,
+  type EncryptedBackupFields,
+} from '../crypto/backup-crypto';
 import { logger } from '../utils/logger';
 import { arrayBufferToBase64, arrayBufferToBase64URL, base64urlToBase64 } from '../utils/base64';
 import {
@@ -312,6 +321,18 @@ class VaultLockedError extends Error {
   constructor() {
     super('Secure storage is locked. Please unlock with master password.');
     this.name = 'VaultLockedError';
+  }
+}
+
+/** Why a new master PIN or passphrase cannot be used, or null. */
+function vaultSecretProblem(secret: unknown): string | null {
+  switch (checkVaultSecret(secret)) {
+    case 'too-short':
+      return 'Use a PIN of at least 4 digits or a passphrase of at least 8 characters';
+    case 'too-long':
+      return `Use at most ${MAX_SECRET_LENGTH} characters`;
+    default:
+      return null;
   }
 }
 
@@ -929,7 +950,7 @@ class BackgroundService {
         return this.handleCompleteUpgradeBackup();
       case 'DECRYPT_BACKUP':
         return this.handleDecryptBackup(
-          payload as { data: string; iv: string; salt: string; password: string }
+          payload as Partial<EncryptedBackupFields> & { password?: string }
         );
       case 'ACTIVATE_UI':
         return { success: true, message: 'Activate UI placeholder' };
@@ -2258,9 +2279,8 @@ class BackgroundService {
   private async handleSetupMasterPassword(payload: { password: string }): Promise<unknown> {
     try {
       const { password } = payload;
-      if (!/^\d{4,12}$/.test(password || '')) {
-        return { success: false, error: 'PIN must be 4 to 12 digits' };
-      }
+      const problem = vaultSecretProblem(password);
+      if (problem) return { success: false, error: problem };
 
       // Runs serialized with the other vault jobs, so this cannot race a
       // concurrent setup. On a configured vault initialize() would just unlock
@@ -2333,7 +2353,9 @@ class BackgroundService {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       console.error('Failed to unlock secure storage:', error);
-      return { success: false, error: message };
+      // A vault set up by a newer build: say so rather than "wrong PIN".
+      const code = error instanceof UnsupportedKdfError ? error.code : undefined;
+      return { success: false, error: message, ...(code ? { code } : {}) };
     }
   }
 
@@ -2371,7 +2393,7 @@ class BackgroundService {
     try {
       const { currentPassword } = payload;
       if (!currentPassword) {
-        return { success: false, error: 'Current PIN is required' };
+        return { success: false, error: 'Current PIN or passphrase is required' };
       }
       // The cleartext copy is written before the encrypted vault is removed,
       // so an interrupted removal always leaves at least one of them.
@@ -2395,7 +2417,10 @@ class BackgroundService {
         });
       });
       if (!removed) {
-        return { success: false, error: 'Failed to remove PIN — check your current PIN' };
+        return {
+          success: false,
+          error: 'Failed to remove the lock — check your current PIN or passphrase',
+        };
       }
       return { success: true, message: 'Master PIN removed' };
     } catch (error: unknown) {
@@ -2423,11 +2448,13 @@ class BackgroundService {
     try {
       const { currentPassword, newPassword } = payload;
       if (!currentPassword || !newPassword) {
-        return { success: false, error: 'Both current and new PINs are required' };
+        return {
+          success: false,
+          error: 'Both the current and the new PIN or passphrase are required',
+        };
       }
-      if (!/^\d{4,12}$/.test(newPassword)) {
-        return { success: false, error: 'PIN must be 4 to 12 digits' };
-      }
+      const problem = vaultSecretProblem(newPassword);
+      if (problem) return { success: false, error: problem };
 
       const changed = await secureStorage.changeMasterPassword(currentPassword, newPassword);
       if (!changed) {
@@ -2447,10 +2474,14 @@ class BackgroundService {
   private async handleEncryptBackup(payload: { data: string; password: string }): Promise<unknown> {
     try {
       const { data, password } = payload;
-      if (!password || password.length < 8) {
-        return { success: false, error: 'Password must be at least 8 characters' };
+      if (checkBackupPassword(password)) {
+        return {
+          success: false,
+          error: `Password must be at least ${MIN_BACKUP_PASSWORD_LENGTH} characters`,
+        };
       }
-      const result = await encryptWithPassword(data, password);
+      if (typeof data !== 'string') return { success: false, error: 'Nothing to encrypt' };
+      const result = await encryptBackup(data, password);
       return { success: true, encrypted: result };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2458,19 +2489,22 @@ class BackgroundService {
     }
   }
 
-  private async handleDecryptBackup(payload: {
-    data: string;
-    iv: string;
-    salt: string;
-    password: string;
-  }): Promise<unknown> {
+  /**
+   * Decrypt a backup in any format version. The import page passes the
+   * header's ciphertext and KDF fields; a backup from a newer version is
+   * answered with code UNSUPPORTED_BACKUP rather than as a wrong password.
+   */
+  private async handleDecryptBackup(
+    payload: Partial<EncryptedBackupFields> & { password?: string }
+  ): Promise<unknown> {
     try {
-      const { data, iv, salt, password } = payload;
-      const decrypted = await decryptWithPassword(data, iv, salt, password);
+      const { password, ...backup } = payload || {};
+      const decrypted = await decryptBackup(backup, String(password ?? ''));
       return { success: true, data: decrypted };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      return { success: false, error: message };
+      const code = error instanceof UnsupportedBackupError ? error.code : undefined;
+      return { success: false, error: message, ...(code ? { code } : {}) };
     }
   }
 

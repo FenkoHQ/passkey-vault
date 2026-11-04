@@ -16,6 +16,8 @@ import {
 import { formatCount, initAndLocalize, t } from '../i18n';
 import { initTheme } from '../theme';
 import { resolveSiteIcon } from '../site-icons';
+import { checkVaultSecret } from '../crypto/vault-secret';
+import { checkBackupPassword } from '../crypto/backup-format';
 
 (function () {
   'use strict';
@@ -191,7 +193,11 @@ import { resolveSiteIcon } from '../site-icons';
       if (response.success) {
         showMainScreen();
       } else {
-        errorEl.textContent = t('popupWrongPassword');
+        // A vault set up by a newer build is not a wrong PIN.
+        errorEl.textContent =
+          response.code === 'UNSUPPORTED_KDF'
+            ? t('popupVaultNeedsUpdate')
+            : t('popupWrongPassword');
         errorEl.style.display = 'block';
         passwordInput.value = '';
         passwordInput.focus();
@@ -225,8 +231,10 @@ import { resolveSiteIcon } from '../site-icons';
       const confirm = confirmInput.value;
       errorEl.style.display = 'none';
 
-      if (!/^\d{4,12}$/.test(password)) {
-        errorEl.textContent = t('popupPasswordMin');
+      const problem = checkVaultSecret(password);
+      if (problem) {
+        errorEl.textContent =
+          problem === 'too-long' ? t('vaultSecretTooLong') : t('popupPasswordMin');
         errorEl.style.display = 'block';
         return;
       }
@@ -1007,10 +1015,13 @@ import { resolveSiteIcon } from '../site-icons';
         exportedAt: new Date().toISOString(),
         passkeyCount: passkeys.length,
         totpCount: totpEntries.length,
-        data: encResponse.encrypted.data,
-        iv: encResponse.encrypted.iv,
-        salt: encResponse.encrypted.salt,
+        // The ciphertext and how its key was derived (src/crypto/backup-crypto.ts).
         algorithm: encResponse.encrypted.algorithm,
+        kdf: encResponse.encrypted.kdf,
+        kdfParams: encResponse.encrypted.kdfParams,
+        salt: encResponse.encrypted.salt,
+        iv: encResponse.encrypted.iv,
+        data: encResponse.encrypted.data,
       };
 
       downloadJson(encryptedBackup, `passkey-vault-backup-${getDateString()}.json`);
@@ -1031,6 +1042,7 @@ import { resolveSiteIcon } from '../site-icons';
         <div class="modal-content">
           <h3 class="modal-title">${popupEscapeHtml(title)}</h3>
           <p class="modal-message">${popupEscapeHtml(message)}</p>
+          <p class="modal-message modal-hint">${popupEscapeHtml(t('popupBackupPasswordHint'))}</p>
           <input type="password" id="prompt-password" placeholder="${popupEscapeHtml(t('popupPromptPasswordPlaceholder'))}"
             style="width: 100%; padding: 8px; border: 1px solid #333; background: #1a1a1a; color: #fff; border-radius: 4px; font-size: 13px; box-sizing: border-box; margin-bottom: 8px" />
           <input type="password" id="prompt-password-confirm" placeholder="${popupEscapeHtml(t('popupConfirmPasswordPlaceholder'))}"
@@ -1062,8 +1074,8 @@ import { resolveSiteIcon } from '../site-icons';
         const pw = pwInput.value;
         const confirm = confirmInput.value;
         errorEl.style.display = 'none';
-        if (pw.length < 8) {
-          errorEl.textContent = t('popupPasswordMin');
+        if (checkBackupPassword(pw)) {
+          errorEl.textContent = t('popupBackupPasswordMin');
           errorEl.style.display = 'block';
           return;
         }

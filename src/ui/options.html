@@ -506,7 +506,7 @@
           </div>
 
           <div class="card">
-            <h3 data-i18n="optionsMasterPassword">Master PIN</h3>
+            <h3 data-i18n="optionsMasterPassword">PIN or passphrase</h3>
             <div class="card-row">
               <span class="info-label" data-i18n="optionsStatus">Status</span>
               <span id="master-pw-status" class="status-badge" data-i18n="optionsChecking"
@@ -517,72 +517,80 @@
             <!-- Shown when no master PIN is set yet -->
             <div id="master-pw-set" class="pw-form" hidden>
               <p class="card-hint" data-i18n="optionsSetMasterDesc">
-                Set a PIN (4–12 digits) to lock your vault behind a passcode.
+                Set a PIN or passphrase to lock your vault.
+              </p>
+              <p class="card-hint" data-i18n="vaultSecretHint">
+                A short PIN mainly stops someone using this computer while it is unlocked. Anyone
+                with a copy of your browser profile can try every 6-digit PIN within hours. To
+                protect against that, use a passphrase of four or more random words, or a PIN of at
+                least 10 digits.
               </p>
               <input
                 type="password"
                 id="set-pw"
-                inputmode="numeric"
-                maxlength="12"
-                placeholder="PIN (4–12 digits)"
+                maxlength="256"
+                placeholder="PIN or passphrase"
                 data-i18n-placeholder="optionsNewPasswordPlaceholder"
                 autocomplete="new-password"
               />
               <input
                 type="password"
                 id="set-pw-confirm"
-                inputmode="numeric"
-                maxlength="12"
-                placeholder="Confirm PIN"
+                maxlength="256"
+                placeholder="Confirm PIN or passphrase"
                 data-i18n-placeholder="optionsConfirmPasswordPlaceholder"
                 autocomplete="new-password"
               />
               <div id="set-pw-error" class="field-error" hidden></div>
               <div class="card-actions">
                 <button id="set-pw-btn" class="btn btn-primary btn-sm">
-                  <span data-i18n="optionsSetPassword">Set PIN</span>
+                  <span data-i18n="optionsSetPassword">Set</span>
                 </button>
               </div>
             </div>
 
             <!-- Shown when a master password exists -->
             <div id="master-pw-change" class="pw-form" hidden>
+              <p class="card-hint" data-i18n="vaultSecretHint">
+                A short PIN mainly stops someone using this computer while it is unlocked. Anyone
+                with a copy of your browser profile can try every 6-digit PIN within hours. To
+                protect against that, use a passphrase of four or more random words, or a PIN of at
+                least 10 digits.
+              </p>
               <input
                 type="password"
                 id="change-pw-current"
-                inputmode="numeric"
-                placeholder="Current PIN"
+                maxlength="256"
+                placeholder="Current PIN or passphrase"
                 data-i18n-placeholder="optionsCurrentPasswordPlaceholder"
                 autocomplete="current-password"
               />
               <input
                 type="password"
                 id="change-pw-new"
-                inputmode="numeric"
-                maxlength="12"
-                placeholder="New PIN (4–12 digits)"
+                maxlength="256"
+                placeholder="New PIN or passphrase"
                 data-i18n-placeholder="optionsNewPasswordChangePlaceholder"
                 autocomplete="new-password"
               />
               <input
                 type="password"
                 id="change-pw-confirm"
-                inputmode="numeric"
-                maxlength="12"
-                placeholder="Confirm new PIN"
+                maxlength="256"
+                placeholder="Confirm PIN or passphrase"
                 data-i18n-placeholder="optionsConfirmPasswordPlaceholder"
                 autocomplete="new-password"
               />
               <div id="change-pw-error" class="field-error" hidden></div>
               <div class="card-actions">
                 <button id="change-pw-btn" class="btn btn-primary btn-sm">
-                  <span data-i18n="optionsChangePassword">Change PIN</span>
+                  <span data-i18n="optionsChangePassword">Change</span>
                 </button>
                 <button id="lock-now-btn" class="btn btn-secondary btn-sm">
                   <span data-i18n="optionsLockNow">Lock Now</span>
                 </button>
                 <button id="remove-pw-btn" class="btn btn-danger btn-sm">
-                  <span data-i18n="optionsRemovePassword">Remove PIN</span>
+                  <span data-i18n="optionsRemovePassword">Remove</span>
                 </button>
               </div>
             </div>

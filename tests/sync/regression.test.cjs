@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const { webcrypto } = require('node:crypto');
 const esbuild = require('esbuild');
 
-let browserCode, mobileCode, backgroundCode, storageCode;
+let browserCode, mobileCode, backgroundCode, storageCode, kdfCode, backupCode;
 
 const EXTENSION_ORIGIN = 'chrome-extension://fenkovaulttest';
 const POPUP = { id: 'fenkovaulttest', url: `${EXTENSION_ORIGIN}/popup.html` };
@@ -30,7 +30,9 @@ before(async () => {
     return result.outputFiles[0].text;
   }
   browserCode = await bundle('src/sync/sync-service.ts', '');
-  storageCode = await bundle('src/crypto/secure-storage.ts', '\nexport { deriveKeyFromPassword };');
+  storageCode = await bundle('src/crypto/secure-storage.ts', '');
+  kdfCode = await bundle('src/crypto/kdf.ts', '');
+  backupCode = await bundle('src/crypto/backup-crypto.ts', '');
   backgroundCode = await bundle(
     'src/background/background.ts',
     '\nexport { BackgroundService };',
@@ -38,7 +40,7 @@ before(async () => {
   );
   mobileCode = await bundle(
     'android/web/src/app.ts',
-    '\nrender = () => {}; export { AndroidSync, getPasskeys, setPasskeys, getTotpEntries, setTotpEntries, mergeNativeSnapshot, restoreFromBin, getSyncConfig, issueHotpCode };',
+    '\nrender = () => {}; export { AndroidSync, getPasskeys, setPasskeys, getTotpEntries, setTotpEntries, mergeNativeSnapshot, restoreFromBin, getSyncConfig, issueHotpCode, state, exportBackup, importVault };',
     'void boot().catch'
   );
 });
@@ -67,7 +69,7 @@ function env(code) {
       runtime: { getURL: (path) => `${EXTENSION_ORIGIN}/${path}` },
       storage: {
         local: {
-          get: async (k) => ({ [k]: storage.get(k) }),
+          get: async (keys) => Object.fromEntries([keys].flat().map((k) => [k, storage.get(k)])),
           set: async (o) => Object.entries(o).forEach(([k, v]) => storage.set(k, v)),
         },
       },
@@ -783,7 +785,7 @@ test('large deletion history travels in bounded signed frames and reassembles', 
 });
 
 test('password derivation yields and remains compatible with existing encryption', async () => {
-  const e = env(storageCode);
+  const e = env(kdfCode);
   let derivations = 0;
   e.context.crypto = {
     ...webcrypto,
@@ -796,10 +798,27 @@ test('password derivation yields and remains compatible with existing encryption
     },
   };
   const salt = new Uint8Array(32).fill(7);
-  const key = await e.api.deriveKeyFromPassword('123456', salt);
+  const spec = e.api.legacyKdfSpec(Buffer.from(salt).toString('base64'));
+  const key = await e.api.deriveKey('123456', spec);
   const expected = require('node:crypto').pbkdf2Sync('123456', salt, 100000, 32, 'sha256');
   assert.equal(Buffer.from(key).toString('hex'), expected.toString('hex'));
-  assert.equal(derivations, 1, 'password work must run in asynchronous WebCrypto');
+  assert.equal(derivations, 1, 'legacy password work must run in asynchronous WebCrypto');
+});
+
+test('the default vault and backup KDF matches native scrypt', async () => {
+  const e = env(kdfCode);
+  const spec = e.api.newKdfSpec();
+  assert.deepEqual(JSON.parse(JSON.stringify(spec.params)), { N: 131072, r: 8, p: 1 });
+  assert.equal(spec.kdf, 'scrypt');
+  // A decomposed "é" derives the same key as the composed one (NFC).
+  const key = await e.api.deriveKey('cafe\u0301 passphrase', spec);
+  const expected = require('node:crypto').scryptSync(
+    'caf\u00e9 passphrase',
+    Buffer.from(spec.salt, 'base64'),
+    32,
+    { N: 131072, r: 8, p: 1, maxmem: 256 * 1024 * 1024 }
+  );
+  assert.equal(Buffer.from(key).toString('hex'), expected.toString('hex'));
 });
 
 test('heartbeat cannot restart exhausted delivery; explicit retry can', async () => {
@@ -972,7 +991,7 @@ function vaultWorker(shared) {
   const session = shared?.session ?? new Map();
   const alarms = shared?.alarms ?? new Map();
   const area = (map) => ({
-    get: async (k) => ({ [k]: map.get(k) }),
+    get: async (keys) => Object.fromEntries([keys].flat().map((k) => [k, map.get(k)])),
     set: async (o) => Object.entries(o).forEach(([k, v]) => map.set(k, v)),
     remove: async (k) => [].concat(k).forEach((key) => map.delete(key)),
   });
@@ -1369,4 +1388,132 @@ test('the per-passkey switch sets both flags, marks the choice and bumps the rev
   assert.equal(record.backupState, true);
   assert.equal(record.backupSource, 'manual');
   assert.ok(record.updatedAt > 5);
+});
+
+// Encrypted backups move between the extension and the mobile apps both ways.
+// The mobile side runs app.ts's own export and import; the extension side
+// runs src/crypto/backup-crypto.ts and builds the file the way popup.ts does.
+function mobileBackups() {
+  const e = env(mobileCode);
+  const saved = [];
+  e.context.AndroidBridge = {
+    copyText() {},
+    toast() {},
+    saveFile: (_name, _mime, content) => saved.push(content),
+  };
+  const status = () => e.api.state.status;
+  return { ...e, saved, status };
+}
+const backupPasskey = {
+  id: 'bk',
+  credentialId: 'bk',
+  rpId: 'example.com',
+  privateKey: 'pk',
+  counter: 0,
+};
+
+test('a backup encrypted on mobile records scrypt and opens in the extension', async () => {
+  const m = mobileBackups();
+  m.api.setPasskeys([backupPasskey]);
+  Object.assign(m.api.state, {
+    exportPassword: 'mobile backup passphrase',
+    exportPasswordConfirm: 'mobile backup passphrase',
+  });
+  await m.api.exportBackup();
+  assert.equal(m.saved.length, 1, m.status());
+  const file = JSON.parse(m.saved[0]);
+  assert.equal(file.kdf, 'scrypt');
+  assert.deepEqual(file.kdfParams, { N: 131072, r: 8, p: 1 });
+  assert.equal(file.algorithm, 'AES-256-GCM');
+
+  // What src/ui/import.ts forwards from the file to DECRYPT_BACKUP.
+  const x = env(backupCode).api;
+  assert.equal(x.isEncryptedBackup(file), true);
+  const { data, iv, salt, algorithm, kdf, kdfParams } = file;
+  const plain = JSON.parse(
+    await x.decryptBackup({ data, iv, salt, algorithm, kdf, kdfParams }, 'mobile backup passphrase')
+  );
+  assert.equal(plain.passkeys[0].privateKey, 'pk');
+});
+
+test('a backup encrypted in the extension imports on mobile', async () => {
+  const x = env(backupCode).api;
+  const plaintext = JSON.stringify({
+    version: '1.0',
+    exportType: 'full',
+    passkeys: [backupPasskey],
+    totpEntries: [],
+  });
+  const encrypted = await x.encryptBackup(plaintext, 'extension backup words');
+  // The header popup.ts writes around ENCRYPT_BACKUP's result.
+  const file = {
+    encrypted: true,
+    version: '1.0',
+    exportedAt: new Date().toISOString(),
+    passkeyCount: 1,
+    totpCount: 0,
+    algorithm: encrypted.algorithm,
+    kdf: encrypted.kdf,
+    kdfParams: encrypted.kdfParams,
+    salt: encrypted.salt,
+    iv: encrypted.iv,
+    data: encrypted.data,
+  };
+  const m = mobileBackups();
+  m.api.state.importPassword = 'extension backup words';
+  await m.api.importVault(JSON.stringify(file));
+  assert.equal(m.api.getPasskeys()[0]?.privateKey, 'pk', m.status());
+});
+
+test('mobile still imports a backup from before KDF records', async () => {
+  const nodeCrypto = require('node:crypto');
+  const salt = nodeCrypto.randomBytes(32);
+  const iv = nodeCrypto.randomBytes(12);
+  const key = nodeCrypto.pbkdf2Sync('old8char', salt, 100000, 32, 'sha256');
+  const cipher = nodeCrypto.createCipheriv('aes-256-gcm', key, iv);
+  const plaintext = JSON.stringify({ passkeys: [backupPasskey], totpEntries: [] });
+  const body = Buffer.concat([
+    cipher.update(plaintext, 'utf8'),
+    cipher.final(),
+    cipher.getAuthTag(),
+  ]);
+  const file = {
+    encrypted: true,
+    version: '1.0',
+    data: body.toString('base64'),
+    iv: iv.toString('base64'),
+    salt: salt.toString('base64'),
+    algorithm: 'AES-256-GCM',
+  };
+  const m = mobileBackups();
+  m.api.state.importPassword = 'old8char';
+  await m.api.importVault(JSON.stringify(file));
+  assert.equal(m.api.getPasskeys()[0]?.privateKey, 'pk', m.status());
+});
+
+test('mobile says a backup from a newer version needs an update, not a password', async () => {
+  const x = env(backupCode).api;
+  const file = {
+    encrypted: true,
+    ...(await x.encryptBackup('{}', 'extension backup words')),
+    kdf: 'argon2id',
+    kdfParams: { m: 65536, t: 3, p: 1 },
+  };
+  const m = mobileBackups();
+  m.api.state.importPassword = 'extension backup words';
+  await m.api.importVault(JSON.stringify(file));
+  assert.match(m.status(), /newer version/);
+  m.api.state.importPassword = 'not the password';
+  await m.api.importVault(
+    JSON.stringify({ ...file, kdf: 'scrypt', kdfParams: { N: 1024, r: 8, p: 1 } })
+  );
+  assert.match(m.status(), /Wrong password/);
+});
+
+test('mobile refuses a backup password under 12 characters', async () => {
+  const m = mobileBackups();
+  Object.assign(m.api.state, { exportPassword: 'short pass', exportPasswordConfirm: 'short pass' });
+  await m.api.exportBackup();
+  assert.equal(m.saved.length, 0);
+  assert.match(m.status(), /at least 12 characters/);
 });

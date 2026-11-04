@@ -27,14 +27,14 @@
           </svg>
         </div>
         <h1><span data-i18n="popupVaultLocked">Vault Locked</span></h1>
-        <p class="auth-hint" data-i18n="popupUnlockHelp">Enter your PIN to unlock.</p>
+        <p class="auth-hint" data-i18n="popupUnlockHelp">Enter your PIN or passphrase to unlock.</p>
       </div>
       <div class="auth-form">
         <input
           type="password"
           id="unlock-password"
-          inputmode="numeric"
-          placeholder="PIN"
+          maxlength="256"
+          placeholder="PIN or passphrase"
           data-i18n-placeholder="popupMasterPasswordPlaceholder"
           autocomplete="off"
         />
@@ -66,31 +66,34 @@
         </div>
         <h1><span data-i18n="popupSetupVault">Set Up Vault</span></h1>
         <p class="auth-hint" data-i18n="popupSetupHelp">
-          Set a PIN (4–12 digits) to lock your vault.
+          Set a PIN or passphrase to lock your vault.
         </p>
       </div>
       <div class="auth-form">
         <input
           type="password"
           id="setup-password"
-          inputmode="numeric"
-          maxlength="12"
-          placeholder="PIN (4–12 digits)"
+          maxlength="256"
+          placeholder="PIN or passphrase"
           data-i18n-placeholder="popupSetupPasswordPlaceholder"
           autocomplete="off"
         />
         <input
           type="password"
           id="setup-password-confirm"
-          inputmode="numeric"
-          maxlength="12"
-          placeholder="Confirm PIN"
+          maxlength="256"
+          placeholder="Confirm"
           data-i18n-placeholder="popupConfirmPasswordPlaceholder"
           autocomplete="off"
         />
+        <p class="auth-note" data-i18n="vaultSecretHint">
+          A short PIN mainly stops someone using this computer while it is unlocked. Anyone with a
+          copy of your browser profile can try every 6-digit PIN within hours. To protect against
+          that, use a passphrase of four or more random words, or a PIN of at least 10 digits.
+        </p>
         <div id="setup-error" class="field-error" hidden></div>
         <button type="button" id="setup-btn" class="btn btn-primary btn-full">
-          <span data-i18n="popupCreatePassword">Create PIN</span>
+          <span data-i18n="popupCreatePassword">Set PIN or passphrase</span>
         </button>
         <button type="button" id="skip-setup-btn" class="btn btn-ghost btn-full">
           <span data-i18n="popupSkipForNow">Skip for now</span>

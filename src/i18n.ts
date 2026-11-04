@@ -47,21 +47,26 @@ const en: TranslationMap = {
   commonBackToPasskeys: '← Back to Passkeys',
 
   popupVaultLocked: 'Vault Locked',
-  popupUnlockHelp: 'Enter your PIN to unlock.',
-  popupMasterPasswordPlaceholder: 'PIN',
+  popupUnlockHelp: 'Enter your PIN or passphrase to unlock.',
+  popupMasterPasswordPlaceholder: 'PIN or passphrase',
   popupUnlock: 'Unlock',
   popupUnlocking: 'Unlocking...',
-  popupWrongPassword: 'Wrong PIN',
+  popupWrongPassword: 'Wrong PIN or passphrase',
+  popupVaultNeedsUpdate:
+    'This vault was locked by a newer version of Fenko Vault. Update the extension to unlock it.',
   popupSetupVault: 'Set Up Vault',
-  popupSetupHelp: 'Set a PIN (4–12 digits) to lock your vault.',
-  popupSetupPasswordPlaceholder: 'PIN (4–12 digits)',
-  popupConfirmPasswordPlaceholder: 'Confirm PIN',
-  popupCreatePassword: 'Create PIN',
+  popupSetupHelp: 'Set a PIN or passphrase to lock your vault.',
+  popupSetupPasswordPlaceholder: 'PIN or passphrase',
+  popupConfirmPasswordPlaceholder: 'Confirm',
+  popupCreatePassword: 'Set PIN or passphrase',
   popupSkipForNow: 'Skip for now',
   popupSettingUp: 'Setting up...',
   popupSetupFailed: 'Setup failed',
-  popupPasswordMin: 'PIN must be 4 to 12 digits',
-  popupPasswordsNoMatch: 'PINs do not match',
+  popupPasswordMin: 'Use a PIN of at least 4 digits or a passphrase of at least 8 characters',
+  popupPasswordsNoMatch: "The two entries don't match",
+  vaultSecretTooLong: 'Use at most 256 characters',
+  vaultSecretHint:
+    'A short PIN mainly stops someone using this computer while it is unlocked. Anyone with a copy of your browser profile can try every 6-digit PIN within hours. To protect against that, use a passphrase of four or more random words, or a PIN of at least 10 digits.',
   popupOptionsTitle: 'Settings',
   popupLockTitle: 'Lock vault',
   popupLockNoPasswordPrompt: 'Set a master password first to lock your vault.',
@@ -114,13 +119,16 @@ const en: TranslationMap = {
   popupFailedDelete: 'Failed to delete passkey',
   popupFailedCopy: 'Failed to copy',
   popupEncryptBackup: 'Encrypt Backup',
+  popupBackupPasswordMin: 'Use at least 12 characters',
+  popupBackupPasswordHint:
+    'Anyone who gets the file can try passwords offline, as fast as their hardware allows. Use a passphrase of four or more random words.',
   popupEncryptBackupMessage:
     'Choose a password to encrypt the backup file. You will need this password to import it later.',
   popupNoPasskeysExport: 'No passkeys to export',
   popupEncryptionFailed: 'Encryption failed: {error}',
   popupExportedPasskeys: 'Exported {count} items (encrypted)',
   popupFailedExport: 'Failed to export passkeys',
-  popupPromptPasswordPlaceholder: 'Password (min 8 chars)',
+  popupPromptPasswordPlaceholder: 'Password (at least 12 characters)',
   popupEncryptAndExport: 'Encrypt & Export',
 
   popupTabPasskeys: 'Passkeys',
@@ -290,7 +298,7 @@ const en: TranslationMap = {
     'Your own backup, or a format another provider can read. These files hold passkey private keys and MFA seeds in plaintext — delete them once the other app has imported them. For a backup you intend to keep, use the password-protected export in the popup.',
   optionsSecurityTitle: 'Security',
   optionsSecurityDesc: 'Encryption and access control settings.',
-  optionsMasterPassword: 'Master PIN',
+  optionsMasterPassword: 'PIN or passphrase',
   optionsStatus: 'Status',
   optionsChecking: 'Checking...',
   optionsLockNow: 'Lock Now',
@@ -304,20 +312,20 @@ const en: TranslationMap = {
   optionsNotSet: 'Not Set',
   optionsUnlocked: 'Unlocked',
   optionsLocked: 'Locked',
-  optionsSetMasterDesc: 'Set a PIN (4–12 digits) to lock your vault behind a passcode.',
-  optionsSetPassword: 'Set PIN',
-  optionsChangePassword: 'Change PIN',
-  optionsRemovePassword: 'Remove PIN',
-  optionsNewPasswordPlaceholder: 'PIN (4–12 digits)',
-  optionsNewPasswordChangePlaceholder: 'New PIN (4–12 digits)',
-  optionsCurrentPasswordPlaceholder: 'Current PIN',
-  optionsConfirmPasswordPlaceholder: 'Confirm PIN',
-  optionsPasswordMin: 'PIN must be 4 to 12 digits',
-  optionsPasswordsNoMatch: 'PINs do not match',
-  optionsSetupFailed: 'Failed to set PIN',
-  optionsWrongPassword: "Couldn't update — check your current PIN",
-  optionsRemoveNeedsCurrent: 'Enter your current PIN above to remove it.',
-  optionsRemoveConfirm: 'Remove your PIN? Your vault will no longer be locked.',
+  optionsSetMasterDesc: 'Set a PIN or passphrase to lock your vault.',
+  optionsSetPassword: 'Set',
+  optionsChangePassword: 'Change',
+  optionsRemovePassword: 'Remove',
+  optionsNewPasswordPlaceholder: 'PIN or passphrase',
+  optionsNewPasswordChangePlaceholder: 'New PIN or passphrase',
+  optionsCurrentPasswordPlaceholder: 'Current PIN or passphrase',
+  optionsConfirmPasswordPlaceholder: 'Confirm PIN or passphrase',
+  optionsPasswordMin: 'Use a PIN of at least 4 digits or a passphrase of at least 8 characters',
+  optionsPasswordsNoMatch: "The two entries don't match",
+  optionsSetupFailed: 'Failed to set the PIN or passphrase',
+  optionsWrongPassword: "Couldn't update — check your current PIN or passphrase",
+  optionsRemoveNeedsCurrent: 'Enter your current PIN or passphrase above to remove it.',
+  optionsRemoveConfirm: 'Remove your PIN or passphrase? Your vault will no longer be locked.',
   optionsPasswordSet: 'PIN set',
   optionsPasswordChanged: 'PIN changed',
   optionsDeveloperTitle: 'Developer Tools',
@@ -386,6 +394,8 @@ const en: TranslationMap = {
   importCancelled: 'Import cancelled',
   importDecrypting: 'Decrypting...',
   importWrongPassword: 'Wrong password or corrupted file',
+  importBackupNewerVersion:
+    'This backup was made by a newer version of Fenko Vault. Update the extension to import it.',
   importInvalidDecrypted: 'Decryption succeeded but file contents are invalid',
   importInvalidFormat: 'Invalid file format: missing passkeys array',
   importNoPrivateKeys:
@@ -592,12 +602,17 @@ const ru: TranslationMap = {
   popupUnlock: 'Разблокировать',
   popupUnlocking: 'Разблокировка...',
   popupWrongPassword: 'Неверный пароль',
+  popupVaultNeedsUpdate:
+    'Это хранилище заблокировано более новой версией Fenko Vault. Обновите расширение, чтобы разблокировать его.',
   popupSetupVault: 'Настройка хранилища',
   popupSetupHelp: 'Создайте мастер-пароль для шифрования passkey.',
   popupCreatePassword: 'Создать пароль',
   popupSkipForNow: 'Пропустить',
-  popupPasswordMin: 'Пароль должен быть не короче 8 символов',
+  popupPasswordMin: 'Используйте PIN-код не короче 4 цифр или парольную фразу не короче 8 символов',
   popupPasswordsNoMatch: 'Пароли не совпадают',
+  vaultSecretTooLong: 'Не более 256 символов',
+  vaultSecretHint:
+    'Короткий PIN-код защищает в основном от того, кто воспользуется этим компьютером, пока он разблокирован. Тот, у кого есть копия вашего профиля браузера, может перебрать все 6-значные PIN-коды за несколько часов. Чтобы защититься от этого, используйте парольную фразу из четырёх или более случайных слов или PIN-код не короче 10 цифр.',
   popupOptionsTitle: 'Настройки',
   popupPasskeyCount_one: '{count} passkey',
   popupPasskeyCount_other: '{count} passkeys',
@@ -612,6 +627,9 @@ const ru: TranslationMap = {
   popupDeletePasskeyMessage: 'Вы больше не сможете входить на {site} с помощью этого passkey.',
   popupPasskeyDeleted: 'Passkey удалён',
   popupEncryptBackup: 'Зашифровать резервную копию',
+  popupBackupPasswordMin: 'Используйте не менее 12 символов',
+  popupBackupPasswordHint:
+    'Любой, кто получит файл, сможет подбирать пароль офлайн с той скоростью, какую позволяет его оборудование. Используйте парольную фразу из четырёх или более случайных слов.',
   popupEncryptAndExport: 'Зашифровать и экспортировать',
   navGeneral: 'Общие',
   navInterception: 'Перехват',
@@ -675,6 +693,8 @@ const ru: TranslationMap = {
   optionsDevices: 'Устройства',
   optionsSecurityTitle: 'Безопасность',
   optionsMasterPassword: 'Мастер-пароль',
+  optionsPasswordMin:
+    'Используйте PIN-код не короче 4 цифр или парольную фразу не короче 8 символов',
   optionsStatus: 'Статус',
   optionsLockNow: 'Заблокировать',
   optionsAutoLockTimeout: 'Автоблокировка',
@@ -696,6 +716,8 @@ const ru: TranslationMap = {
   importEnterBackupPassword: 'Введите пароль резервной копии',
   importDecrypt: 'Расшифровать',
   importWrongPassword: 'Неверный пароль или повреждённый файл',
+  importBackupNewerVersion:
+    'Эта резервная копия создана более новой версией Fenko Vault. Обновите расширение, чтобы импортировать её.',
   importAlreadyExists: 'Уже существует',
   importNew: 'Новый',
   importSuccess: 'Успешно импортировано: {count} passkey{plural}!',
@@ -762,8 +784,10 @@ const zh_CN: TranslationMap = {
   popupUnlock: '解锁',
   popupUnlocking: '正在解锁...',
   popupWrongPassword: '密码错误',
+  popupVaultNeedsUpdate: '此保险库由更新版本的 Fenko Vault 锁定。请更新扩展后再解锁。',
   popupSetupVault: '设置保险库',
   popupCreatePassword: '创建密码',
+  popupPasswordMin: '请使用至少 4 位数字的 PIN 码，或至少 8 个字符的密码短语',
   popupSkipForNow: '暂时跳过',
   popupOptionsTitle: '设置',
   popupSearchPlaceholder: '搜索 passkey...',
@@ -820,6 +844,7 @@ const zh_CN: TranslationMap = {
   optionsSyncTitle: '同步设置',
   optionsSecurityTitle: '安全',
   optionsMasterPassword: '主密码',
+  optionsPasswordMin: '请使用至少 4 位数字的 PIN 码，或至少 8 个字符的密码短语',
   optionsStatus: '状态',
   optionsLockNow: '立即锁定',
   optionsDeveloperTitle: '开发者工具',
@@ -872,6 +897,13 @@ const zh_CN: TranslationMap = {
   popupCopyWarnTitle: '复制通行密钥详情？',
   popupCopyWarnMessage:
     '将复制网站、您的用户名和公钥。其中不含私钥，因此无法用于登录，但会显示您在该网站拥有哪个账户，任何可读取剪贴板的应用都能看到。',
+  vaultSecretTooLong: '最多 256 个字符',
+  vaultSecretHint:
+    '较短的 PIN 码主要用于防止他人在这台电脑解锁时使用它。任何拿到你浏览器配置文件副本的人，都能在几小时内试遍所有 6 位 PIN 码。如需防范这种情况，请使用由四个或更多随机单词组成的密码短语，或至少 10 位数字的 PIN 码。',
+  popupBackupPasswordMin: '请至少使用 12 个字符',
+  popupBackupPasswordHint:
+    '任何拿到该文件的人都可以离线猜测密码，速度只受其硬件限制。请使用由四个或更多随机单词组成的密码短语。',
+  importBackupNewerVersion: '此备份由更新版本的 Fenko Vault 创建。请更新扩展后再导入。',
 };
 
 const ar: TranslationMap = {
@@ -898,8 +930,10 @@ const ar: TranslationMap = {
   popupUnlock: 'فتح',
   popupUnlocking: 'جارٍ الفتح...',
   popupWrongPassword: 'كلمة المرور غير صحيحة',
+  popupVaultNeedsUpdate: 'قُفلت هذه الخزنة بإصدار أحدث من Fenko Vault. حدّث الإضافة لفتحها.',
   popupSetupVault: 'إعداد الخزنة',
   popupCreatePassword: 'إنشاء كلمة مرور',
+  popupPasswordMin: 'استخدم رمز PIN من 4 أرقام على الأقل أو عبارة مرور من 8 أحرف على الأقل',
   popupSkipForNow: 'تخطي الآن',
   popupOptionsTitle: 'الإعدادات',
   popupSearchPlaceholder: 'ابحث عن مفاتيح المرور...',
@@ -951,6 +985,7 @@ const ar: TranslationMap = {
   optionsSyncTitle: 'إعدادات المزامنة',
   optionsSecurityTitle: 'الأمان',
   optionsMasterPassword: 'كلمة المرور الرئيسية',
+  optionsPasswordMin: 'استخدم رمز PIN من 4 أرقام على الأقل أو عبارة مرور من 8 أحرف على الأقل',
   optionsStatus: 'الحالة',
   optionsLockNow: 'القفل الآن',
   optionsDeveloperTitle: 'أدوات المطور',
@@ -1003,6 +1038,14 @@ const ar: TranslationMap = {
   popupCopyWarnTitle: 'نسخ تفاصيل مفتاح المرور؟',
   popupCopyWarnMessage:
     'يُنسخ الموقع واسم المستخدم والمفتاح العام. لا يتضمن المفتاح الخاص، لذا لا يمكن استخدامه لتسجيل الدخول باسمك — لكنه يكشف الحساب الذي تملكه على هذا الموقع، ويمكن لأي تطبيق يقرأ الحافظة الاطلاع عليه.',
+  vaultSecretTooLong: 'استخدم 256 حرفًا على الأكثر',
+  vaultSecretHint:
+    'رمز PIN القصير يمنع أساسًا من يستخدم هذا الحاسوب وهو غير مقفل. أي شخص لديه نسخة من ملف تعريف متصفحك يستطيع تجربة كل رموز PIN المكوّنة من 6 أرقام في غضون ساعات. للحماية من ذلك، استخدم عبارة مرور من أربع كلمات عشوائية أو أكثر، أو رمز PIN من 10 أرقام على الأقل.',
+  popupBackupPasswordMin: 'استخدم 12 حرفًا على الأقل',
+  popupBackupPasswordHint:
+    'يستطيع أي شخص يحصل على الملف تجربة كلمات المرور دون اتصال وبالسرعة التي يسمح بها عتاده. استخدم عبارة مرور من أربع كلمات عشوائية أو أكثر.',
+  importBackupNewerVersion:
+    'أُنشئت هذه النسخة الاحتياطية بإصدار أحدث من Fenko Vault. حدّث الإضافة لاستيرادها.',
 };
 
 const fa: TranslationMap = {
@@ -1032,14 +1075,19 @@ const fa: TranslationMap = {
   popupUnlock: 'باز کردن',
   popupUnlocking: 'در حال باز کردن...',
   popupWrongPassword: 'رمز اشتباه است',
+  popupVaultNeedsUpdate:
+    'این گاوصندوق با نسخه‌ای جدیدتر از Fenko Vault قفل شده است. برای باز کردن آن، افزونه را به‌روزرسانی کنید.',
   popupSetupVault: 'راه‌اندازی گاوصندوق',
   popupSetupHelp: 'برای رمزنگاری کلیدهای عبور، یک رمز اصلی بسازید.',
-  popupSetupPasswordPlaceholder: 'رمز اصلی (حداقل ۸ نویسه)',
+  popupSetupPasswordPlaceholder: 'پین یا عبارت عبور',
   popupConfirmPasswordPlaceholder: 'تکرار رمز عبور',
   popupCreatePassword: 'ساخت رمز عبور',
   popupSkipForNow: 'فعلاً رد کن',
-  popupPasswordMin: 'رمز عبور باید حداقل ۸ نویسه باشد',
+  popupPasswordMin: 'از پینی با دست‌کم ۴ رقم یا عبارت عبوری با دست‌کم ۸ نویسه استفاده کنید',
   popupPasswordsNoMatch: 'رمزها یکسان نیستند',
+  vaultSecretTooLong: 'حداکثر ۲۵۶ نویسه',
+  vaultSecretHint:
+    'پین کوتاه بیشتر جلوی کسی را می‌گیرد که وقتی قفل این رایانه باز است از آن استفاده می‌کند. هر کسی که نسخه‌ای از نمایهٔ مرورگر شما را داشته باشد، می‌تواند همهٔ پین‌های ۶ رقمی را در چند ساعت امتحان کند. برای محافظت در برابر این، از عبارت عبوری با چهار واژهٔ تصادفی یا بیشتر، یا پینی با دست‌کم ۱۰ رقم استفاده کنید.',
   popupOptionsTitle: 'تنظیمات',
   popupPasskeyCount_one: '{count} کلید عبور',
   popupPasskeyCount_other: '{count} کلید عبور',
@@ -1055,6 +1103,9 @@ const fa: TranslationMap = {
   popupPasskeyNotFound: 'کلید عبور پیدا نشد',
   popupFailedDelete: 'حذف کلید عبور ناموفق بود',
   popupEncryptBackup: 'رمزنگاری پشتیبان',
+  popupBackupPasswordMin: 'دست‌کم ۱۲ نویسه به کار ببرید',
+  popupBackupPasswordHint:
+    'هر کسی که این فایل به دستش برسد می‌تواند بدون اتصال و با هر سرعتی که سخت‌افزارش اجازه دهد رمزها را امتحان کند. از عبارت عبوری با چهار واژهٔ تصادفی یا بیشتر استفاده کنید.',
   popupEncryptBackupMessage:
     'برای رمزنگاری فایل پشتیبان یک رمز انتخاب کنید. برای وارد کردن دوباره به آن نیاز دارید.',
   popupEncryptAndExport: 'رمزنگاری و خروجی گرفتن',
@@ -1135,6 +1186,7 @@ const fa: TranslationMap = {
   optionsSecurityTitle: 'امنیت',
   optionsSecurityDesc: 'تنظیمات رمزنگاری و کنترل دسترسی.',
   optionsMasterPassword: 'رمز اصلی',
+  optionsPasswordMin: 'از پینی با دست‌کم ۴ رقم یا عبارت عبوری با دست‌کم ۸ نویسه استفاده کنید',
   optionsStatus: 'وضعیت',
   optionsLockNow: 'قفل کردن اکنون',
   optionsAutoLockTimeout: 'زمان قفل خودکار',
@@ -1164,6 +1216,8 @@ const fa: TranslationMap = {
     'این پشتیبان رمزنگاری شده است. رمز استفاده‌شده هنگام خروجی گرفتن را وارد کنید.',
   importDecrypt: 'رمزگشایی',
   importWrongPassword: 'رمز اشتباه است یا فایل خراب شده',
+  importBackupNewerVersion:
+    'این پشتیبان با نسخه‌ای جدیدتر از Fenko Vault ساخته شده است. برای وارد کردن آن، افزونه را به‌روزرسانی کنید.',
   importAlreadyExists: 'از قبل وجود دارد',
   importNew: 'جدید',
   importSuccess: '{count} کلید عبور با موفقیت وارد شد!',
@@ -1248,8 +1302,12 @@ const es: TranslationMap = {
   popupUnlock: 'Desbloquear',
   popupUnlocking: 'Desbloqueando...',
   popupWrongPassword: 'Contraseña incorrecta',
+  popupVaultNeedsUpdate:
+    'Esta bóveda se bloqueó con una versión más reciente de Fenko Vault. Actualiza la extensión para desbloquearla.',
   popupSetupVault: 'Configurar bóveda',
   popupCreatePassword: 'Crear contraseña',
+  popupPasswordMin:
+    'Usa un PIN de al menos 4 dígitos o una frase de contraseña de al menos 8 caracteres',
   popupSkipForNow: 'Omitir por ahora',
   popupOptionsTitle: 'Configuración',
   popupSearchPlaceholder: 'Buscar passkeys...',
@@ -1301,6 +1359,8 @@ const es: TranslationMap = {
   optionsSyncTitle: 'Sincronización',
   optionsSecurityTitle: 'Seguridad',
   optionsMasterPassword: 'Contraseña maestra',
+  optionsPasswordMin:
+    'Usa un PIN de al menos 4 dígitos o una frase de contraseña de al menos 8 caracteres',
   optionsStatus: 'Estado',
   optionsLockNow: 'Bloquear ahora',
   optionsDeveloperTitle: 'Herramientas de desarrollador',
@@ -1354,6 +1414,14 @@ const es: TranslationMap = {
   popupCopyWarnTitle: '¿Copiar los datos de la clave de acceso?',
   popupCopyWarnMessage:
     'Se copian el sitio, tu nombre de usuario y la clave pública. No incluye la clave privada, así que no sirve para iniciar sesión como tú, pero sí revela qué cuenta tienes en ese sitio, y cualquier app que lea el portapapeles puede verlo.',
+  vaultSecretTooLong: 'Usa como máximo 256 caracteres',
+  vaultSecretHint:
+    'Un PIN corto protege sobre todo frente a quien use este ordenador mientras está desbloqueado. Cualquiera con una copia de tu perfil del navegador puede probar todos los PIN de 6 dígitos en cuestión de horas. Para protegerte de eso, usa una frase de contraseña de cuatro o más palabras aleatorias, o un PIN de al menos 10 dígitos.',
+  popupBackupPasswordMin: 'Usa al menos 12 caracteres',
+  popupBackupPasswordHint:
+    'Quien consiga el archivo puede probar contraseñas sin conexión, tan rápido como le permita su hardware. Usa una frase de contraseña de cuatro o más palabras aleatorias.',
+  importBackupNewerVersion:
+    'Esta copia de seguridad se creó con una versión más reciente de Fenko Vault. Actualiza la extensión para importarla.',
 };
 
 const fr: TranslationMap = {
@@ -1380,8 +1448,12 @@ const fr: TranslationMap = {
   popupUnlock: 'Déverrouiller',
   popupUnlocking: 'Déverrouillage...',
   popupWrongPassword: 'Mot de passe incorrect',
+  popupVaultNeedsUpdate:
+    'Ce coffre a été verrouillé par une version plus récente de Fenko Vault. Mettez à jour l’extension pour le déverrouiller.',
   popupSetupVault: 'Configurer le coffre',
   popupCreatePassword: 'Créer le mot de passe',
+  popupPasswordMin:
+    'Utilisez un code PIN d’au moins 4 chiffres ou une phrase secrète d’au moins 8 caractères',
   popupSkipForNow: 'Ignorer pour le moment',
   popupOptionsTitle: 'Paramètres',
   popupSearchPlaceholder: 'Rechercher des passkeys...',
@@ -1434,6 +1506,8 @@ const fr: TranslationMap = {
   optionsSyncTitle: 'Paramètres de sync',
   optionsSecurityTitle: 'Sécurité',
   optionsMasterPassword: 'Mot de passe principal',
+  optionsPasswordMin:
+    'Utilisez un code PIN d’au moins 4 chiffres ou une phrase secrète d’au moins 8 caractères',
   optionsStatus: 'État',
   optionsLockNow: 'Verrouiller',
   optionsDeveloperTitle: 'Outils développeur',
@@ -1487,6 +1561,14 @@ const fr: TranslationMap = {
   popupCopyWarnTitle: 'Copier les détails de la clé d’accès ?',
   popupCopyWarnMessage:
     'Cela copie le site, votre nom d’utilisateur et la clé publique. La clé privée n’y figure pas : impossible de se connecter avec. En revanche, cela révèle quel compte vous avez sur ce site, et toute appli qui lit le presse-papiers peut le voir.',
+  vaultSecretTooLong: 'Utilisez au maximum 256 caractères',
+  vaultSecretHint:
+    'Un code PIN court protège surtout contre quelqu’un qui utilise cet ordinateur pendant qu’il est déverrouillé. Toute personne disposant d’une copie de votre profil de navigateur peut essayer tous les codes PIN à 6 chiffres en quelques heures. Pour vous en protéger, utilisez une phrase secrète de quatre mots aléatoires ou plus, ou un code PIN d’au moins 10 chiffres.',
+  popupBackupPasswordMin: 'Utilisez au moins 12 caractères',
+  popupBackupPasswordHint:
+    'Quiconque obtient le fichier peut essayer des mots de passe hors ligne, aussi vite que son matériel le permet. Utilisez une phrase secrète de quatre mots aléatoires ou plus.',
+  importBackupNewerVersion:
+    'Cette sauvegarde a été créée par une version plus récente de Fenko Vault. Mettez à jour l’extension pour l’importer.',
 };
 
 const translations: Record<ResolvedLanguage, TranslationMap> = { en, ru, zh_CN, ar, fa, es, fr };

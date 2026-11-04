@@ -1283,6 +1283,13 @@ textarea {
   line-height: 1.5;
 }
 
+.auth-note {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
 .auth-form {
   display: flex;
   flex-direction: column;
@@ -1370,6 +1377,11 @@ textarea {
   color: var(--text-muted);
   line-height: 1.5;
   margin: 0 0 20px;
+}
+
+.modal-message.modal-hint {
+  font-size: 12px;
+  margin: -12px 0 12px;
 }
 
 .modal-actions {

@@ -93,61 +93,6 @@ export async function decrypt(
 }
 
 /**
- * High-level encryption function that handles key derivation
- */
-export async function encryptWithPassword(
-  data: string,
-  password: string
-): Promise<EncryptionResult> {
-  const { key, salt } = await deriveKey(password);
-  const iv = randomBytes(ENCRYPTION_CONFIG.ivLength);
-
-  const result = await encrypt(data, key, iv);
-  result.salt = uint8ArrayToBase64(salt);
-
-  // Securely clear the key from memory
-  key.fill(0);
-
-  return result;
-}
-
-/**
- * High-level decryption function that handles key derivation
- */
-export async function decryptWithPassword(
-  encryptedData: string,
-  iv: string,
-  salt: string,
-  password: string
-): Promise<string> {
-  try {
-    const { key } = await deriveKey(
-      password,
-      new Uint8Array(
-        atob(salt)
-          .split('')
-          .map((char) => char.charCodeAt(0))
-      )
-    );
-
-    const initVector = new Uint8Array(
-      atob(iv)
-        .split('')
-        .map((char) => char.charCodeAt(0))
-    );
-
-    const result = await decrypt(encryptedData, key, initVector);
-
-    // Securely clear the key from memory
-    key.fill(0);
-
-    return result;
-  } catch (error) {
-    throw new Error(`Failed to decrypt data: ${error.message}`);
-  }
-}
-
-/**
  * Generates a secure random string
  */
 export function generateSecureRandom(length: number = 32): string {

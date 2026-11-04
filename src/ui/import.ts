@@ -8,6 +8,7 @@
 
 import { formatCount, initAndLocalize, t } from '../i18n';
 import { initTheme } from '../theme';
+import { isEncryptedBackup, type EncryptedBackupFields } from '../crypto/backup-format';
 import {
   acceptedExtensions,
   materialize,
@@ -132,18 +133,17 @@ import {
     }
   }
 
-  /** Our own password-protected backup, which must be decrypted first. */
-  function readEncryptedBackup(text: string): Record<string, string> | null {
+  /** Our own password-protected backup, in any format version, which must be decrypted first. */
+  function readEncryptedBackup(text: string): EncryptedBackupFields | null {
     try {
       const data = JSON.parse(text);
-      const isEncrypted = data?.encrypted === true && data.data && data.iv && data.salt;
-      return isEncrypted ? (data as Record<string, string>) : null;
+      return isEncryptedBackup(data) ? data : null;
     } catch {
       return null;
     }
   }
 
-  async function processEncryptedBackup(fileData: Record<string, string>): Promise<void> {
+  async function processEncryptedBackup(fileData: EncryptedBackupFields): Promise<void> {
     const password = await showImportPasswordPrompt();
     if (password === null) {
       showStatus(t('importCancelled'), 'info');
@@ -158,12 +158,17 @@ import {
         data: fileData.data,
         iv: fileData.iv,
         salt: fileData.salt,
+        algorithm: fileData.algorithm,
+        kdf: fileData.kdf,
+        kdfParams: fileData.kdfParams,
         password,
       },
     });
 
     if (!response.success) {
-      showStatus(t('importWrongPassword'), 'error');
+      // A backup from a newer version is not a wrong password.
+      const unsupported = response.code === 'UNSUPPORTED_BACKUP';
+      showStatus(t(unsupported ? 'importBackupNewerVersion' : 'importWrongPassword'), 'error');
       return;
     }
 
