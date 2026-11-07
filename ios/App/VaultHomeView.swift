@@ -39,6 +39,11 @@ struct VaultHomeView: View {
         }))
     }
 
+    init(model: NativeVaultModel, sync: NativeSyncModel) {
+        _model = StateObject(wrappedValue: model)
+        _sync = StateObject(wrappedValue: sync)
+    }
+
     var body: some View {
         Group {
             if model.session == .unlocked {

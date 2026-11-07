@@ -26,6 +26,39 @@ settings:
     TARGETED_DEVICE_FAMILY: "1,2"
 
 targets:
+  NativeUITestHost:
+    type: application
+    platform: iOS
+    sources:
+      - path: Tests/UITestHost
+      - path: App
+        excludes: [FenkoVaultApp.swift, FenkoVault.entitlements]
+      - path: Shared
+      - path: ../android/web/src/fonts/Saira.ttf
+        buildPhase: resources
+    dependencies:
+      - package: VaultSync
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: nz.fenko.vaultuitest
+        INFOPLIST_FILE: App/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCAL_DEVICE_TEST"
+    scheme:
+      testTargets: [NativeUITests]
+
+  NativeUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: Tests/NativeUI
+    dependencies:
+      - target: NativeUITestHost
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: NativeUITestHost
+
   WebMigrationTests:
     type: bundle.unit-test
     platform: iOS

@@ -57,6 +57,13 @@ jobs:
             -test-timeouts-enabled YES \
             -maximum-test-execution-time-allowance 60 \
             CODE_SIGNING_ALLOWED=NO test
+          xcodebuild -project ios/FenkoVault.xcodeproj -scheme NativeUITestHost \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -derivedDataPath "$RUNNER_TEMP/FenkoVault-simulator" \
+            -destination "platform=iOS Simulator,id=$device_id" \
+            -resultBundlePath "$RUNNER_TEMP/native-ui-tests.xcresult" \
+            -test-timeouts-enabled YES -maximum-test-execution-time-allowance 120 \
+            CODE_SIGNING_ALLOWED=NO test
           xcrun simctl install "$device_id" \
             "$RUNNER_TEMP/FenkoVault-simulator/Build/Products/Debug-iphonesimulator/FenkoVault.app"
           xcrun simctl launch "$device_id" nz.fenko.passkeyvault
@@ -68,7 +75,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: native-ios-tests
-          path: ${{ runner.temp }}/native-ios-tests.xcresult
+          path: |
+            ${{ runner.temp }}/native-ios-tests.xcresult
+            ${{ runner.temp }}/native-ui-tests.xcresult
           retention-days: 7
       - name: Save the simulator screenshot
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
