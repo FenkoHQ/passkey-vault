@@ -16,12 +16,10 @@ jobs:
         run: |
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
-      - run: bash ios/test-sync.sh
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: '24'
-      - run: npm ci
-      - run: bash ios/build-web.sh
+      - run: bash ios/test-sync.sh
       - run: brew install xcodegen
       - name: Build app and credential provider without signing
         working-directory: ios
@@ -36,3 +34,9 @@ jobs:
             -configuration Release -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/FenkoVault.xcarchive" \
             CODE_SIGNING_ALLOWED=NO archive
+      - name: Build the standalone device test app
+        working-directory: ios
+        run: |
+          xcodegen generate --spec project-devsync.yml
+          xcodebuild -project FenkoVaultSync.xcodeproj -scheme FenkoVaultSync \
+            -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build

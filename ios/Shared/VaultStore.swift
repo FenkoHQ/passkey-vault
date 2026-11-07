@@ -22,9 +22,14 @@ final class VaultStore {
     }
 
     private init() {
+        #if LOCAL_DEVICE_TEST
+        let container = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        legacy = nil
+        #else
         let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: Self.appGroup)
-        archive = VaultArchive(directory: container?.appendingPathComponent("EncryptedVault", isDirectory: true))
         legacy = UserDefaults(suiteName: Self.appGroup)
+        #endif
+        archive = VaultArchive(directory: container?.appendingPathComponent("EncryptedVault", isDirectory: true))
     }
 
     init(archive: VaultArchive, legacy: UserDefaults? = nil) {
@@ -51,13 +56,25 @@ final class VaultStore {
         guard let legacy else { return }
         try archive.transaction { values in
             if values[Key.migrated] == nil {
+                var source: [String: String] = [:]
                 for key in Key.legacyKeys {
                     guard let raw = legacy.string(forKey: key) else { continue }
                     let decoded = try JSONSerialization.jsonObject(with: Data(raw.utf8), options: [.fragmentsAllowed])
                     if key == Key.passkeys || key == Key.totp {
                         guard decoded is [[String: Any]] else { throw VaultError.invalidData }
                     }
-                    if values[key] == nil { values[key] = raw }
+                    source[key] = raw
+                }
+                let config = mergeConfig(object(source[Key.syncConfig] ?? "{}"),
+                                         object(values[Key.syncConfig] ?? "{}"))
+                let deletions = config["deletions"] as? [[String: Any]] ?? []
+                for (key, kind) in [(Key.passkeys, "passkey"), (Key.totp, "totp")] {
+                    _ = try records(values[key])
+                    values[key] = mergeEntries(values[key] ?? "[]", source[key] ?? "[]", deletions, kind)
+                }
+                values[Key.syncConfig] = try encode(config)
+                for key in [Key.syncDevices, Key.customRelays] where values[key] == nil {
+                    values[key] = source[key]
                 }
                 values[Key.migrated] = "1"
             }
@@ -142,27 +159,13 @@ final class VaultStore {
         if let passkeys { _ = try records(passkeys) }
         if let totp { _ = try records(totp) }
         try archive.transaction { values in
-            var config = object(values[Key.syncConfig] ?? "{}")
-            let incoming = object(syncConfig ?? "{}")
-            var deletions: [String: [String: Any]] = [:]
-            for item in (config["deletions"] as? [[String: Any]] ?? []) +
-                        (incoming["deletions"] as? [[String: Any]] ?? []) {
-                guard let kind = item["kind"] as? String, let id = item["id"] as? String,
-                      let time = item["deletedAt"] as? Double,
-                      time.isFinite, ["passkey", "totp"].contains(kind) else { continue }
-                let key = kind + ":" + id
-                if time > (deletions[key]?["deletedAt"] as? Double ?? -Double.infinity) {
-                    deletions[key] = item
-                }
-            }
-            for (key, value) in incoming where key != "deletions" { config[key] = value }
-            config["deletions"] = Array(deletions.values)
-            config.removeValue(forKey: "syncSalt")
+            let config = mergeConfig(object(values[Key.syncConfig] ?? "{}"), object(syncConfig ?? "{}"))
+            let deletions = config["deletions"] as? [[String: Any]] ?? []
             values[Key.syncConfig] = try encode(config)
             values[Key.passkeys] = mergeEntries(values[Key.passkeys] ?? "[]", passkeys ?? "[]",
-                                                Array(deletions.values), "passkey")
+                                                deletions, "passkey")
             values[Key.totp] = mergeEntries(values[Key.totp] ?? "[]", totp ?? "[]",
-                                            Array(deletions.values), "totp")
+                                            deletions, "totp")
             if let syncDevices { values[Key.syncDevices] = syncDevices }
             if let customRelays { values[Key.customRelays] = customRelays }
         }
@@ -251,7 +254,7 @@ final class VaultStore {
             let matches = entries.compactMap(PasskeyRecord.fromJSON).contains {
                 $0.rpId == rpId && excluded.contains(Base64URL.decode($0.credentialId) ?? Data())
             }
-            guard !matches else { throw ASExtensionError(.matchedExcludedCredential) }
+            guard !matches else { throw VaultError.excludedCredential }
             entries.append(record.toJSON())
             values[Key.passkeys] = try encode(entries)
         }
@@ -265,6 +268,24 @@ final class VaultStore {
             throw VaultError.invalidData
         }
         return result
+    }
+
+    private func mergeConfig(_ local: [String: Any], _ incoming: [String: Any]) -> [String: Any] {
+        var config = local.merging(incoming) { _, next in next }
+        var deletions: [String: [String: Any]] = [:]
+        for item in (local["deletions"] as? [[String: Any]] ?? []) +
+                    (incoming["deletions"] as? [[String: Any]] ?? []) {
+            guard let kind = item["kind"] as? String, let id = item["id"] as? String,
+                  let time = item["deletedAt"] as? Double,
+                  time.isFinite, ["passkey", "totp"].contains(kind) else { continue }
+            let key = kind + ":" + id
+            if time > (deletions[key]?["deletedAt"] as? Double ?? -Double.infinity) {
+                deletions[key] = item
+            }
+        }
+        config["deletions"] = deletions.keys.sorted().compactMap { deletions[$0] }
+        config.removeValue(forKey: "syncSalt")
+        return config
     }
 
     private func encode(_ value: Any) throws -> String {

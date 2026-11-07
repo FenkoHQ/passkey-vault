@@ -9,6 +9,7 @@ enum VaultError: LocalizedError {
     case invalidArchive
     case missingKey
     case invalidData
+    case excludedCredential
     case keychain(OSStatus)
 
     var errorDescription: String? {
@@ -18,6 +19,7 @@ enum VaultError: LocalizedError {
         case .invalidArchive: return "The vault could not be opened. Your stored data has not been replaced."
         case .missingKey: return "The vault key is unavailable. Restore an encrypted backup."
         case .invalidData: return "The vault data is invalid."
+        case .excludedCredential: return "A passkey already exists for this account."
         case .keychain: return "The device could not unlock the vault key."
         }
     }

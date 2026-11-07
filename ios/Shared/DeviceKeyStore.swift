@@ -17,10 +17,12 @@ enum DeviceKeyStore {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecAttrAccessGroup as String: VaultStore.appGroup,
             kSecUseAuthenticationContext as String: context,
             kSecReturnData as String: true,
         ]
+        #if !LOCAL_DEVICE_TEST
+        query[kSecAttrAccessGroup as String] = VaultStore.appGroup
+        #endif
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecSuccess, let data = result as? Data { return data }

@@ -91,8 +91,12 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                 do {
                     try self.vault.unlock(context: auth)
                     try operation()
-                } catch let error as ASExtensionError {
-                    self.cancel(error.code)
+                } catch VaultError.excludedCredential {
+                    if #available(iOS 18.0, *) {
+                        self.cancel(.matchedExcludedCredential)
+                    } else {
+                        self.cancel(.failed)
+                    }
                 } catch { self.cancel(.failed) }
             }
         }

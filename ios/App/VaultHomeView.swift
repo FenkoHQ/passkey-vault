@@ -138,7 +138,11 @@ struct VaultHomeView: View {
         NavigationStack {
             Form {
                 Section("Passkeys") {
+                    #if LOCAL_DEVICE_TEST
+                    Text("This test app supports vault storage and backups. Passkey AutoFill requires the full Fenko Vault build.")
+                    #else
                     Text("Enable Fenko Vault in your device's Password AutoFill settings to create and use passkeys in apps and Safari.")
+                    #endif
                 }
                 Section("Backup and restore") {
                     SecureField("Backup password", text: $password)
