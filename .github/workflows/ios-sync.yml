@@ -53,6 +53,8 @@ jobs:
             -onlyUsePackageVersionsFromResolvedFile \
             -derivedDataPath "$RUNNER_TEMP/FenkoVault-simulator" \
             -destination "platform=iOS Simulator,id=$device_id" \
+            -resultBundlePath "$RUNNER_TEMP/native-ios-tests.xcresult" \
+            -test-timeouts-enabled YES \
             -maximum-test-execution-time-allowance 60 \
             CODE_SIGNING_ALLOWED=NO test
           xcrun simctl install "$device_id" \
@@ -61,6 +63,13 @@ jobs:
           sleep 3
           xcrun simctl io "$device_id" screenshot "$RUNNER_TEMP/native-vault.png"
           xcrun simctl shutdown "$device_id"
+      - name: Save native test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-ios-tests
+          path: ${{ runner.temp }}/native-ios-tests.xcresult
+          retention-days: 7
       - name: Save the simulator screenshot
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
