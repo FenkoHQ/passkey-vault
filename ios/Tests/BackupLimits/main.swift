@@ -15,4 +15,9 @@ do {
 } catch {
     fatalError("A supported backup export could not be read and restored: \(error)")
 }
+let tooLarge = Data(repeating: 0x78, count: 32 * 1024 * 1024 + 1)
+var rejected = false
+do { _ = try VaultBackup.encrypt(tooLarge, password: "size-boundary-fixture") }
+catch { rejected = true }
+precondition(rejected, "Oversized plaintext was exported")
 print("iOS backup size boundaries: PASS")
