@@ -21,9 +21,19 @@ final class URLRelayConnection: RelayConnection {
         configuration.urlCache = nil
         configuration.timeoutIntervalForRequest = RelayLimits.connectionTimeout
         session = URLSession(configuration: configuration)
-        task = session.webSocketTask(with: url)
+        task = Self.makeTask(session: session, url: url)
+    }
+
+    init(url: URL, session: URLSession) {
+        self.session = session
+        task = Self.makeTask(session: session, url: url)
+    }
+
+    private static func makeTask(session: URLSession, url: URL) -> URLSessionWebSocketTask {
+        let task = session.webSocketTask(with: url)
         task.maximumMessageSize = RelayLimits.maxFrameBytes
         task.resume()
+        return task
     }
 
     func send(_ text: String) async throws {

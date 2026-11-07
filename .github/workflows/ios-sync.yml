@@ -23,8 +23,8 @@ jobs:
       - name: Test native sync crypto
         run: |
           node ios/Sync/generate-words.mjs --check
-          SYNC_INTEROP_OUT="$RUNNER_TEMP/native-sync-event.json" swift test --package-path ios/Sync
           npm ci --ignore-scripts --no-audit --no-fund
+          SYNC_INTEROP_OUT="$RUNNER_TEMP/native-sync-event.json" bash ios/Sync/test-relay.sh
           node ios/Sync/verify-native.mjs "$RUNNER_TEMP/native-sync-event.json"
       - run: brew install xcodegen
       - name: Build app and credential provider without signing

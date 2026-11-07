@@ -1,4 +1,5 @@
 import Foundation
+import Security
 import XCTest
 @testable import VaultSync
 
@@ -50,7 +51,12 @@ private actor TestSyncStorage {
     private var failures = 0
     private var hold = false
     private var pending: CheckedContinuation<Data, Never>?
-    private let snapshot = Data("{\"passkeys\":[],\"totpEntries\":[]}".utf8)
+    private let snapshot: Data
+    private var received: [Data] = []
+
+    init(snapshot: Data = Data("{\"passkeys\":[],\"totpEntries\":[]}".utf8)) {
+        self.snapshot = snapshot
+    }
 
     func load() async -> Data {
         if hold { return await withCheckedContinuation { pending = $0 } }
@@ -64,6 +70,7 @@ private actor TestSyncStorage {
             throw SyncError.invalidMessage
         }
         applied.append(message.eventID)
+        if let snapshot = message.snapshot { received.append(snapshot) }
         return .unchanged
     }
 
@@ -74,10 +81,38 @@ private actor TestSyncStorage {
     func waiting() -> Bool { pending != nil }
     func appliedCount() -> Int { applied.count }
     func attemptCount() -> Int { attempts }
+    func hasCredential(_ id: String) -> Bool {
+        received.contains { data in
+            guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let passkeys = object["passkeys"] as? [[String: Any]] else { return false }
+            return passkeys.contains { $0["id"] as? String == id }
+        }
+    }
     func release() {
         hold = false
         pending?.resume(returning: snapshot)
         pending = nil
+    }
+}
+
+// Test-only trust anchor; hostname and certificate validation still run.
+private final class TestTrustDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+    private let certificate: Data
+    init(certificate: Data) { self.certificate = certificate }
+
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              challenge.protectionSpace.host == "localhost",
+              let trust = challenge.protectionSpace.serverTrust,
+              let certificate = SecCertificateCreateWithData(nil, certificate as CFData),
+              SecTrustSetAnchorCertificates(trust, [certificate] as CFArray) == errSecSuccess,
+              SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess,
+              SecTrustEvaluateWithError(trust, nil) else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        completionHandler(.useCredential, URLCredential(trust: trust))
     }
 }
 
@@ -154,5 +189,34 @@ final class ServiceTests: XCTestCase {
         let attempts = await storage.attemptCount()
         XCTAssertEqual(attempts, 2, "Committed event was applied again")
         await service.stop()
+    }
+
+    func testTwoClientsOverTLS() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let address = environment["SYNC_TEST_RELAY"], let url = URL(string: address),
+              let path = environment["SYNC_TEST_CERT"] else {
+            throw XCTSkip("Local TLS relay is not configured")
+        }
+        let trust = TestTrustDelegate(certificate: try Data(contentsOf: URL(fileURLWithPath: path)))
+        let open: @Sendable (URL) -> any RelayConnection = { url in
+            let session = URLSession(configuration: .ephemeral, delegate: trust, delegateQueue: nil)
+            return URLRelayConnection(url: url, session: session)
+        }
+        let firstStore = TestSyncStorage(snapshot: Data("{\"passkeys\":[{\"id\":\"native-tls-credential\"}],\"totpEntries\":[]}".utf8))
+        let secondStore = TestSyncStorage()
+        let hash = try SyncRecovery.seedHash(SyncRecovery.generate())
+        let firstConfig = try RelaySyncConfig(seedHash: hash, deviceID: "one", deviceName: "Phone one", relays: [url])
+        let secondConfig = try RelaySyncConfig(seedHash: hash, deviceID: "two", deviceName: "Phone two", relays: [url])
+        let first = SyncService(config: firstConfig, load: { await firstStore.load() },
+                                apply: { try await firstStore.apply($0) }, report: { await firstStore.report($0) }, connect: open)
+        let second = SyncService(config: secondConfig, load: { await secondStore.load() },
+                                 apply: { try await secondStore.apply($0) }, report: { await secondStore.report($0) }, connect: open)
+        await first.start()
+        await second.start()
+        try await eventually { await secondStore.hasCredential("native-tls-credential") }
+        let accepted = await firstStore.hasStatus(.sent)
+        XCTAssertTrue(accepted, "The independent relay did not accept the native signature")
+        await first.stop()
+        await second.stop()
     }
 }
