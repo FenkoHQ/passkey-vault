@@ -5,7 +5,7 @@ import UIKit
 
 final class CredentialProviderViewController: ASCredentialProviderViewController {
     private let vault = VaultStore.shared
-    private var context: LAContext?
+    private let session = ProviderSession()
     private var hosted: UIViewController?
 
     override func provideCredentialWithoutUserInteraction(for credentialRequest: ASCredentialRequest) {
@@ -59,7 +59,7 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                                                                   clientDataHash: request.clientDataHash,
                                                                   credentialID: result.credentialID,
                                                                   attestationObject: result.attestation)
-                self.vault.lock()
+                self.session.cancel()
                 self.extensionContext.completeRegistrationRequest(using: credential)
             }
         }, cancel: { [weak self] in self?.cancel(.userCanceled) }))
@@ -77,35 +77,26 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                                                        signature: result.signature, clientDataHash: clientHash,
                                                        authenticatorData: result.authenticatorData,
                                                        credentialID: credentialID)
-        vault.lock()
+        session.cancel()
         extensionContext.completeAssertionRequest(using: credential)
     }
 
     private func authenticate(reason: String, operation: @escaping () throws -> Void) {
-        let auth = LAContext()
-        context = auth
-        auth.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { [weak self] ok, _ in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                guard ok else { self.cancel(.userCanceled); return }
-                do {
-                    try self.vault.unlock(context: auth)
-                    try operation()
-                } catch VaultError.excludedCredential {
-                    if #available(iOS 18.0, *) {
-                        self.cancel(.matchedExcludedCredential)
-                    } else {
-                        self.cancel(.failed)
-                    }
-                } catch { self.cancel(.failed) }
-            }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await session.perform(reason: reason, operation: operation)
+            } catch ProviderSessionError.denied {
+                cancel(.userCanceled)
+            } catch VaultError.excludedCredential {
+                if #available(iOS 18.0, *) { cancel(.matchedExcludedCredential) }
+                else { cancel(.failed) }
+            } catch { cancel(.failed) }
         }
     }
 
     private func cancel(_ code: ASExtensionError.Code) {
-        context?.invalidate()
-        context = nil
-        vault.lock()
+        session.cancel()
         extensionContext.cancelRequest(withError: ASExtensionError(code))
     }
 
