@@ -12,3 +12,6 @@ node "$ROOT/ios/Tests/Credentials/interop.mjs" create "$OUT"
 xcrun swiftc "${SHARED[@]}" "$ROOT/ios/Tests/Credentials/main.swift" -o "$OUT/test-credentials"
 "$OUT/test-credentials" "$OUT"
 node "$ROOT/ios/Tests/Credentials/interop.mjs" verify "$OUT"
+xcrun swiftc "${SHARED[@]}" "$ROOT/ios/App/NativeVaultModel.swift" \
+  "$ROOT/ios/Tests/Session/main.swift" -o "$OUT/test-session"
+"$OUT/test-session"

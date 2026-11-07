@@ -2,6 +2,16 @@ import Foundation
 import LocalAuthentication
 import SwiftUI
 
+protocol NativeVaultAccess {
+    func unlock(context: LAContext) throws
+    func lock()
+    func items(at date: Date) throws -> [VaultItem]
+    func exportBackup(password: String) throws -> Data
+    func importFile(_ url: URL, password: String) throws -> Int
+}
+
+extension VaultStore: NativeVaultAccess {}
+
 @MainActor
 final class NativeVaultModel: ObservableObject {
     enum Session {
@@ -13,14 +23,20 @@ final class NativeVaultModel: ObservableObject {
     @Published private(set) var session: Session = .locked
     @Published private(set) var items: [VaultItem] = []
     @Published var message: String?
-    private let vault: VaultStore
+    private let vault: NativeVaultAccess
+    private let authenticate: (LAContext) async throws -> Bool
     private var context: LAContext?
     private var generation = 0
     private var lastActivity = Date()
     private static let idleTimeout: TimeInterval = 5 * 60
 
-    init(vault: VaultStore = .shared) {
+    init(vault: NativeVaultAccess = VaultStore.shared,
+         authenticate: @escaping (LAContext) async throws -> Bool = { context in
+             try await context.evaluatePolicy(.deviceOwnerAuthentication,
+                                              localizedReason: "Unlock your Fenko Vault")
+         }) {
         self.vault = vault
+        self.authenticate = authenticate
     }
 
     func unlock() async {
@@ -32,8 +48,7 @@ final class NativeVaultModel: ObservableObject {
         let auth = LAContext()
         context = auth
         do {
-            let verified = try await auth.evaluatePolicy(.deviceOwnerAuthentication,
-                                                        localizedReason: "Unlock your Fenko Vault")
+            let verified = try await authenticate(auth)
             guard verified, generation == attempt else { return }
             try vault.unlock(context: auth)
             session = .unlocked
@@ -71,7 +86,7 @@ final class NativeVaultModel: ObservableObject {
     func refresh() {
         guard session == .unlocked else { return }
         do {
-            items = try vault.items()
+            items = try vault.items(at: Date())
         } catch {
             message = error.localizedDescription
         }
