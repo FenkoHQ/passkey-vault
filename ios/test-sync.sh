@@ -19,3 +19,5 @@ xcrun swiftc "${SHARED[@]}" "$ROOT/ios/Tests/SyncStorage/main.swift" -o "$OUT/te
 "$OUT/test-sync-storage"
 xcrun swiftc "${SHARED[@]}" "$ROOT/ios/Tests/OTP/main.swift" -o "$OUT/test-otp"
 "$OUT/test-otp"
+xcrun swiftc "${SHARED[@]}" "$ROOT/ios/Tests/Recovery/main.swift" -o "$OUT/test-recovery"
+"$OUT/test-recovery"
