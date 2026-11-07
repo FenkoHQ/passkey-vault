@@ -82,4 +82,19 @@ let badVault = VaultStore(archive: badArchive, legacy: defaults)
 expectFailure("Malformed legacy data must fail") { try badVault.migrateLegacy() }
 require(defaults.string(forKey: "passkeys") == "invalid-json", "Malformed source was deleted")
 require(!badArchive.exists, "Failed migration committed an archive")
+
+// A pre-existing encrypted record must not cause a legacy-only record to be discarded.
+let mixedArchive = VaultArchive(directory: directory.appendingPathComponent("mixed"))
+try mixedArchive.unlock(key: key)
+var nativeRecord = record
+nativeRecord["id"] = "native-credential"
+nativeRecord["credentialId"] = "bmF0aXZlLWNyZWRlbnRpYWw"
+try mixedArchive.transaction {
+    $0["passkeys"] = String(decoding: try JSONSerialization.data(withJSONObject: [nativeRecord]), as: UTF8.self)
+}
+defaults.set(raw, forKey: "passkeys")
+let mixedVault = VaultStore(archive: mixedArchive, legacy: defaults)
+try mixedVault.migrateLegacy()
+require(try Set(mixedVault.loadPasskeys().map(\.id)) == Set(["credential", "native-credential"]),
+        "Migration discarded a legacy credential when encrypted records existed")
 print("iOS encrypted storage: PASS")
