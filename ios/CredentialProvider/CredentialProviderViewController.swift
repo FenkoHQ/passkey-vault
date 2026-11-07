@@ -53,14 +53,14 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
                 if #available(iOS 18.0, *) {
                     excluded = request.excludedCredentials?.map { $0.credentialID } ?? []
                 }
-                let result = try vault.register(rpId: identity.relyingPartyIdentifier, userName: identity.userName,
+                let result = try self.vault.register(rpId: identity.relyingPartyIdentifier, userName: identity.userName,
                                                 userHandle: identity.userHandle, excluded: excluded)
                 let credential = ASPasskeyRegistrationCredential(relyingParty: identity.relyingPartyIdentifier,
                                                                   clientDataHash: request.clientDataHash,
                                                                   credentialID: result.credentialID,
                                                                   attestationObject: result.attestation)
-                vault.lock()
-                extensionContext.completeRegistrationRequest(using: credential)
+                self.vault.lock()
+                self.extensionContext.completeRegistrationRequest(using: credential)
             }
         }, cancel: { [weak self] in self?.cancel(.userCanceled) }))
     }

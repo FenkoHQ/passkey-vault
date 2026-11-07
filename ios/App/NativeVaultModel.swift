@@ -49,7 +49,11 @@ final class NativeVaultModel: ObservableObject {
         context = auth
         do {
             let verified = try await authenticate(auth)
-            guard verified, generation == attempt else { return }
+            guard generation == attempt else { return }
+            guard verified else {
+                lock()
+                return
+            }
             try vault.unlock(context: auth)
             session = .unlocked
             touch()
@@ -88,6 +92,7 @@ final class NativeVaultModel: ObservableObject {
         do {
             items = try vault.items(at: Date())
         } catch {
+            lock()
             message = error.localizedDescription
         }
     }
