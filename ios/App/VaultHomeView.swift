@@ -1,6 +1,11 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+private enum VaultLinks {
+    static let privacy = URL(string: "https://fenko.nz/privacy-policy/")!
+    static let support = URL(string: "mailto:security@fenko.nz")!
+}
+
 private struct BackupDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
     let data: Data
@@ -220,6 +225,12 @@ struct VaultHomeView: View {
                     Text("The vault locks when you leave the app or after five minutes without activity.")
                     Text("Copied codes stay on this device and expire after 30 seconds.")
                     Button("Lock vault") { model.lock() }
+                }
+                Section("Privacy and support") {
+                    Text("QR codes are read on this device. Camera images are not uploaded.")
+                    Text("When you enable sync, encrypted vault updates pass through relays. Relay operators can see connection information, including your IP address.")
+                    Link("Privacy policy", destination: VaultLinks.privacy)
+                    Link("Contact support", destination: VaultLinks.support)
                 }
             }
             .onChange(of: password) { _, _ in model.touch() }
