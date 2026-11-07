@@ -93,6 +93,7 @@ struct VaultHomeView: View {
                 else { Label("Unlock vault", systemImage: "faceid") }
             }
             .buttonStyle(.borderedProminent)
+            .foregroundStyle(.black)
             .disabled(model.session == .unlocking)
             Text("Use Face ID, Touch ID, or your device passcode.")
                 .font(.footnote).foregroundStyle(.secondary)

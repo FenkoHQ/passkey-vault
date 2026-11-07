@@ -20,6 +20,10 @@ jobs:
         with:
           node-version: '24'
       - run: bash ios/test-sync.sh
+      - name: Test native sync crypto
+        run: |
+          node ios/Sync/generate-words.mjs --check
+          swift test --package-path ios/Sync
       - run: brew install xcodegen
       - name: Build app and credential provider without signing
         working-directory: ios
