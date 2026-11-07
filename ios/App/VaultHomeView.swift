@@ -231,6 +231,7 @@ struct VaultHomeView: View {
                     Text("When you enable sync, encrypted vault updates pass through relays. Relay operators can see connection information, including your IP address.")
                     Link("Privacy policy", destination: VaultLinks.privacy)
                     Link("Contact support", destination: VaultLinks.support)
+                    NavigationLink("Open source licenses") { OpenSourceView() }
                 }
             }
             .onChange(of: password) { _, _ in model.touch() }

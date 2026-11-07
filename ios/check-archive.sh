@@ -5,6 +5,7 @@ archive_path="${1:?Provide an Xcode archive path}"
 app_path="$archive_path/Products/Applications/FenkoVault.app"
 provider_path="$app_path/PlugIns/CredentialProvider.appex"
 plist_buddy=/usr/libexec/PlistBuddy
+test -s "$app_path/OpenSourceNotices.txt"
 
 # Inspect the delivered bundles, since source manifests alone do not prove packaging.
 for bundle_path in "$app_path" "$provider_path"; do
