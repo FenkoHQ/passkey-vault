@@ -86,6 +86,8 @@ final class CredentialProviderViewController: ASCredentialProviderViewController
             guard let self else { return }
             do {
                 try await session.perform(reason: reason, operation: operation)
+            } catch ProviderSessionError.stale {
+                return
             } catch ProviderSessionError.denied {
                 cancel(.userCanceled)
             } catch VaultError.excludedCredential {
