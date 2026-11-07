@@ -15,6 +15,15 @@ final class TestVault: NativeVaultAccess {
 }
 
 @MainActor
+final class TestSync: NativeSyncLifecycle {
+    var resumes = 0
+    var suspends = 0
+    func resume() { resumes += 1 }
+    func suspend() { suspends += 1 }
+    func changed() {}
+}
+
+@MainActor
 func verifySession() async {
     let deniedVault = TestVault()
     let denied = NativeVaultModel(vault: deniedVault, authenticate: { _ in false })
@@ -23,12 +32,15 @@ func verifySession() async {
     precondition(deniedVault.unlocks == 0, "Denied authentication opened storage")
 
     let vault = TestVault()
-    let model = NativeVaultModel(vault: vault, authenticate: { _ in true })
+    let sync = TestSync()
+    let model = NativeVaultModel(vault: vault, sync: sync, authenticate: { _ in true })
     await model.unlock()
     precondition(model.session == .unlocked && model.items.count == 1, "Successful unlock did not load entries")
+    precondition(sync.resumes == 1, "Unlock did not resume sync")
     vault.readable = false
     model.refresh()
     precondition(model.session == .locked && model.items.isEmpty, "Failed refresh left stale secrets visible")
+    precondition(sync.suspends == 1, "Lock did not suspend sync")
 
     // A delayed authentication response must not reopen a vault locked while it was pending.
     var pending: CheckedContinuation<Bool, Never>?

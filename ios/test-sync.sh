@@ -15,3 +15,5 @@ node "$ROOT/ios/Tests/Credentials/interop.mjs" verify "$OUT"
 xcrun swiftc "${SHARED[@]}" "$ROOT/ios/App/NativeVaultModel.swift" \
   "$ROOT/ios/Tests/Session/main.swift" -o "$OUT/test-session"
 "$OUT/test-session"
+xcrun swiftc "${SHARED[@]}" "$ROOT/ios/Tests/SyncStorage/main.swift" -o "$OUT/test-sync-storage"
+"$OUT/test-sync-storage"

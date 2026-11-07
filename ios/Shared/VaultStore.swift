@@ -179,6 +179,114 @@ final class VaultStore {
         updateCredentialIdentities([])
     }
 
+    func syncSettings() throws -> VaultSyncSettings? {
+        let values = try archive.read()
+        let config = object(values[Key.syncConfig] ?? "{}")
+        guard config["enabled"] as? Bool == true else { return nil }
+        guard let hash = config["seedHash"] as? String, hash.count == 64,
+              hash.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+              let chainID = config["chainId"] as? String, chainID == String(hash.prefix(32)),
+              let deviceID = config["deviceId"] as? String, !deviceID.isEmpty else { throw VaultError.invalidData }
+        let name = config["deviceName"] as? String ?? "iPhone"
+        let raw = values[Key.customRelays].flatMap { try? JSONDecoder().decode([String].self, from: Data($0.utf8)) }
+        let addresses = raw?.isEmpty == false ? raw! : VaultSyncSettings.defaultRelays
+        let relays = addresses.compactMap(URL.init(string:))
+        guard relays.count == addresses.count,
+              relays.allSatisfy({ $0.scheme == "wss" && $0.host != nil && $0.user == nil && $0.fragment == nil }) else {
+            throw VaultError.invalidData
+        }
+        return VaultSyncSettings(seedHash: hash, chainID: chainID, deviceID: deviceID, deviceName: name, relays: relays)
+    }
+
+    func joinSync(seedHash: String, deviceName: String) throws {
+        guard seedHash.count == 64, seedHash.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+              !deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              deviceName.utf8.count <= 256 else { throw VaultError.invalidData }
+        let deviceID = UUID().uuidString
+        let chainID = String(seedHash.prefix(32))
+        let now = Date().timeIntervalSince1970 * 1000
+        try archive.transaction { values in
+            var config = object(values[Key.syncConfig] ?? "{}")
+            config["enabled"] = true
+            config["seedHash"] = seedHash
+            config["chainId"] = chainID
+            config["deviceId"] = deviceID
+            config["deviceName"] = deviceName
+            values[Key.syncConfig] = try encode(config)
+            values[Key.syncDevices] = try encode(["id": chainID, "createdAt": now, "devices": [[
+                "id": deviceID, "name": deviceName, "deviceType": "Mobile (iOS)", "publicKey": "",
+                "createdAt": now, "lastSeen": now, "isThisDevice": true,
+            ]]])
+        }
+    }
+
+    func leaveSync() throws {
+        try archive.transaction { values in
+            let config = object(values[Key.syncConfig] ?? "{}")
+            values[Key.syncConfig] = try encode(["enabled": false, "deletions": config["deletions"] ?? []])
+            values.removeValue(forKey: Key.syncDevices)
+        }
+    }
+
+    func syncSnapshot() throws -> Data {
+        let values = try archive.read()
+        let config = object(values[Key.syncConfig] ?? "{}")
+        return try JSONSerialization.data(withJSONObject: [
+            "passkeys": records(values[Key.passkeys]), "totpEntries": records(values[Key.totp]),
+            "deletions": config["deletions"] as? [[String: Any]] ?? [],
+        ], options: [.sortedKeys])
+    }
+
+    func syncPeers() throws -> [VaultPeer] {
+        let chain = object(try archive.read()[Key.syncDevices] ?? "{}")
+        return (chain["devices"] as? [[String: Any]] ?? []).compactMap { peer in
+            guard let id = peer["id"] as? String else { return nil }
+            return VaultPeer(id: id, name: peer["name"] as? String ?? "Other device",
+                             type: peer["deviceType"] as? String ?? "Unknown", lastSeen: peer["lastSeen"] as? Double ?? 0)
+        }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    func applySync(_ data: Data?, peer: VaultPeer) throws -> Bool {
+        var incoming: [String: Any] = [:]
+        if let data {
+            guard let parsed = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  parsed["passkeys"] is [[String: Any]], parsed["totpEntries"] is [[String: Any]],
+                  parsed["deletions"] is [[String: Any]] else { throw VaultError.invalidData }
+            incoming = parsed
+        }
+        let passkeys = incoming["passkeys"] as? [[String: Any]] ?? []
+        let totp = incoming["totpEntries"] as? [[String: Any]] ?? []
+        guard passkeys.allSatisfy({ PasskeyRecord.fromJSON($0) != nil }),
+              totp.allSatisfy({ TOTPEntry.fromJSON($0) != nil }) else { throw VaultError.invalidData }
+        let changed = try archive.transaction { values in
+            let local = object(values[Key.syncConfig] ?? "{}")
+            guard local["enabled"] as? Bool == true else { throw VaultError.invalidData }
+            let before = canonical(["passkeys": try records(values[Key.passkeys]), "totp": try records(values[Key.totp]),
+                                    "deletions": local["deletions"] ?? []])
+            let config = mergeConfig(local, ["deletions": incoming["deletions"] ?? []])
+            let deletions = config["deletions"] as? [[String: Any]] ?? []
+            values[Key.syncConfig] = try encode(config)
+            values[Key.passkeys] = mergeEntries(values[Key.passkeys] ?? "[]", try encode(passkeys), deletions, "passkey")
+            values[Key.totp] = mergeEntries(values[Key.totp] ?? "[]", try encode(totp), deletions, "totp")
+            var chain = object(values[Key.syncDevices] ?? "{}")
+            var peers = chain["devices"] as? [[String: Any]] ?? []
+            let index = peers.firstIndex(where: { $0["id"] as? String == peer.id })
+            let previous = index.map { peers[$0] } ?? [:]
+            let record: [String: Any] = ["id": peer.id, "name": peer.name, "deviceType": peer.type,
+                                         "createdAt": previous["createdAt"] ?? peer.lastSeen,
+                                         "lastSeen": max(previous["lastSeen"] as? Double ?? 0, peer.lastSeen),
+                                         "publicKey": previous["publicKey"] ?? "", "isThisDevice": false]
+            if let index { peers[index] = record } else { peers.append(record) }
+            chain["devices"] = peers
+            values[Key.syncDevices] = try encode(chain)
+            let after = canonical(["passkeys": try records(values[Key.passkeys]), "totp": try records(values[Key.totp]),
+                                   "deletions": deletions])
+            return before != after
+        }
+        if changed { updateCredentialIdentities(try loadPasskeys()) }
+        return changed
+    }
+
     func items(at date: Date = Date()) throws -> [VaultItem] {
         let passkeys = try loadPasskeys().map {
             VaultItem(id: $0.id, kind: .passkey, title: $0.rpId, account: $0.userName, code: nil)

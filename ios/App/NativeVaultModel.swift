@@ -13,6 +13,13 @@ protocol NativeVaultAccess {
 extension VaultStore: NativeVaultAccess {}
 
 @MainActor
+protocol NativeSyncLifecycle: AnyObject {
+    func resume()
+    func suspend()
+    func changed()
+}
+
+@MainActor
 final class NativeVaultModel: ObservableObject {
     enum Session {
         case locked
@@ -24,18 +31,20 @@ final class NativeVaultModel: ObservableObject {
     @Published private(set) var items: [VaultItem] = []
     @Published var message: String?
     private let vault: NativeVaultAccess
+    private let sync: (any NativeSyncLifecycle)?
     private let authenticate: (LAContext) async throws -> Bool
     private var context: LAContext?
     private var generation = 0
     private var lastActivity = Date()
     private static let idleTimeout: TimeInterval = 5 * 60
 
-    init(vault: NativeVaultAccess = VaultStore.shared,
+    init(vault: NativeVaultAccess = VaultStore.shared, sync: (any NativeSyncLifecycle)? = nil,
          authenticate: @escaping (LAContext) async throws -> Bool = { context in
              try await context.evaluatePolicy(.deviceOwnerAuthentication,
                                               localizedReason: "Unlock your Fenko Vault")
          }) {
         self.vault = vault
+        self.sync = sync
         self.authenticate = authenticate
     }
 
@@ -58,6 +67,7 @@ final class NativeVaultModel: ObservableObject {
             session = .unlocked
             touch()
             refresh()
+            if session == .unlocked { sync?.resume() }
         } catch {
             guard generation == attempt else { return }
             lock()
@@ -69,6 +79,7 @@ final class NativeVaultModel: ObservableObject {
         generation += 1
         context?.invalidate()
         context = nil
+        sync?.suspend()
         vault.lock()
         items = []
         session = .locked
@@ -109,6 +120,7 @@ final class NativeVaultModel: ObservableObject {
             let count = try vault.importFile(url, password: password)
             touch()
             refresh()
+            sync?.changed()
             message = "Imported \(count) entries."
         } catch {
             message = "Import failed. Check the backup and its password. Your existing entries are unchanged."

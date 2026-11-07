@@ -16,7 +16,8 @@ private struct BackupDocument: FileDocument {
 }
 
 struct VaultHomeView: View {
-    @StateObject private var model = NativeVaultModel()
+    @StateObject private var model: NativeVaultModel
+    @StateObject private var sync: NativeSyncModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var search = ""
     @State private var password = ""
@@ -27,11 +28,18 @@ struct VaultHomeView: View {
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private let amber = Color(red: 0.96, green: 0.65, blue: 0.14)
 
+    init() {
+        let sync = NativeSyncModel()
+        _sync = StateObject(wrappedValue: sync)
+        _model = StateObject(wrappedValue: NativeVaultModel(sync: sync))
+    }
+
     var body: some View {
         Group {
             if model.session == .unlocked {
                 TabView {
                     vault.tabItem { Label("Vault", systemImage: "key.fill") }
+                    NativeSyncView(model: sync).tabItem { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
                     settings.tabItem { Label("Settings", systemImage: "gearshape") }
                 }
             } else {
@@ -64,10 +72,10 @@ struct VaultHomeView: View {
                 }.ignoresSafeArea()
             }
         }
-        .alert("Fenko Vault", isPresented: Binding(get: { model.message != nil },
-                                                   set: { if !$0 { model.message = nil } })) {
-            Button("OK") { model.message = nil }
-        } message: { Text(model.message ?? "") }
+        .alert("Fenko Vault", isPresented: Binding(get: { model.message != nil || sync.message != nil },
+                                                   set: { if !$0 { model.message = nil; sync.message = nil } })) {
+            Button("OK") { model.message = nil; sync.message = nil }
+        } message: { Text(model.message ?? sync.message ?? "") }
         .fileExporter(isPresented: $exporting, document: document,
                       contentType: .json, defaultFilename: "fenko-vault-backup") { result in
             document = nil
