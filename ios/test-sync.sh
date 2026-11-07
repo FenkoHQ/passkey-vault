@@ -17,3 +17,5 @@ xcrun swiftc "${SHARED[@]}" "$ROOT/ios/App/NativeVaultModel.swift" \
 "$OUT/test-session"
 xcrun swiftc "${SHARED[@]}" "$ROOT/ios/Tests/SyncStorage/main.swift" -o "$OUT/test-sync-storage"
 "$OUT/test-sync-storage"
+xcrun swiftc "${SHARED[@]}" "$ROOT/ios/Tests/OTP/main.swift" -o "$OUT/test-otp"
+"$OUT/test-otp"
