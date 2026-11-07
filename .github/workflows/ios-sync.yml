@@ -84,6 +84,7 @@ jobs:
             -configuration Release -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/FenkoVault.xcarchive" \
             CODE_SIGNING_ALLOWED=NO archive
+          bash check-archive.sh "$RUNNER_TEMP/FenkoVault.xcarchive"
       - name: Build the standalone device test app
         working-directory: ios
         run: |

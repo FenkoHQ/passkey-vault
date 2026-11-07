@@ -45,6 +45,8 @@ targets:
     sources:
       - path: App
       - path: Shared
+      - path: PrivacyInfo.xcprivacy
+        buildPhase: resources
       - path: Migration/web
         type: folder
         buildPhase: resources
@@ -71,6 +73,8 @@ targets:
     sources:
       - path: CredentialProvider
       - path: Shared
+      - path: PrivacyInfo.xcprivacy
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: nz.fenko.passkeyvault.CredentialProvider
