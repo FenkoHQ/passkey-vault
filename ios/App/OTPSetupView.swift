@@ -13,11 +13,16 @@ struct OTPSetupView: View {
     @State private var period = "30"
     @State private var counter = "0"
     @State private var error: String?
+    @State private var scanning = false
+    @State private var requestingCamera = false
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Setup link") {
+                    Button("Scan QR code", systemImage: "qrcode.viewfinder") {
+                        requestingCamera = true
+                    }.disabled(requestingCamera)
                     SecureField("otpauth:// link", text: $uri)
                     Button("Read setup link") { readLink() }.disabled(uri.isEmpty)
                 }
@@ -58,7 +63,30 @@ struct OTPSetupView: View {
             .onChange(of: model.session) { _, session in
                 if session != .unlocked { clear(); dismiss() }
             }
-            .onDisappear { clear() }
+            .task(id: requestingCamera) {
+                guard requestingCamera else { return }
+                let allowed = await VaultCamera.authorize()
+                guard !Task.isCancelled, model.session == .unlocked else { return }
+                requestingCamera = false
+                if allowed { scanning = true; model.touch() }
+                else { error = "Camera scanning is unavailable. Allow camera access in Settings, or enter the setup key." }
+            }
+            .onChange(of: [issuer, account, secret, uri, period, counter]) { _, _ in model.touch() }
+            .sheet(isPresented: $scanning) {
+                NavigationStack {
+                    OTPScannerView { value in
+                        guard model.session == .unlocked else { return }
+                        scanning = false
+                        uri = value
+                        readLink()
+                    } failed: {
+                        scanning = false
+                        error = "The camera could not scan the code. Try again or enter the setup key."
+                    }
+                    .navigationTitle("Scan authenticator QR")
+                    .toolbar { Button("Cancel") { scanning = false } }
+                }
+            }
         }
     }
 
@@ -94,6 +122,7 @@ struct OTPSetupView: View {
     }
 
     private func clear() {
+        scanning = false
         secret = ""
         uri = ""
         account = ""
