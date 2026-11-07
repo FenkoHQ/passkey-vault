@@ -27,8 +27,7 @@ targets:
     sources:
       - path: App
       - path: Shared
-      - path: web
-        type: folder
+      - path: ../android/web/src/fonts/Saira.ttf
         buildPhase: resources
     settings:
       base:

@@ -32,5 +32,7 @@
 	</array>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Fenko Vault uses Face ID to unlock your passkeys and 2FA codes.</string>
+	<key>UIAppFonts</key>
+	<array><string>Saira.ttf</string></array>
 </dict>
 </plist>

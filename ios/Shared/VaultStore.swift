@@ -1,16 +1,15 @@
 import Foundation
 import AuthenticationServices
 import CoreFoundation
+import LocalAuthentication
 
-/// Shared vault, backed by the App Group container so the app and the credential
-/// provider extension see the same data (the iOS equivalent of Android's
-/// `ProviderVaultStore` SharedPreferences). Stored as JSON strings under the same
-/// logical keys for cross-platform familiarity.
+// Domain operations share one encrypted transaction across the app and AutoFill provider.
 final class VaultStore {
     static let appGroup = "group.nz.fenko.passkeyvault"
     static let shared = VaultStore()
 
-    private let defaults: UserDefaults
+    private let archive: VaultArchive
+    private let legacy: UserDefaults?
 
     private enum Key {
         static let passkeys = "passkeys"
@@ -18,145 +17,259 @@ final class VaultStore {
         static let syncConfig = "sync_config"
         static let syncDevices = "sync_devices"
         static let customRelays = "custom_relays"
+        static let migrated = "legacy_migrated"
+        static let legacyKeys = [passkeys, totp, syncConfig, syncDevices, customRelays]
     }
 
-    init(suiteName: String = VaultStore.appGroup) {
-        // Falls back to .standard only so unit tests run outside an App Group.
-        defaults = UserDefaults(suiteName: suiteName) ?? .standard
+    private init() {
+        let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: Self.appGroup)
+        archive = VaultArchive(directory: container?.appendingPathComponent("EncryptedVault", isDirectory: true))
+        legacy = UserDefaults(suiteName: Self.appGroup)
     }
 
-    // MARK: Passkeys
-
-    func loadPasskeys() -> [PasskeyRecord] {
-        guard let raw = defaults.string(forKey: Key.passkeys),
-              let data = raw.data(using: .utf8),
-              let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
-        else { return [] }
-        return array.compactMap(PasskeyRecord.fromJSON)
+    init(archive: VaultArchive, legacy: UserDefaults? = nil) {
+        self.archive = archive
+        self.legacy = legacy
     }
 
-    func savePasskeys(_ passkeys: [PasskeyRecord]) {
-        let array = passkeys.map { $0.toJSON() }
-        if let data = try? JSONSerialization.data(withJSONObject: array),
-           let string = String(data: data, encoding: .utf8) {
-            defaults.set(string, forKey: Key.passkeys)
+    func unlock(context: LAContext) throws {
+        let key = try DeviceKeyStore.load(context: context, creation: archive.exists ? .forbidden : .allowed)
+        try archive.unlock(key: key)
+        do {
+            try migrateLegacy()
+        } catch {
+            archive.lock()
+            throw error
+        }
+    }
+
+    func lock() {
+        archive.lock()
+    }
+
+    func migrateLegacy() throws {
+        guard let legacy else { return }
+        try archive.transaction { values in
+            if values[Key.migrated] == nil {
+                for key in Key.legacyKeys {
+                    guard let raw = legacy.string(forKey: key) else { continue }
+                    let decoded = try JSONSerialization.jsonObject(with: Data(raw.utf8), options: [.fragmentsAllowed])
+                    if key == Key.passkeys || key == Key.totp {
+                        guard decoded is [[String: Any]] else { throw VaultError.invalidData }
+                    }
+                    if values[key] == nil { values[key] = raw }
+                }
+                values[Key.migrated] = "1"
+            }
+        }
+        // Remove legacy data only after the encrypted transaction is durable.
+        for key in Key.legacyKeys { legacy.removeObject(forKey: key) }
+        legacy.synchronize()
+    }
+
+    func loadPasskeys() throws -> [PasskeyRecord] {
+        try records(archive.read()[Key.passkeys]).compactMap(PasskeyRecord.fromJSON)
+    }
+
+    func savePasskeys(_ passkeys: [PasskeyRecord]) throws {
+        try archive.transaction { values in
+            values[Key.passkeys] = try encode(passkeys.map { $0.toJSON() })
         }
         updateCredentialIdentities(passkeys)
     }
 
-    func findPasskey(credentialId: String) -> PasskeyRecord? {
-        loadPasskeys().first { $0.credentialId == credentialId || $0.id == credentialId }
+    func findPasskey(credentialId: String) throws -> PasskeyRecord? {
+        try loadPasskeys().first { $0.credentialId == credentialId || $0.id == credentialId }
     }
 
-    func upsert(_ passkey: PasskeyRecord) {
-        var passkeys = loadPasskeys()
-        if let idx = passkeys.firstIndex(where: {
-            $0.id == passkey.id || $0.credentialId == passkey.credentialId
-        }) {
-            passkeys[idx] = passkey
-        } else {
-            passkeys.append(passkey)
-        }
-        savePasskeys(passkeys)
-    }
-
-    // MARK: TOTP
-
-    func loadTOTP() -> [TOTPEntry] {
-        guard let raw = defaults.string(forKey: Key.totp),
-              let data = raw.data(using: .utf8),
-              let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
-        else { return [] }
-        return array.compactMap(TOTPEntry.fromJSON)
-    }
-
-    // MARK: Import (browser/Android backup JSON)
-
-    /// Accepts a backup object `{ passkeys: [...], totpEntries: [...] }` or a bare
-    /// array of passkeys. Returns the number of passkeys imported.
-    @discardableResult
-    func importBackup(_ data: Data) -> Int {
-        guard let root = try? JSONSerialization.jsonObject(with: data) else { return 0 }
-
-        var incomingPasskeys: [[String: Any]] = []
-        var incomingTOTP: [[String: Any]] = []
-        if let obj = root as? [String: Any] {
-            incomingPasskeys = (obj["passkeys"] as? [[String: Any]]) ?? []
-            incomingTOTP = (obj["totpEntries"] as? [[String: Any]])
-                ?? (obj["totp"] as? [[String: Any]]) ?? []
-        } else if let array = root as? [[String: Any]] {
-            incomingPasskeys = array
-        }
-
-        var passkeys = loadPasskeys()
-        var imported = 0
-        for obj in incomingPasskeys {
-            guard let record = PasskeyRecord.fromJSON(obj) else { continue }
-            if let idx = passkeys.firstIndex(where: { $0.credentialId == record.credentialId }) {
-                passkeys[idx] = record
+    func upsert(_ passkey: PasskeyRecord) throws {
+        try archive.transaction { values in
+            var records = try self.records(values[Key.passkeys])
+            if let index = records.firstIndex(where: {
+                ($0["id"] as? String) == passkey.id || ($0["credentialId"] as? String) == passkey.credentialId
+            }) {
+                records[index] = passkey.toJSON()
             } else {
-                passkeys.append(record)
+                records.append(passkey.toJSON())
             }
-            imported += 1
+            values[Key.passkeys] = try encode(records)
         }
-        savePasskeys(passkeys)
-
-        if !incomingTOTP.isEmpty,
-           let totpData = try? JSONSerialization.data(withJSONObject: incomingTOTP),
-           let totpString = String(data: totpData, encoding: .utf8) {
-            defaults.set(totpString, forKey: Key.totp)
-        }
-        return imported
+        updateCredentialIdentities(try loadPasskeys())
     }
 
-    // MARK: WebView bridge (snapshot in/out, mirrors Android's ProviderVaultStore)
-
-    /// JSON string the web app's `loadVaultSnapshot()` consumes. Keys must match
-    /// what app.ts reads: passkeys, totpEntries, syncConfig, syncDevices, customRelays.
-    func snapshotJSON() -> String {
-        let passkeys = defaults.string(forKey: Key.passkeys) ?? "[]"
-        let totp = defaults.string(forKey: Key.totp) ?? "[]"
-        let syncConfig = defaults.string(forKey: Key.syncConfig) ?? "{}"
-        let syncDevices = defaults.string(forKey: Key.syncDevices) ?? "null"
-        let customRelays = defaults.string(forKey: Key.customRelays) ?? "[]"
-        return "{\"passkeys\":\(passkeys),\"totpEntries\":\(totp),\"syncConfig\":\(syncConfig),\"syncDevices\":\(syncDevices),\"customRelays\":\(customRelays)}"
+    func loadTOTP() throws -> [TOTPEntry] {
+        try records(archive.read()[Key.totp]).compactMap(TOTPEntry.fromJSON)
     }
 
-    /// Persists what the web app mirrors out, so the credential provider can read
-    /// the same vault. Each argument is a JSON string (or nil to leave unchanged).
+    @discardableResult
+    func importBackup(_ data: Data) throws -> Int {
+        let parsed = try JSONSerialization.jsonObject(with: data)
+        let payload: [String: Any]
+        if let array = parsed as? [[String: Any]] {
+            payload = ["passkeys": array]
+        } else if let object = parsed as? [String: Any],
+                  object["passkeys"] is [[String: Any]] || object["totpEntries"] is [[String: Any]] {
+            payload = object
+        } else {
+            throw VaultError.invalidData
+        }
+        let passkeys = payload["passkeys"] as? [[String: Any]] ?? []
+        guard passkeys.allSatisfy({ PasskeyRecord.fromJSON($0) != nil }) else { throw VaultError.invalidData }
+        let totp = payload["totpEntries"] as? [[String: Any]] ?? []
+        guard totp.allSatisfy({ TOTPEntry.fromJSON($0) != nil }) else { throw VaultError.invalidData }
+        // Import credentials, leaving this device's sync identity unchanged.
+        try saveSnapshotFromWeb(passkeys: encode(passkeys), totp: encode(totp), syncConfig: nil,
+                                syncDevices: nil, customRelays: nil)
+        return passkeys.count + totp.count
+    }
+
+    func snapshotJSON() throws -> String {
+        let values = try archive.read()
+        let fields = ["passkeys": values[Key.passkeys] ?? "[]",
+                      "totpEntries": values[Key.totp] ?? "[]",
+                      "syncConfig": values[Key.syncConfig] ?? "{}",
+                      "syncDevices": values[Key.syncDevices] ?? "null",
+                      "customRelays": values[Key.customRelays] ?? "[]"]
+        var result: [String: Any] = [:]
+        for (key, raw) in fields {
+            result[key] = try JSONSerialization.jsonObject(with: Data(raw.utf8), options: [.fragmentsAllowed])
+        }
+        return try encode(result)
+    }
+
     func saveSnapshotFromWeb(passkeys: String?, totp: String?, syncConfig: String?,
-                             syncDevices: String?, customRelays: String?) {
-        var config = object(syncConfig ?? "{}")
-        let oldConfig = object(defaults.string(forKey: Key.syncConfig) ?? "{}")
-        var deletions: [String: [String: Any]] = [:]
-        for item in (oldConfig["deletions"] as? [[String: Any]] ?? []) +
-                    (config["deletions"] as? [[String: Any]] ?? []) {
-            guard let kind = item["kind"] as? String, let id = item["id"] as? String,
-                  let time = item["deletedAt"] as? Double,
-                  time.isFinite, ["passkey", "totp"].contains(kind) else { continue }
-            let key = kind + ":" + id
-            if time > (deletions[key]?["deletedAt"] as? Double ?? -Double.infinity) {
-                deletions[key] = item
+                             syncDevices: String?, customRelays: String?) throws {
+        if let passkeys { _ = try records(passkeys) }
+        if let totp { _ = try records(totp) }
+        try archive.transaction { values in
+            var config = object(values[Key.syncConfig] ?? "{}")
+            let incoming = object(syncConfig ?? "{}")
+            var deletions: [String: [String: Any]] = [:]
+            for item in (config["deletions"] as? [[String: Any]] ?? []) +
+                        (incoming["deletions"] as? [[String: Any]] ?? []) {
+                guard let kind = item["kind"] as? String, let id = item["id"] as? String,
+                      let time = item["deletedAt"] as? Double,
+                      time.isFinite, ["passkey", "totp"].contains(kind) else { continue }
+                let key = kind + ":" + id
+                if time > (deletions[key]?["deletedAt"] as? Double ?? -Double.infinity) {
+                    deletions[key] = item
+                }
             }
+            for (key, value) in incoming where key != "deletions" { config[key] = value }
+            config["deletions"] = Array(deletions.values)
+            config.removeValue(forKey: "syncSalt")
+            values[Key.syncConfig] = try encode(config)
+            values[Key.passkeys] = mergeEntries(values[Key.passkeys] ?? "[]", passkeys ?? "[]",
+                                                Array(deletions.values), "passkey")
+            values[Key.totp] = mergeEntries(values[Key.totp] ?? "[]", totp ?? "[]",
+                                            Array(deletions.values), "totp")
+            if let syncDevices { values[Key.syncDevices] = syncDevices }
+            if let customRelays { values[Key.customRelays] = customRelays }
         }
-        config["deletions"] = Array(deletions.values)
-        config.removeValue(forKey: "syncSalt")
-        // Save deletion history first, including when the WebView omits records.
-        defaults.set(json(config), forKey: Key.syncConfig)
-        defaults.set(mergeEntries(defaults.string(forKey: Key.passkeys) ?? "[]",
-                                 passkeys ?? "[]", Array(deletions.values), "passkey"), forKey: Key.passkeys)
-        defaults.set(mergeEntries(defaults.string(forKey: Key.totp) ?? "[]",
-                                 totp ?? "[]", Array(deletions.values), "totp"), forKey: Key.totp)
-        if let syncDevices { defaults.set(syncDevices, forKey: Key.syncDevices) }
-        if let customRelays { defaults.set(customRelays, forKey: Key.customRelays) }
-        updateCredentialIdentities()
+        updateCredentialIdentities(try loadPasskeys())
     }
 
-    func resetVault() {
-        for key in [Key.passkeys, Key.totp, Key.syncConfig, Key.syncDevices, Key.customRelays] {
-            defaults.removeObject(forKey: key)
+    func resetVault() throws {
+        try archive.transaction { values in
+            values = [Key.migrated: "1"]
         }
         updateCredentialIdentities([])
+    }
+
+    func items(at date: Date = Date()) throws -> [VaultItem] {
+        let passkeys = try loadPasskeys().map {
+            VaultItem(id: $0.id, kind: .passkey, title: $0.rpId, account: $0.userName, code: nil)
+        }
+        let codes = try loadTOTP().map { entry in
+            let valid = [6, 8].contains(entry.digits) && entry.period > 0
+            return VaultItem(id: entry.id, kind: .totp,
+                             title: entry.issuer.isEmpty ? "2FA code" : entry.issuer,
+                             account: entry.account, code: valid ? TOTP.code(for: entry, at: date) : nil)
+        }
+        return (passkeys + codes).sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    func exportBackup(password: String) throws -> Data {
+        try VaultBackup.encrypt(Data(snapshotJSON().utf8), password: password)
+    }
+
+    func importFile(_ url: URL, password: String) throws -> Int {
+        try importBackup(VaultBackup.decrypt(VaultBackup.read(url), password: password))
+    }
+
+    func assertion(credentialID: Data, rpId: String, clientHash: Data) throws -> VaultAssertion {
+        guard clientHash.count == 32, !rpId.isEmpty else { throw VaultError.invalidData }
+        return try archive.transaction { values in
+            var entries = try records(values[Key.passkeys])
+            guard let index = entries.firstIndex(where: {
+                guard let record = PasskeyRecord.fromJSON($0) else { return false }
+                return Base64URL.decode(record.credentialId) == credentialID && record.rpId == rpId
+            }), var record = PasskeyRecord.fromJSON(entries[index]),
+                  record.counter >= 0, record.counter < UInt32.max else { throw VaultError.invalidData }
+            record.counter += 1
+            let authData = WebAuthn.authenticatorData(rpId: rpId, credentialId: nil, cosePublicKey: nil,
+                                                     includeAttestedCredentialData: false,
+                                                     counter: record.counter, backupFlags: record.backupFlagBits)
+            let signature = try WebAuthn.assertionSignature(privateKeyPKCS8B64: record.privateKey,
+                                                            authenticatorData: authData,
+                                                            clientDataHash: clientHash)
+            entries[index] = record.toJSON()
+            values[Key.passkeys] = try encode(entries)
+            return VaultAssertion(userHandle: record.userId.flatMap(Base64URL.decode) ?? Data(),
+                                  authenticatorData: authData, signature: signature)
+        }
+    }
+
+    func credentials(rpId: String, allowed: [Data]) throws -> [ProviderCredential] {
+        try loadPasskeys().compactMap { record in
+            guard record.rpId == rpId, let id = Base64URL.decode(record.credentialId),
+                  allowed.isEmpty || allowed.contains(id) else { return nil }
+            return ProviderCredential(id: id, account: record.userName.isEmpty ? record.rpId : record.userName)
+        }.sorted { $0.account.localizedStandardCompare($1.account) == .orderedAscending }
+    }
+
+    func register(rpId: String, userName: String, userHandle: Data,
+                  excluded: [Data]) throws -> VaultRegistration {
+        guard !rpId.isEmpty, !userHandle.isEmpty, userHandle.count <= 64 else { throw VaultError.invalidData }
+        let keys = WebAuthn.generateKeyPair()
+        let credentialID = WebAuthn.credentialID()
+        guard let publicKey = Base64Std.decode(keys.publicKey) else { throw VaultError.invalidData }
+        let cose = try WebAuthn.cosePublicKey(rawPublicKey: publicKey)
+        var record = PasskeyRecord(id: Base64URL.encode(credentialID), credentialId: Base64URL.encode(credentialID),
+                                  rpId: rpId, origin: "https://\(rpId)", userId: Base64URL.encode(userHandle),
+                                  userName: userName, displayName: userName, privateKey: keys.privateKey,
+                                  publicKey: keys.publicKey, createdAt: Date().timeIntervalSince1970 * 1000,
+                                  counter: 0)
+        record.backupEligible = true
+        record.backupState = false
+        record.backupSource = "created"
+        let authData = WebAuthn.authenticatorData(rpId: rpId, credentialId: credentialID, cosePublicKey: cose,
+                                                 includeAttestedCredentialData: true, counter: 0,
+                                                 backupFlags: record.backupFlagBits)
+        try archive.transaction { values in
+            var entries = try records(values[Key.passkeys])
+            let matches = entries.compactMap(PasskeyRecord.fromJSON).contains {
+                $0.rpId == rpId && excluded.contains(Base64URL.decode($0.credentialId) ?? Data())
+            }
+            guard !matches else { throw ASExtensionError(.matchedExcludedCredential) }
+            entries.append(record.toJSON())
+            values[Key.passkeys] = try encode(entries)
+        }
+        updateCredentialIdentities(try loadPasskeys())
+        return VaultRegistration(credentialID: credentialID, attestation: WebAuthn.attestationObject(authData: authData))
+    }
+
+    private func records(_ raw: String?) throws -> [[String: Any]] {
+        guard let raw else { return [] }
+        guard let result = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [[String: Any]] else {
+            throw VaultError.invalidData
+        }
+        return result
+    }
+
+    private func encode(_ value: Any) throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+        return String(decoding: data, as: UTF8.self)
     }
 
     private func object(_ raw: String) -> [String: Any] {
@@ -235,10 +348,7 @@ final class VaultStore {
         return json(records.keys.sorted().compactMap { records[$0] })
     }
 
-    // MARK: Credential identity registration (QuickType / matching)
-
-    func updateCredentialIdentities(_ passkeys: [PasskeyRecord]? = nil) {
-        let records = passkeys ?? loadPasskeys()
+    private func updateCredentialIdentities(_ records: [PasskeyRecord]) {
         let identities: [ASCredentialIdentity] = records.compactMap { record in
             guard let credID = Base64URL.decode(record.credentialId) else { return nil }
             let userHandle = record.userId.flatMap(Base64URL.decode) ?? Data()

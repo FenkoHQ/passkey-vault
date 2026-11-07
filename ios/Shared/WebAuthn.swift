@@ -21,6 +21,10 @@ enum WebAuthn {
 
     // MARK: Key generation
 
+    static func credentialID() -> Data {
+        SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+    }
+
     /// Returns (privateKey: PKCS8 base64, publicKey: raw 65-byte base64).
     static func generateKeyPair() -> (privateKey: String, publicKey: String) {
         let key = P256.Signing.PrivateKey()
