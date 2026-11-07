@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 final class VaultUITests: XCTestCase {
     func testOTPSetupAndDeletion() {
@@ -25,7 +26,13 @@ final class VaultUITests: XCTestCase {
         entry.swipeLeft()
         app.buttons["Delete"].tap()
         XCTAssertTrue(app.buttons["Delete Example"].waitForExistence(timeout: 5))
-        app.buttons["Cancel"].tap()
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            // iPad confirmation popovers dismiss when tapped outside.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9)).tap()
+        } else {
+            app.buttons["Cancel"].tap()
+        }
+        XCTAssertFalse(app.buttons["Delete Example"].exists)
         XCTAssertTrue(entry.exists)
         entry.swipeLeft()
         app.buttons["Delete"].tap()
