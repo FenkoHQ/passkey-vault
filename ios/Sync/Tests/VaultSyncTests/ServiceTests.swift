@@ -105,10 +105,16 @@ private final class TestTrustDelegate: NSObject, URLSessionDelegate, @unchecked 
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               challenge.protectionSpace.host == "localhost",
               let trust = challenge.protectionSpace.serverTrust,
-              let certificate = SecCertificateCreateWithData(nil, certificate as CFData),
-              SecTrustSetAnchorCertificates(trust, [certificate] as CFArray) == errSecSuccess,
-              SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess,
-              SecTrustEvaluateWithError(trust, nil) else {
+              let certificate = SecCertificateCreateWithData(nil, certificate as CFData) else {
+            print("Unexpected local TLS challenge: \(challenge.protectionSpace.authenticationMethod), \(challenge.protectionSpace.host)")
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        let anchors = SecTrustSetAnchorCertificates(trust, [certificate] as CFArray)
+        let exclusive = SecTrustSetAnchorCertificatesOnly(trust, true)
+        var error: CFError?
+        guard anchors == errSecSuccess, exclusive == errSecSuccess, SecTrustEvaluateWithError(trust, &error) else {
+            print("Local TLS trust failed: \(anchors), \(exclusive), \(String(describing: error))")
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
