@@ -38,7 +38,7 @@ public final class SyncChunks {
             let start = index * chunkBytes
             let part = String(decoding: bytes[start..<min(start + chunkBytes, bytes.count)], as: UTF8.self)
             let chunk = Chunk(version: SyncCipher.version, digest: digest, index: index, total: total, data: part)
-            return String(decoding: try JSONEncoder().encode(chunk), as: UTF8.self)
+            return String(decoding: try SyncJSON.encode(chunk), as: UTF8.self)
         }
     }
 

@@ -83,7 +83,7 @@ public final class SyncCipher {
 
     public func encryptMessage(_ plaintext: Data) throws -> String {
         let box = try seal(plaintext)
-        return String(decoding: try JSONEncoder().encode(MessageBox(n: box.nonce, c: box.ciphertext)), as: UTF8.self)
+        return String(decoding: try SyncJSON.encode(MessageBox(n: box.nonce, c: box.ciphertext)), as: UTF8.self)
     }
 
     public func decryptMessage(_ content: String) throws -> Data {
@@ -100,7 +100,7 @@ public final class SyncCipher {
         let signature = try signingKey.signature(message: &message, auxiliaryRand: &auxiliary, strict: true)
         let event = RelayEvent(id: digest.hex, pubkey: author, createdAt: createdAt, kind: Self.eventKind,
                                tags: tags, content: content, sig: signature.dataRepresentation.hex)
-        guard try JSONEncoder().encode(event).count <= Self.maxEventBytes else { throw SyncError.capacity }
+        guard try SyncJSON.encode(event).count <= Self.maxEventBytes else { throw SyncError.capacity }
         return event
     }
 
@@ -111,7 +111,7 @@ public final class SyncCipher {
                                           tags: event.tags, content: event.content),
               digest.hex == event.id,
               let parsed = try? P256K.Schnorr.SchnorrSignature(dataRepresentation: signature),
-              let encoded = try? JSONEncoder().encode(event), encoded.count <= Self.maxEventBytes else {
+              let encoded = try? SyncJSON.encode(event), encoded.count <= Self.maxEventBytes else {
             return false
         }
         var bytes = Array(digest)

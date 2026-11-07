@@ -87,4 +87,13 @@ final class SyncTests: XCTestCase {
         let signed = try cipher.sign(content: String(repeating: "/", count: 12_000), tags: [], createdAt: 1)
         XCTAssertTrue(cipher.verify(signed))
     }
+
+    func testExportForBrowserVerification() throws {
+        guard let output = ProcessInfo.processInfo.environment["SYNC_INTEROP_OUT"] else { return }
+        let fixture = try fixture()
+        let cipher = try SyncCipher(seedHash: fixture.seedHash)
+        let content = try cipher.encryptMessage(Data(fixture.plaintext.utf8))
+        let event = try cipher.sign(content: content, tags: fixture.event.tags, createdAt: fixture.event.createdAt)
+        try JSONEncoder().encode(event).write(to: URL(fileURLWithPath: output), options: .atomic)
+    }
 }
