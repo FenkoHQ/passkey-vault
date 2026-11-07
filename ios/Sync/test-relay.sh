@@ -11,7 +11,8 @@ cleanup() {
 }
 trap cleanup EXIT
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=localhost' \
-  -addext 'subjectAltName=DNS:localhost' -keyout "$OUT/key.pem" -out "$OUT/cert.pem" >/dev/null 2>&1
+  -addext 'subjectAltName=DNS:localhost' -addext 'extendedKeyUsage=serverAuth' \
+  -keyout "$OUT/key.pem" -out "$OUT/cert.pem" >/dev/null 2>&1
 openssl x509 -in "$OUT/cert.pem" -outform der -out "$OUT/cert.der"
 cd "$ROOT"
 node ios/Sync/local-relay.mjs "$OUT/cert.pem" "$OUT/key.pem" "$OUT/ready" >"$OUT/relay.log" 2>&1 &
