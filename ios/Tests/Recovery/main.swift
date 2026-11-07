@@ -17,7 +17,8 @@ if String(decoding: plaintext, as: UTF8.self).contains(seed) {
 let deletion = ["id": record.id, "kind": "passkey", "deletedAt": record.createdAt + 1] as [String: Any]
 let config = String(decoding: try JSONSerialization.data(withJSONObject: ["deletions": [deletion]]), as: UTF8.self)
 try vault.saveSnapshotFromWeb(passkeys: nil, totp: nil, syncConfig: config, syncDevices: nil, customRelays: nil)
-precondition(try vault.loadPasskeys().isEmpty, "Test deletion did not apply")
+let remaining = try vault.loadPasskeys()
+precondition(remaining.isEmpty, "Test deletion did not apply")
 try vault.importBackup(plaintext)
 if try vault.findPasskey(credentialId: record.credentialId) == nil {
     failures.append("Explicit backup restore could not restore a deleted credential")
