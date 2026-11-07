@@ -27,6 +27,7 @@ struct VaultHomeView: View {
     @State private var document: BackupDocument?
     @State private var addingOTP = false
     @State private var deleting: VaultItem?
+    @State private var clipboard = VaultClipboard()
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private let amber = Color(red: 0.96, green: 0.65, blue: 0.14)
 
@@ -66,6 +67,8 @@ struct VaultHomeView: View {
                 importing = false
                 addingOTP = false
                 deleting = nil
+                // Allow pasting into another app after backgrounding locks the vault.
+                if scenePhase == .active { clipboard.clear() }
             }
         }
         .overlay {
@@ -140,7 +143,15 @@ struct VaultHomeView: View {
                             Text(item.title).font(.custom("Saira", size: 19, relativeTo: .headline))
                             Text(item.account).font(.subheadline).foregroundStyle(.secondary)
                             if let code = item.code ?? model.issuedCodes[item.id] {
-                                Text(code).font(.title2.monospacedDigit()).textSelection(.enabled)
+                                HStack {
+                                    Text(code).font(.title2.monospacedDigit())
+                                    Button("Copy code", systemImage: "doc.on.doc") {
+                                        clipboard.copyCode(code)
+                                        model.touch()
+                                    }
+                                    .labelStyle(.iconOnly)
+                                    .buttonStyle(.borderless)
+                                }
                             }
                             if item.kind == .hotp {
                                 Button(model.issuedCodes[item.id] == nil ? "Generate code" : "Next code") {
@@ -200,6 +211,7 @@ struct VaultHomeView: View {
                 }
                 Section("Security") {
                     Text("The vault locks when you leave the app or after five minutes without activity.")
+                    Text("Copied codes stay on this device and expire after 30 seconds.")
                     Button("Lock vault") { model.lock() }
                 }
             }
