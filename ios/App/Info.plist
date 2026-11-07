@@ -32,6 +32,13 @@
 	</array>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Fenko Vault uses Face ID to unlock your passkeys and 2FA codes.</string>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Fenko Vault uses the camera to scan authenticator setup codes.</string>
 	<key>UIAppFonts</key>
