@@ -1,0 +1,26 @@
+{
+  "entropy": "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+  "phrase": "audit vanish execute note pledge rotate bundle stand regular burden reunion tide",
+  "seedHash": "4179529caf32c8cca4a1772697d3c8b15837a02eefe85cd8f9483480e663f2f1",
+  "chainID": "4179529caf32c8cca4a1772697d3c8b1",
+  "author": "31c97d2c1afb933c17a1b3f0050fd6c34524b6ef6a14b0581b920ee6bd357fe0",
+  "plaintext": "{\"type\":\"announce\",\"chainId\":\"4179529caf32c8cca4a1772697d3c8b1\",\"deviceName\":\"Phone / 🔑\",\"line\":\"\\n\"}",
+  "event": {
+    "id": "a7e3c7e78ad8851e4e46b2033779b1c2099ec1bce2097a8b881439c2f1a926b3",
+    "pubkey": "31c97d2c1afb933c17a1b3f0050fd6c34524b6ef6a14b0581b920ee6bd357fe0",
+    "created_at": 1700000000,
+    "kind": 30078,
+    "tags": [
+      [
+        "d",
+        "pksync-v4-4179529caf32c8cca4a1772697d3c8b1"
+      ],
+      [
+        "t",
+        "unicode / 🔑"
+      ]
+    ],
+    "content": "{\"n\":\"BwcHBwcHBwcHBwcH\",\"c\":\"J5By5p64EKCt+Z3GLrNUc9X8P6tx8s/Zc+ZQRDnkly2bXvFnUxu546e24ztRdIpmeEicxo2arlxkB15ogORF81VwhNqMpw3v9D+tW69VZLB/hkiSBvTkrp3IBcKjQVahXXgBMNBBKKqAVc27uUMUFXYm87Rj0cW3\"}",
+    "sig": "7773ad4a01d09e1ab1487071b50079054b59965cf3026514101126c4fb97d429061bb803ab127a7348573b287b892eb24d91dda759ff239cac2de2e278db351d"
+  }
+}
