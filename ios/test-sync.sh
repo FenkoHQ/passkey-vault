@@ -25,3 +25,5 @@ xcrun swiftc "${SHARED[@]}" "$ROOT/ios/Tests/KeyImport/main.swift" -o "$OUT/test
 "$OUT/test-key-import"
 xcrun swiftc "${SHARED[@]}" "$ROOT/ios/Tests/ProviderSession/main.swift" -o "$OUT/test-provider-session"
 "$OUT/test-provider-session"
+xcrun swiftc "${SHARED[@]}" "$ROOT/ios/Tests/BackupLimits/main.swift" -o "$OUT/test-backup-limits"
+"$OUT/test-backup-limits"
