@@ -11,6 +11,12 @@ func expectFailure(_ message: String, _ operation: () throws -> Void) {
 }
 
 let directory = URL(fileURLWithPath: CommandLine.arguments[1])
+let browserKey = try JSONSerialization.jsonObject(with: Data(contentsOf: directory.appendingPathComponent("browser-key.json"))) as! [String: String]
+let importedKey = try WebAuthn.importPrivateKey(browserKey["privateKey"]!)
+require(importedKey.publicKey.x963Representation.base64EncodedString() == browserKey["publicKey"],
+        "Browser PKCS8 import changed the key")
+try importedKey.signature(for: Data("browser-key-interop".utf8)).rawRepresentation
+    .write(to: directory.appendingPathComponent("browser-key-signature.bin"))
 let password = "backup-test-🔑-café"
 let browser = try Data(contentsOf: directory.appendingPathComponent("browser.json"))
 let plaintext = try VaultBackup.decrypt(browser, password: password)

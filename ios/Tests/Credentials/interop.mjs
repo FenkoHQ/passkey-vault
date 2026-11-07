@@ -15,6 +15,11 @@ const key = async (salt) => subtle.deriveKey(
 );
 
 if (process.argv[2] === 'create') {
+  const pair = await subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  writeFileSync(join(directory, 'browser-key.json'), JSON.stringify({
+    privateKey: Buffer.from(await subtle.exportKey('pkcs8', pair.privateKey)).toString('base64'),
+    publicKey: Buffer.from(await subtle.exportKey('raw', pair.publicKey)).toString('base64'),
+  }));
   const salt = webcrypto.getRandomValues(new Uint8Array(32));
   const iv = webcrypto.getRandomValues(new Uint8Array(12));
   const data = await subtle.encrypt({ name: 'AES-GCM', iv }, await key(salt), bytes(payload));
@@ -24,6 +29,11 @@ if (process.argv[2] === 'create') {
     data: Buffer.from(data).toString('base64'),
   }));
 } else {
+  const browserKey = JSON.parse(readFileSync(join(directory, 'browser-key.json'), 'utf8'));
+  const publicKey = await subtle.importKey('raw', Buffer.from(browserKey.publicKey, 'base64'),
+    { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+  assert.equal(await subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, publicKey,
+    readFileSync(join(directory, 'browser-key-signature.bin')), bytes('browser-key-interop')), true);
   const envelope = JSON.parse(readFileSync(join(directory, 'native.json'), 'utf8'));
   const plaintext = await subtle.decrypt(
     { name: 'AES-GCM', iv: Buffer.from(envelope.iv, 'base64') },
