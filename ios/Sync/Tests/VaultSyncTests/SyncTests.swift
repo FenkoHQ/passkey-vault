@@ -80,4 +80,11 @@ final class SyncTests: XCTestCase {
                                              tags: [], createdAt: 1))
         XCTAssertThrowsError(try SyncCipher(seedHash: "bad-key"))
     }
+
+    func testRelayCapacityUsesWireJSON() throws {
+        let cipher = try SyncCipher(seedHash: fixture().seedHash)
+        // JSON.stringify leaves slashes literal; base64 can contain many of them.
+        let signed = try cipher.sign(content: String(repeating: "/", count: 12_000), tags: [], createdAt: 1)
+        XCTAssertTrue(cipher.verify(signed))
+    }
 }
