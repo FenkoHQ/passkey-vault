@@ -27,9 +27,12 @@ struct NativeSyncView: View {
                     Section {
                         Button("Leave sync chain", role: .destructive) { leaving = true }
                     } footer: {
-                        Text("Leaving keeps this device's vault entries. It does not remove copies on other devices.")
+                        Text("Leaving keeps this device's vault entries. It does not remove copies on other devices or records held by relays.")
                     }
                 } else {
+                    Section("Sync privacy") {
+                        Text("Your vault contents are encrypted before upload. Relays can see your IP address, sync identifiers and update times. They may retain these records after you leave sync.")
+                    }
                     Section("This device") {
                         TextField("Device name", text: $model.deviceName)
                     }

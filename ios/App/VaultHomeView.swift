@@ -228,7 +228,7 @@ struct VaultHomeView: View {
                 }
                 Section("Privacy and support") {
                     Text("QR codes are read on this device. Camera images are not uploaded.")
-                    Text("When you enable sync, encrypted vault updates pass through relays. Relay operators can see connection information, including your IP address.")
+                    Text("Sync encrypts your vault contents. Relays can see your IP address, sync identifiers and update times. Leaving sync does not delete records already held by relays.")
                     Link("Privacy policy", destination: VaultLinks.privacy)
                     Link("Contact support", destination: VaultLinks.support)
                     NavigationLink("Open source licenses") { OpenSourceView() }
