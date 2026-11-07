@@ -31,6 +31,9 @@ targets:
     sources:
       - path: App
       - path: Shared
+      - path: Migration/web
+        type: folder
+        buildPhase: resources
       - path: ../android/web/src/fonts/Saira.ttf
         buildPhase: resources
     settings:

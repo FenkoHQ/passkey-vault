@@ -34,7 +34,9 @@ struct VaultHomeView: View {
     init() {
         let sync = NativeSyncModel()
         _sync = StateObject(wrappedValue: sync)
-        _model = StateObject(wrappedValue: NativeVaultModel(sync: sync))
+        _model = StateObject(wrappedValue: NativeVaultModel(sync: sync, migrate: {
+            try await LegacyWebMigration().run()
+        }))
     }
 
     var body: some View {

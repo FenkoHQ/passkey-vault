@@ -18,6 +18,7 @@ final class VaultStore {
         static let syncDevices = "sync_devices"
         static let customRelays = "custom_relays"
         static let migrated = "legacy_migrated"
+        static let webMigrated = "legacy_web_migrated"
         static let legacyKeys = [passkeys, totp, syncConfig, syncDevices, customRelays]
     }
 
@@ -86,6 +87,35 @@ final class VaultStore {
 
     func loadPasskeys() throws -> [PasskeyRecord] {
         try records(archive.read()[Key.passkeys]).compactMap(PasskeyRecord.fromJSON)
+    }
+
+    func needsWebMigration() throws -> Bool {
+        try archive.read()[Key.webMigrated] != "1"
+    }
+
+    func importLegacyWeb(_ snapshot: LegacyWebSnapshot) throws {
+        let source = snapshot.values
+        try archive.transaction { values in
+            guard values[Key.webMigrated] != "1" else { return }
+            let webConfig = mergeConfig(object(source[Key.syncConfig] ?? "{}"),
+                                        ["deletions": try records(source["sync_deletions"])])
+            let config = mergeConfig(webConfig, object(values[Key.syncConfig] ?? "{}"))
+            let deletions = config["deletions"] as? [[String: Any]] ?? []
+            for (key, kind) in [(Key.passkeys, "passkey"), (Key.totp, "totp")] {
+                _ = try records(values[key])
+                values[key] = mergeEntries(values[key] ?? "[]", source[key] ?? "[]", deletions, kind)
+            }
+            values[Key.syncConfig] = try encode(config)
+            for key in [Key.syncDevices, Key.customRelays] where values[key] == nil {
+                values[key] = source[key]
+            }
+        }
+        updateCredentialIdentities(try loadPasskeys())
+    }
+
+    func finishWebMigration() throws {
+        // The caller clears WebKit only after importLegacyWeb commits successfully.
+        try archive.transaction { $0[Key.webMigrated] = "1" }
     }
 
     func savePasskeys(_ passkeys: [PasskeyRecord]) throws {

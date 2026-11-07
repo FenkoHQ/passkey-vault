@@ -57,6 +57,16 @@ func verifySession() async {
     pending?.resume(returning: true)
     await unlock.value
     precondition(delayed.session == .locked && delayedVault.unlocks == 0, "Late authentication reopened storage")
+    var migrationStarted = false
+    let migrating = NativeVaultModel(vault: TestVault(), migrate: {
+        migrationStarted = true
+        try await Task.sleep(nanoseconds: 60_000_000_000)
+    }, authenticate: { _ in true })
+    let migration = Task { await migrating.unlock() }
+    while !migrationStarted { await Task.yield() }
+    migrating.lock()
+    await migration.value
+    precondition(migrating.session == .locked, "Migration completion reopened a locked vault")
     print("iOS session lifecycle: PASS")
 }
 

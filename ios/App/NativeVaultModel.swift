@@ -37,12 +37,15 @@ final class NativeVaultModel: ObservableObject {
     private let vault: NativeVaultAccess
     private let sync: (any NativeSyncLifecycle)?
     private let authenticate: (LAContext) async throws -> Bool
+    private let migrate: () async throws -> Void
     private var context: LAContext?
+    private var migrationTask: Task<Void, Error>?
     private var generation = 0
     private var lastActivity = Date()
     private static let idleTimeout: TimeInterval = 5 * 60
 
     init(vault: NativeVaultAccess = VaultStore.shared, sync: (any NativeSyncLifecycle)? = nil,
+         migrate: @escaping () async throws -> Void = {},
          authenticate: @escaping (LAContext) async throws -> Bool = { context in
              try await context.evaluatePolicy(.deviceOwnerAuthentication,
                                               localizedReason: "Unlock your Fenko Vault")
@@ -50,6 +53,7 @@ final class NativeVaultModel: ObservableObject {
         self.vault = vault
         self.sync = sync
         self.authenticate = authenticate
+        self.migrate = migrate
     }
 
     func unlock() async {
@@ -68,6 +72,11 @@ final class NativeVaultModel: ObservableObject {
                 return
             }
             try vault.unlock(context: auth)
+            let migration = Task { try await migrate() }
+            migrationTask = migration
+            try await migration.value
+            guard generation == attempt else { return }
+            migrationTask = nil
             session = .unlocked
             touch()
             refresh()
@@ -81,6 +90,8 @@ final class NativeVaultModel: ObservableObject {
 
     func lock() {
         generation += 1
+        migrationTask?.cancel()
+        migrationTask = nil
         context?.invalidate()
         context = nil
         sync?.suspend()

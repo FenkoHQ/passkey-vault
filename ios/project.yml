@@ -26,12 +26,28 @@ settings:
     TARGETED_DEVICE_FAMILY: "1,2"
 
 targets:
+  WebMigrationTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/WebMigration
+    dependencies:
+      - target: FenkoVault
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/FenkoVault.app/FenkoVault"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
   FenkoVault:
     type: application
     platform: iOS
     sources:
       - path: App
       - path: Shared
+      - path: Migration/web
+        type: folder
+        buildPhase: resources
       - path: ../android/web/src/fonts/Saira.ttf
         buildPhase: resources
     settings:
@@ -43,6 +59,10 @@ targets:
     dependencies:
       - target: CredentialProvider
       - package: VaultSync
+
+    scheme:
+      testTargets:
+        - WebMigrationTests
 
   CredentialProvider:
     type: app-extension
