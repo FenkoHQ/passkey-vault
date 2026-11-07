@@ -1,0 +1,10 @@
+{
+  "name": "Fenko Vault",
+  "subtitle": "Passkeys and 2FA codes",
+  "description": "Keep your passkeys and two-factor authentication codes in a native vault on your iPhone or iPad. Unlock with Face ID, Touch ID, or your device passcode.\n\nCreate and use passkeys in Safari and supported apps through Password AutoFill. Add authenticator entries by scanning a QR code, pasting a setup link, or entering a setup key. Fenko Vault supports both time-based and counter-based codes.\n\nSync is optional. Link your devices with a recovery phrase to exchange encrypted vault updates without creating a cloud account. Relay operators can see connection information, but vault contents are encrypted before transmission.\n\nExport encrypted backups and restore them when needed. Keep your backup password and sync recovery phrase safe: Fenko cannot recover them for you.\n\nFenko Vault is free and open source. It stores passkeys and authenticator codes, not account passwords.",
+  "keywords": "passkey,authenticator,totp,hotp,webauthn,offline,backup,security,mfa",
+  "supportURL": "https://fenko.nz/contact/",
+  "marketingURL": "https://fenko.nz/fenko-vault/",
+  "privacyPolicyURL": "https://fenko.nz/privacy-policy/",
+  "copyright": "2026 Fenko Limited"
+}

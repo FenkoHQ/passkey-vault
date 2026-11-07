@@ -1,169 +1,179 @@
 import AuthenticationServices
 import LocalAuthentication
+import SwiftUI
 import UIKit
 
-/// AutoFill credential provider for passkeys (iOS 17+). Mirrors the Android
-/// `PasskeyCredentialProviderService`: serves WebAuthn create/get from the shared
-/// vault, signing with ES256 over `authenticatorData || clientDataHash`.
 final class CredentialProviderViewController: ASCredentialProviderViewController {
     private let vault = VaultStore.shared
+    private let session = ProviderSession()
+    private var hosted: UIViewController?
 
-    // MARK: Assertion (get)
-
-    /// We always require user verification, so the silent path defers to UI.
     override func provideCredentialWithoutUserInteraction(for credentialRequest: ASCredentialRequest) {
-        extensionContext.cancelRequest(
-            withError: ASExtensionError(.userInteractionRequired))
+        cancel(.userInteractionRequired)
     }
 
     override func prepareInterfaceToProvideCredential(for credentialRequest: ASCredentialRequest) {
         guard let request = credentialRequest as? ASPasskeyCredentialRequest,
               let identity = request.credentialIdentity as? ASPasskeyCredentialIdentity else {
-            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+            cancel(.failed)
             return
         }
-        completeAssertion(request: request, credentialID: identity.credentialID)
+        authenticate(reason: "Sign in to \(identity.relyingPartyIdentifier)") { [self] in
+            try sign(credentialID: identity.credentialID, rpId: identity.relyingPartyIdentifier,
+                     clientHash: request.clientDataHash)
+        }
     }
 
     override func prepareCredentialList(for serviceIdentifiers: [ASCredentialServiceIdentifier],
                                         requestParameters: ASPasskeyCredentialRequestParameters) {
-        // Pick the first stored passkey for the requested relying party. A fuller
-        // UI would list candidates; this auto-selects, then verifies the user.
         let rpId = requestParameters.relyingPartyIdentifier
-        let matches = vault.loadPasskeys().filter { $0.rpId == rpId }
-        guard let chosen = matches.first,
-              let credID = Base64URL.decode(chosen.credentialId) else {
-            extensionContext.cancelRequest(withError: ASExtensionError(.credentialIdentityNotFound))
-            return
+        authenticate(reason: "Choose a passkey for \(rpId)") { [self] in
+            let choices = try vault.credentials(rpId: rpId, allowed: requestParameters.allowedCredentials)
+            show(ProviderPicker(rpId: rpId, choices: choices, choose: { [weak self] id in
+                guard let self else { return }
+                do {
+                    try self.sign(credentialID: id, rpId: rpId, clientHash: requestParameters.clientDataHash)
+                } catch { self.cancel(.failed) }
+            }, cancel: { [weak self] in self?.cancel(.userCanceled) }))
         }
-        completeAssertion(parameters: requestParameters, credentialID: credID)
     }
-
-    // MARK: Registration (create)
 
     override func prepareInterface(forPasskeyRegistration registrationRequest: ASCredentialRequest) {
         guard let request = registrationRequest as? ASPasskeyCredentialRequest,
-              let identity = request.credentialIdentity as? ASPasskeyCredentialIdentity else {
-            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+              let identity = request.credentialIdentity as? ASPasskeyCredentialIdentity,
+              request.supportedAlgorithms.contains(.ES256), request.clientDataHash.count == 32 else {
+            cancel(.failed)
             return
         }
-        guard request.supportedAlgorithms.contains(.ES256) else {
-            extensionContext.cancelRequest(withError: ASExtensionError(.failed))
-            return
-        }
-        authenticateUser { [weak self] ok in
+        show(ProviderRegistration(rpId: identity.relyingPartyIdentifier, account: identity.userName,
+                                  save: { [weak self] in
             guard let self else { return }
-            guard ok else {
-                self.extensionContext.cancelRequest(withError: ASExtensionError(.userCanceled)); return
-            }
-            do {
-                let credential = try self.register(request: request, identity: identity)
+            self.authenticate(reason: "Save a passkey for \(identity.relyingPartyIdentifier)") { [self] in
+                var excluded: [Data] = []
+                if #available(iOS 18.0, *) {
+                    excluded = request.excludedCredentials?.map { $0.credentialID } ?? []
+                }
+                let result = try self.vault.register(rpId: identity.relyingPartyIdentifier, userName: identity.userName,
+                                                userHandle: identity.userHandle, excluded: excluded)
+                let credential = ASPasskeyRegistrationCredential(relyingParty: identity.relyingPartyIdentifier,
+                                                                  clientDataHash: request.clientDataHash,
+                                                                  credentialID: result.credentialID,
+                                                                  attestationObject: result.attestation)
+                self.session.cancel()
                 self.extensionContext.completeRegistrationRequest(using: credential)
-            } catch {
-                self.extensionContext.cancelRequest(withError: ASExtensionError(.failed))
             }
-        }
+        }, cancel: { [weak self] in self?.cancel(.userCanceled) }))
     }
 
-    // MARK: - Helpers
+    override func prepareInterfaceForExtensionConfiguration() {
+        show(ProviderConfiguration(done: { [weak self] in
+            self?.extensionContext.completeExtensionConfigurationRequest()
+        }))
+    }
 
-    private func completeAssertion(request: ASPasskeyCredentialRequest? = nil,
-                                   parameters: ASPasskeyCredentialRequestParameters? = nil,
-                                   credentialID: Data) {
-        let credIdB64 = Base64URL.encode(credentialID)
-        guard let passkey = vault.findPasskey(credentialId: credIdB64) else {
-            extensionContext.cancelRequest(withError: ASExtensionError(.credentialIdentityNotFound))
-            return
-        }
-        let clientDataHash = request?.clientDataHash ?? parameters?.clientDataHash ?? Data()
+    private func sign(credentialID: Data, rpId: String, clientHash: Data) throws {
+        let result = try vault.assertion(credentialID: credentialID, rpId: rpId, clientHash: clientHash)
+        let credential = ASPasskeyAssertionCredential(userHandle: result.userHandle, relyingParty: rpId,
+                                                       signature: result.signature, clientDataHash: clientHash,
+                                                       authenticatorData: result.authenticatorData,
+                                                       credentialID: credentialID)
+        session.cancel()
+        extensionContext.completeAssertionRequest(using: credential)
+    }
 
-        authenticateUser { [weak self] ok in
+    private func authenticate(reason: String, operation: @escaping () throws -> Void) {
+        Task { [weak self] in
             guard let self else { return }
-            guard ok else {
-                self.extensionContext.cancelRequest(withError: ASExtensionError(.userCanceled)); return
-            }
             do {
-                var updated = passkey
-                updated.counter += 1
-                let authData = WebAuthn.authenticatorData(
-                    rpId: updated.rpId, credentialId: nil, cosePublicKey: nil,
-                    includeAttestedCredentialData: false, counter: updated.counter,
-                    backupFlags: updated.backupFlagBits)
-                let signature = try WebAuthn.assertionSignature(
-                    privateKeyPKCS8B64: updated.privateKey,
-                    authenticatorData: authData, clientDataHash: clientDataHash)
-                self.vault.upsert(updated)   // persist the bumped counter
+                try await session.perform(reason: reason, operation: operation)
+            } catch ProviderSessionError.stale {
+                return
+            } catch ProviderSessionError.denied {
+                cancel(.userCanceled)
+            } catch VaultError.excludedCredential {
+                if #available(iOS 18.0, *) { cancel(.matchedExcludedCredential) }
+                else { cancel(.failed) }
+            } catch { cancel(.failed) }
+        }
+    }
 
-                let userHandle = updated.userId.flatMap(Base64URL.decode) ?? Data()
-                let credential = ASPasskeyAssertionCredential(
-                    userHandle: userHandle,
-                    relyingParty: updated.rpId,
-                    signature: signature,
-                    clientDataHash: clientDataHash,
-                    authenticatorData: authData,
-                    credentialID: credentialID)
-                self.extensionContext.completeAssertionRequest(using: credential)
-            } catch {
-                self.extensionContext.cancelRequest(withError: ASExtensionError(.failed))
+    private func cancel(_ code: ASExtensionError.Code) {
+        session.cancel()
+        extensionContext.cancelRequest(withError: ASExtensionError(code))
+    }
+
+    private func show<Content: View>(_ content: Content) {
+        hosted?.willMove(toParent: nil)
+        hosted?.view.removeFromSuperview()
+        hosted?.removeFromParent()
+        let controller = UIHostingController(rootView: content)
+        addChild(controller)
+        view.addSubview(controller.view)
+        controller.view.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            controller.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            controller.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            controller.view.topAnchor.constraint(equalTo: view.topAnchor),
+            controller.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        controller.didMove(toParent: self)
+        hosted = controller
+    }
+}
+
+private struct ProviderPicker: View {
+    let rpId: String
+    let choices: [ProviderCredential]
+    let choose: (Data) -> Void
+    let cancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            List(choices) { choice in
+                Button { choose(choice.id) } label: {
+                    Label(choice.account, systemImage: "key.fill").padding(.vertical, 8)
+                }
             }
+            .overlay {
+                if choices.isEmpty {
+                    ContentUnavailableView("No matching passkey", systemImage: "key",
+                                           description: Text("Open Fenko Vault to import or sync your passkeys."))
+                }
+            }
+            .navigationTitle(rpId)
+            .toolbar { Button("Cancel", action: cancel) }
         }
     }
+}
 
-    private func register(request: ASPasskeyCredentialRequest,
-                          identity: ASPasskeyCredentialIdentity) throws -> ASPasskeyRegistrationCredential {
-        let keys = WebAuthn.generateKeyPair()
-        var credentialIDBytes = Data(count: 32)
-        _ = credentialIDBytes.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) }
+private struct ProviderRegistration: View {
+    let rpId: String
+    let account: String
+    let save: () -> Void
+    let cancel: () -> Void
 
-        guard let publicKeyRaw = Base64Std.decode(keys.publicKey) else {
-            throw WebAuthnError.badPublicKey
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                Image(systemName: "key.fill").font(.largeTitle)
+                Text("Save a passkey?").font(.title)
+                Text(rpId).font(.headline)
+                Text(account).foregroundStyle(.secondary)
+                Button("Save in Fenko Vault", action: save).buttonStyle(.borderedProminent)
+            }.padding()
+                .toolbar { Button("Cancel", action: cancel) }
         }
-        let cose = try WebAuthn.cosePublicKey(rawPublicKey: publicKeyRaw)
-        // The vault syncs its passkeys, so a new one is backup eligible. BE is
-        // fixed for the credential's life; BS stays off until it is backed up.
-        let backupFlags: UInt8 = 0x08
-        let authData = WebAuthn.authenticatorData(
-            rpId: identity.relyingPartyIdentifier,
-            credentialId: credentialIDBytes, cosePublicKey: cose,
-            includeAttestedCredentialData: true, counter: 0,
-            backupFlags: backupFlags)
-        let attestationObject = WebAuthn.attestationObject(authData: authData)
-
-        var record = PasskeyRecord(
-            id: Base64URL.encode(credentialIDBytes),
-            credentialId: Base64URL.encode(credentialIDBytes),
-            rpId: identity.relyingPartyIdentifier,
-            origin: "https://\(identity.relyingPartyIdentifier)",
-            userId: identity.userHandle.isEmpty ? nil : Base64URL.encode(identity.userHandle),
-            userName: identity.userName,
-            displayName: identity.userName,
-            privateKey: keys.privateKey,
-            publicKey: keys.publicKey,
-            createdAt: Date().timeIntervalSince1970 * 1000,
-            counter: 0)
-        record.backupEligible = true
-        record.backupState = false
-        record.backupSource = "created"
-        vault.upsert(record)
-
-        return ASPasskeyRegistrationCredential(
-            relyingParty: identity.relyingPartyIdentifier,
-            clientDataHash: request.clientDataHash,
-            credentialID: credentialIDBytes,
-            attestationObject: attestationObject)
     }
+}
 
-    private func authenticateUser(completion: @escaping (Bool) -> Void) {
-        let context = LAContext()
-        context.localizedReason = "Use a passkey from Fenko Vault"
-        var error: NSError?
-        let policy: LAPolicy = .deviceOwnerAuthentication
-        guard context.canEvaluatePolicy(policy, error: &error) else {
-            DispatchQueue.main.async { completion(false) }
-            return
-        }
-        context.evaluatePolicy(policy, localizedReason: context.localizedReason) { ok, _ in
-            DispatchQueue.main.async { completion(ok) }
-        }
+private struct ProviderConfiguration: View {
+    let done: () -> Void
+    var body: some View {
+        VStack(spacing: 20) {
+            Label("Fenko Vault", systemImage: "key.fill").font(.title)
+            Text("Open Fenko Vault to unlock your vault and import your credentials. You can then save and use passkeys in apps and Safari.")
+                .multilineTextAlignment(.center)
+            Button("Done", action: done).buttonStyle(.borderedProminent)
+        }.padding(32)
     }
 }

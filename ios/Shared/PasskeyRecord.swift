@@ -107,7 +107,11 @@ struct PasskeyRecord: Codable {
     }
 }
 
-/// One TOTP/2FA entry. Display + code generation only; secrets stay in the App Group.
+enum OTPKind: String, Codable {
+    case totp, hotp
+}
+
+// Canonical entries use secretB64; retain support for older base32 imports.
 struct TOTPEntry: Codable, Identifiable {
     var id: String
     var issuer: String
@@ -117,17 +121,30 @@ struct TOTPEntry: Codable, Identifiable {
     var algorithm: String   // SHA1 | SHA256 | SHA512
     var digits: Int
     var period: Int
+    var secretB64: String? = nil
+    var kind: OTPKind = .totp
+    var counter: UInt64 = 0
 
     static func fromJSON(_ obj: [String: Any]) -> TOTPEntry? {
-        guard let secret = obj["secret"] as? String, !secret.isEmpty else { return nil }
-        return TOTPEntry(
+        let secret = obj["secret"] as? String ?? ""
+        let secretB64 = obj["secretB64"] as? String
+        guard let kind = OTPKind(rawValue: obj["type"] as? String ?? "totp") else { return nil }
+        let counter = (obj["counter"] as? NSNumber)?.doubleValue ?? 0
+        guard counter.isFinite, counter >= 0, counter <= Double(TOTP.maxCounter), counter.rounded(.down) == counter else {
+            return nil
+        }
+        let entry = TOTPEntry(
             id: (obj["id"] as? String) ?? UUID().uuidString,
             issuer: (obj["issuer"] as? String) ?? "",
             account: (obj["account"] as? String) ?? (obj["label"] as? String) ?? "",
             secret: secret,
             algorithm: (obj["algorithm"] as? String) ?? "SHA1",
             digits: (obj["digits"] as? Int) ?? 6,
-            period: (obj["period"] as? Int) ?? 30
+            period: (obj["period"] as? Int) ?? 30,
+            secretB64: secretB64,
+            kind: kind,
+            counter: UInt64(counter)
         )
+        return TOTP.isValid(entry) ? entry : nil
     }
 }

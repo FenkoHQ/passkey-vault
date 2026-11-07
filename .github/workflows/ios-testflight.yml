@@ -50,10 +50,13 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Build shared web bundle
+      - name: Test native vault and sync
         run: |
-          npm ci
-          bash ios/build-web.sh
+          bash ios/test-sync.sh
+          npm ci --ignore-scripts --no-audit --no-fund
+          node ios/Sync/generate-words.mjs --check
+          SYNC_INTEROP_OUT="$RUNNER_TEMP/native-sync-event.json" bash ios/Sync/test-relay.sh
+          node ios/Sync/verify-native.mjs "$RUNNER_TEMP/native-sync-event.json"
 
       - name: Resolve version
         id: ver
@@ -62,18 +65,21 @@ jobs:
           VERSION_INPUT: ${{ github.event.inputs.version }}
         run: |
           if [ "${GITHUB_REF}" != "${GITHUB_REF#refs/tags/ios-v}" ]; then
-            echo "name=${GITHUB_REF#refs/tags/ios-v}" >> "$GITHUB_OUTPUT"
+            release_version="${GITHUB_REF#refs/tags/ios-v}"
           else
-            echo "name=${VERSION_INPUT}" >> "$GITHUB_OUTPUT"
+            release_version="$VERSION_INPUT"
           fi
+          if [[ ! "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo 'Version must contain three numeric components.' >&2
+            exit 1
+          fi
+          echo "name=$release_version" >> "$GITHUB_OUTPUT"
 
       - name: Generate Xcode project
         working-directory: ios
         env:
           DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          MARKETING_VERSION="${{ steps.ver.outputs.name }}" \
-          CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
           xcodegen generate
 
       - name: Install App Store Connect API key
@@ -81,6 +87,7 @@ jobs:
           ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
         run: |
+          umask 077
           mkdir -p ~/private_keys
           echo "$ASC_KEY_P8_BASE64" | base64 -d > ~/private_keys/AuthKey_${ASC_KEY_ID}.p8
 
@@ -89,6 +96,7 @@ jobs:
         run: |
           xcodebuild -project FenkoVault.xcodeproj \
             -scheme FenkoVault \
+            -onlyUsePackageVersionsFromResolvedFile \
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/FenkoVault.xcarchive" \
@@ -99,6 +107,7 @@ jobs:
             MARKETING_VERSION="${{ steps.ver.outputs.name }}" \
             CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
             archive
+          bash check-archive.sh "$RUNNER_TEMP/FenkoVault.xcarchive"
 
       - name: Export IPA
         working-directory: ios
@@ -130,3 +139,10 @@ jobs:
             -f "$RUNNER_TEMP/export/FenkoVault.ipa" \
             --apiKey ${{ secrets.ASC_KEY_ID }} \
             --apiIssuer ${{ secrets.ASC_ISSUER_ID }}
+
+      - name: Remove signing key
+        if: always()
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          rm -f "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"

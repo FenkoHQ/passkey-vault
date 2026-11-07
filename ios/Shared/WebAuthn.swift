@@ -21,6 +21,10 @@ enum WebAuthn {
 
     // MARK: Key generation
 
+    static func credentialID() -> Data {
+        SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+    }
+
     /// Returns (privateKey: PKCS8 base64, publicKey: raw 65-byte base64).
     static func generateKeyPair() -> (privateKey: String, publicKey: String) {
         let key = P256.Signing.PrivateKey()
@@ -45,8 +49,7 @@ enum WebAuthn {
 
     static func importPrivateKey(_ b64: String) throws -> P256.Signing.PrivateKey {
         guard let der = Base64Std.decode(b64) else { throw WebAuthnError.badPrivateKey }
-        let scalar = try extractP256Scalar(from: der)
-        return try P256.Signing.PrivateKey(rawRepresentation: scalar)
+        return try P256.Signing.PrivateKey(derRepresentation: der)
     }
 
     // MARK: Authenticator data
@@ -131,26 +134,7 @@ enum WebAuthn {
         if v >= 0 { cborType(&out, 0, v) } else { cborType(&out, 1, -1 - v) }
     }
 
-    // MARK: - PKCS8 <-> raw P-256 (CryptoKit has no direct PKCS8 support)
-
-    /// Extracts the 32-byte private scalar from a P-256 PKCS8 DER blob.
-    /// The inner ECPrivateKey is `SEQUENCE { version 1, privateKey OCTET STRING(32), ... }`,
-    /// so the scalar is uniquely anchored by the preamble `02 01 01 04 20`. Anchoring on
-    /// this (rather than a bare `04 20`) avoids matching the curve coefficients that appear
-    /// when a key is encoded with explicit — rather than named-curve — EC parameters.
-    private static func extractP256Scalar(from der: Data) throws -> Data {
-        let bytes = [UInt8](der)
-        let anchor: [UInt8] = [0x02, 0x01, 0x01, 0x04, 0x20]
-        var i = 0
-        while i + anchor.count + 32 <= bytes.count {
-            if Array(bytes[i..<(i + anchor.count)]) == anchor {
-                let start = i + anchor.count
-                return Data(bytes[start..<(start + 32)])
-            }
-            i += 1
-        }
-        throw WebAuthnError.badPrivateKey
-    }
+    // MARK: - PKCS8 export
 
     /// Wraps a raw scalar + raw public key into canonical P-256 PKCS8 DER,
     /// matching WebCrypto's `exportKey('pkcs8')` output layout.

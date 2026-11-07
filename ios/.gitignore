@@ -3,7 +3,7 @@
 *.xcworkspace/
 
 # Generated web bundle (run build-web.sh to regenerate from android/web/src)
-web/
+/web/
 
 # Build output
 build/
