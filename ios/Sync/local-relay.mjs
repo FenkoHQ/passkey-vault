@@ -15,6 +15,7 @@ const server = createServer({ cert: readFileSync(process.argv[2]), key: readFile
   response.writeHead(NOT_FOUND).end();
 });
 const sockets = new WebSocketServer({ server, maxPayload: MAX_FRAME });
+server.on('tlsClientError', error => process.stderr.write(`Local relay TLS error: ${error.message}\n`));
 const subscriptions = new Map();
 const stored = new Map();
 const matches = (event, filters) => filters.some(filter => {
@@ -26,6 +27,7 @@ const matches = (event, filters) => filters.some(filter => {
 });
 const send = (socket, value) => socket.send(JSON.stringify(value));
 sockets.on('connection', socket => {
+  process.stdout.write('Local relay connected\n');
   const active = new Map();
   subscriptions.set(socket, active);
   socket.on('close', () => subscriptions.delete(socket));

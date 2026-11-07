@@ -116,6 +116,26 @@ private final class TestTrustDelegate: NSObject, URLSessionDelegate, @unchecked 
     }
 }
 
+private final class TestTLSConnection: RelayConnection {
+    private let base: URLRelayConnection
+    init(url: URL, session: URLSession) { base = URLRelayConnection(url: url, session: session) }
+    func send(_ text: String) async throws {
+        do { try await base.send(text) }
+        catch {
+            print("Local TLS send failed: \(error)")
+            throw error
+        }
+    }
+    func receive() async throws -> String {
+        do { return try await base.receive() }
+        catch {
+            print("Local TLS receive failed: \(error)")
+            throw error
+        }
+    }
+    func close() async { await base.close() }
+}
+
 @MainActor
 final class ServiceTests: XCTestCase {
     private func config() throws -> RelaySyncConfig {
@@ -200,7 +220,7 @@ final class ServiceTests: XCTestCase {
         let trust = TestTrustDelegate(certificate: try Data(contentsOf: URL(fileURLWithPath: path)))
         let open: @Sendable (URL) -> any RelayConnection = { url in
             let session = URLSession(configuration: .ephemeral, delegate: trust, delegateQueue: nil)
-            return URLRelayConnection(url: url, session: session)
+            return TestTLSConnection(url: url, session: session)
         }
         let firstStore = TestSyncStorage(snapshot: Data("{\"passkeys\":[{\"id\":\"native-tls-credential\"}],\"totpEntries\":[]}".utf8))
         let secondStore = TestSyncStorage()

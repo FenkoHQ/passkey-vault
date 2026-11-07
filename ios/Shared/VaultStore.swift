@@ -292,12 +292,24 @@ final class VaultStore {
             VaultItem(id: $0.id, kind: .passkey, title: $0.rpId, account: $0.userName, code: nil)
         }
         let codes = try loadTOTP().map { entry in
-            let valid = [6, 8].contains(entry.digits) && entry.period > 0
-            return VaultItem(id: entry.id, kind: .totp,
+            return VaultItem(id: entry.id, kind: entry.kind == .hotp ? .hotp : .totp,
                              title: entry.issuer.isEmpty ? "2FA code" : entry.issuer,
-                             account: entry.account, code: valid ? TOTP.code(for: entry, at: date) : nil)
+                             account: entry.account, code: entry.kind == .totp ? TOTP.code(for: entry, at: date) : nil)
         }
         return (passkeys + codes).sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    func issueHOTP(_ id: String) throws -> String {
+        try archive.transaction { values in
+            var entries = try records(values[Key.totp])
+            guard let index = entries.firstIndex(where: { $0["id"] as? String == id }),
+                  let entry = TOTPEntry.fromJSON(entries[index]), entry.kind == .hotp,
+                  entry.counter < TOTP.maxCounter, let code = TOTP.code(for: entry) else { throw VaultError.invalidData }
+            entries[index]["counter"] = entry.counter + 1
+            entries[index]["lastUsed"] = Date().timeIntervalSince1970 * 1000
+            values[Key.totp] = try encode(entries)
+            return code
+        }
     }
 
     func exportBackup(password: String) throws -> Data {

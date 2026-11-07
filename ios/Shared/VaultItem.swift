@@ -3,6 +3,7 @@ import Foundation
 enum VaultItemKind: String {
     case passkey
     case totp
+    case hotp
 }
 
 // Views receive labels and codes, never passkey private keys or OTP seeds.

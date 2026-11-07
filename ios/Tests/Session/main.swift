@@ -12,6 +12,7 @@ final class TestVault: NativeVaultAccess {
     }
     func exportBackup(password: String) throws -> Data { Data() }
     func importFile(_ url: URL, password: String) throws -> Int { 0 }
+    func issueHOTP(_ id: String) throws -> String { "123456" }
 }
 
 @MainActor

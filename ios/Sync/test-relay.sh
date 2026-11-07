@@ -4,6 +4,8 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/vault-relay.XXXXXX")"
 RELAY_PID=""
 cleanup() {
+  local status=$?
+  if [ "$status" -ne 0 ] && [ -f "$OUT/relay.log" ]; then cat "$OUT/relay.log"; fi
   if [ -n "$RELAY_PID" ]; then kill "$RELAY_PID" 2>/dev/null || true; fi
   rm -rf "$OUT"
 }

@@ -121,8 +121,13 @@ struct VaultHomeView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(item.title).font(.custom("Saira", size: 19, relativeTo: .headline))
                             Text(item.account).font(.subheadline).foregroundStyle(.secondary)
-                            if let code = item.code {
+                            if let code = item.code ?? model.issuedCodes[item.id] {
                                 Text(code).font(.title2.monospacedDigit()).textSelection(.enabled)
+                            }
+                            if item.kind == .hotp {
+                                Button(model.issuedCodes[item.id] == nil ? "Generate code" : "Next code") {
+                                    model.issueHOTP(item.id)
+                                }.buttonStyle(.borderless)
                             }
                         }
                         .padding(.vertical, 6)

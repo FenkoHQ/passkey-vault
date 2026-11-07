@@ -8,6 +8,7 @@ protocol NativeVaultAccess {
     func items(at date: Date) throws -> [VaultItem]
     func exportBackup(password: String) throws -> Data
     func importFile(_ url: URL, password: String) throws -> Int
+    func issueHOTP(_ id: String) throws -> String
 }
 
 extension VaultStore: NativeVaultAccess {}
@@ -29,6 +30,7 @@ final class NativeVaultModel: ObservableObject {
 
     @Published private(set) var session: Session = .locked
     @Published private(set) var items: [VaultItem] = []
+    @Published private(set) var issuedCodes: [String: String] = [:]
     @Published var message: String?
     private let vault: NativeVaultAccess
     private let sync: (any NativeSyncLifecycle)?
@@ -82,6 +84,7 @@ final class NativeVaultModel: ObservableObject {
         sync?.suspend()
         vault.lock()
         items = []
+        issuedCodes = [:]
         session = .locked
     }
 
@@ -102,6 +105,8 @@ final class NativeVaultModel: ObservableObject {
         guard session == .unlocked else { return }
         do {
             items = try vault.items(at: Date())
+            let ids = Set(items.filter { $0.kind == .hotp }.map(\.id))
+            issuedCodes = issuedCodes.filter { ids.contains($0.key) }
         } catch {
             lock()
             message = error.localizedDescription
@@ -112,6 +117,15 @@ final class NativeVaultModel: ObservableObject {
         guard session == .unlocked else { throw VaultError.locked }
         touch()
         return try vault.exportBackup(password: password)
+    }
+
+    func issueHOTP(_ id: String) {
+        guard session == .unlocked else { return }
+        do {
+            issuedCodes[id] = try vault.issueHOTP(id)
+            touch()
+            sync?.changed()
+        } catch { message = "Could not generate the next code. Try again." }
     }
 
     func restore(url: URL, password: String) {
