@@ -36,4 +36,43 @@ if let entry = TOTPEntry.fromJSON(canonical) {
     require(TOTP.code(for: entry, at: Date(timeIntervalSince1970: -1)) == nil, "Pre-epoch timestamp accepted")
 }
 precondition(failures.isEmpty, failures.joined(separator: "; "))
+
+let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+defer { try? FileManager.default.removeItem(at: directory) }
+let archive = VaultArchive(directory: directory)
+let key = Data(repeating: 19, count: 32)
+try archive.unlock(key: key)
+let vault = VaultStore(archive: archive)
+canonical["type"] = "hotp"
+canonical["digits"] = 6
+canonical["updatedAt"] = 5
+canonical["futureField"] = "keep"
+try vault.importBackup(JSONSerialization.data(withJSONObject: ["totpEntries": [canonical]]))
+require(try vault.items().first?.kind == .hotp && vault.items().first?.code == nil,
+        "HOTP was previewed without committing its counter")
+require(try vault.issueHOTP("otp") == "755224", "First HOTP issue differs from RFC 4226")
+require(try vault.issueHOTP("otp") == "287082", "HOTP counter did not advance")
+
+let peerArchive = VaultArchive(directory: directory)
+try peerArchive.unlock(key: key)
+let peer = VaultStore(archive: peerArchive)
+let lock = NSLock()
+var issued: [String] = []
+DispatchQueue.concurrentPerform(iterations: 20) { index in
+    let code = try! (index.isMultiple(of: 2) ? vault : peer).issueHOTP("otp")
+    lock.lock()
+    issued.append(code)
+    lock.unlock()
+}
+require(Set(issued).count == 20, "Concurrent HOTP issuers reused a code")
+require(try vault.loadTOTP().first?.counter == 22, "Concurrent HOTP counter advances were lost")
+let snapshot = try JSONSerialization.jsonObject(with: Data(vault.snapshotJSON().utf8)) as! [String: Any]
+let record = (snapshot["totpEntries"] as! [[String: Any]])[0]
+require(record["updatedAt"] as? Int == 5 && record["futureField"] as? String == "keep", "HOTP issue changed unrelated fields")
+vault.lock()
+do {
+    _ = try vault.issueHOTP("otp")
+    failures.append("Locked vault issued an HOTP code")
+} catch {}
+precondition(failures.isEmpty, failures.joined(separator: "; "))
 print("iOS OTP compatibility: PASS")
