@@ -69,6 +69,19 @@ require(try vault.loadTOTP().first?.counter == 22, "Concurrent HOTP counter adva
 let snapshot = try JSONSerialization.jsonObject(with: Data(vault.snapshotJSON().utf8)) as! [String: Any]
 let record = (snapshot["totpEntries"] as! [[String: Any]])[0]
 require(record["updatedAt"] as? Int == 5 && record["futureField"] as? String == "keep", "HOTP issue changed unrelated fields")
+let setup = try OTPSetup.fromURI("otpauth://totp/Example:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Example")
+try vault.addOTP(setup)
+let added = try vault.loadTOTP().first { $0.account == "alice" }!
+require(TOTP.code(for: added, at: Date(timeIntervalSince1970: 59)) == "287082", "OTP setup changed the secret")
+let beforeDeletion = try vault.syncSnapshot()
+try vault.deleteItem(added.id, kind: .totp)
+require(try !vault.loadTOTP().contains { $0.id == added.id }, "OTP deletion retained the entry")
+try vault.importBackup(beforeDeletion)
+require(try vault.loadTOTP().contains { $0.id == added.id }, "Explicit OTP recovery did not restore the entry")
+do {
+    _ = try OTPSetup.fromURI("otpauth://totp/alice?secret=AAAA&secret=BBBB")
+    failures.append("OTP setup accepted duplicate secrets")
+} catch {}
 vault.lock()
 do {
     _ = try vault.issueHOTP("otp")

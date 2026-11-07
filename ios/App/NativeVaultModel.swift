@@ -9,6 +9,8 @@ protocol NativeVaultAccess {
     func exportBackup(password: String) throws -> Data
     func importFile(_ url: URL, password: String) throws -> Int
     func issueHOTP(_ id: String) throws -> String
+    func addOTP(_ setup: OTPSetup) throws
+    func deleteItem(_ id: String, kind: VaultItemKind) throws
 }
 
 extension VaultStore: NativeVaultAccess {}
@@ -126,6 +128,31 @@ final class NativeVaultModel: ObservableObject {
             touch()
             sync?.changed()
         } catch { message = "Could not generate the next code. Try again." }
+    }
+
+    func addOTP(_ setup: OTPSetup) -> Bool {
+        guard session == .unlocked else { return false }
+        do {
+            try vault.addOTP(setup)
+            touch()
+            refresh()
+            sync?.changed()
+            return true
+        } catch {
+            message = "Could not add the authenticator. Check the setup key and settings."
+            return false
+        }
+    }
+
+    func deleteItem(_ item: VaultItem) {
+        guard session == .unlocked else { return }
+        do {
+            try vault.deleteItem(item.id, kind: item.kind)
+            issuedCodes.removeValue(forKey: item.id)
+            touch()
+            refresh()
+            sync?.changed()
+        } catch { message = "Could not delete the entry. Try again." }
     }
 
     func restore(url: URL, password: String) {

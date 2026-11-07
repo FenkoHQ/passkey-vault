@@ -13,6 +13,10 @@ enum TOTP {
             ["SHA1", "SHA256", "SHA512"].contains(entry.algorithm.uppercased()) && key(for: entry) != nil
     }
 
+    static func canonicalSecret(_ entry: TOTPEntry) -> String? {
+        key(for: entry)?.base64EncodedString()
+    }
+
     static func code(for entry: TOTPEntry, at date: Date = Date()) -> String? {
         guard isValid(entry), let key = key(for: entry) else { return nil }
         let counter: UInt64

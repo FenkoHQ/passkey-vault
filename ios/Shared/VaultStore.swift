@@ -134,9 +134,25 @@ final class VaultStore {
         guard passkeys.allSatisfy({ PasskeyRecord.fromJSON($0) != nil }) else { throw VaultError.invalidData }
         let totp = payload["totpEntries"] as? [[String: Any]] ?? []
         guard totp.allSatisfy({ TOTPEntry.fromJSON($0) != nil }) else { throw VaultError.invalidData }
-        // Import credentials, leaving this device's sync identity unchanged.
-        try saveSnapshotFromWeb(passkeys: encode(passkeys), totp: encode(totp), syncConfig: nil,
-                                syncDevices: nil, customRelays: nil)
+        // Explicit recovery advances revisions past tombstones; sync still respects deletions.
+        try archive.transaction { values in
+            let config = object(values[Key.syncConfig] ?? "{}")
+            let deletions = config["deletions"] as? [[String: Any]] ?? []
+            for (key, incoming, kind) in [(Key.passkeys, passkeys, "passkey"), (Key.totp, totp, "totp")] {
+                let restored = incoming.map { record in
+                    var result = record
+                    var time = max(Date().timeIntervalSince1970 * 1000, revision(record) + 1)
+                    for deletion in deletions where deletion["kind"] as? String == kind &&
+                        deletion["id"] as? String == record["id"] as? String {
+                        time = max(time, (deletion["deletedAt"] as? Double ?? 0) + 1)
+                    }
+                    result["updatedAt"] = time
+                    return result
+                }
+                values[key] = mergeEntries(values[key] ?? "[]", try encode(restored), deletions, kind)
+            }
+        }
+        updateCredentialIdentities(try loadPasskeys())
         return passkeys.count + totp.count
     }
 
@@ -312,8 +328,35 @@ final class VaultStore {
         }
     }
 
+    func addOTP(_ setup: OTPSetup) throws {
+        let record = try setup.record()
+        try archive.transaction { values in
+            var entries = try records(values[Key.totp])
+            entries.append(record)
+            values[Key.totp] = try encode(entries)
+        }
+    }
+
+    func deleteItem(_ id: String, kind: VaultItemKind) throws {
+        let key = kind == .passkey ? Key.passkeys : Key.totp
+        let deletionKind = kind == .passkey ? "passkey" : "totp"
+        try archive.transaction { values in
+            var entries = try records(values[key])
+            guard let index = entries.firstIndex(where: { ($0["id"] as? String ?? $0["credentialId"] as? String) == id }) else {
+                return
+            }
+            let record = entries.remove(at: index)
+            let time = max(Date().timeIntervalSince1970 * 1000, revision(record))
+            let deletion: [String: Any] = ["id": id, "kind": deletionKind, "deletedAt": time]
+            let config = mergeConfig(object(values[Key.syncConfig] ?? "{}"), ["deletions": [deletion]])
+            values[Key.syncConfig] = try encode(config)
+            values[key] = try encode(entries)
+        }
+        if kind == .passkey { updateCredentialIdentities(try loadPasskeys()) }
+    }
+
     func exportBackup(password: String) throws -> Data {
-        try VaultBackup.encrypt(Data(snapshotJSON().utf8), password: password)
+        try VaultBackup.encrypt(syncSnapshot(), password: password)
     }
 
     func importFile(_ url: URL, password: String) throws -> Int {
