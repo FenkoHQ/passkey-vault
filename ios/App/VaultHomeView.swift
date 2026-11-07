@@ -25,6 +25,8 @@ struct VaultHomeView: View {
     @State private var importing = false
     @State private var exporting = false
     @State private var document: BackupDocument?
+    @State private var addingOTP = false
+    @State private var deleting: VaultItem?
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private let amber = Color(red: 0.96, green: 0.65, blue: 0.14)
 
@@ -62,6 +64,8 @@ struct VaultHomeView: View {
                 document = nil
                 exporting = false
                 importing = false
+                addingOTP = false
+                deleting = nil
             }
         }
         .overlay {
@@ -85,6 +89,20 @@ struct VaultHomeView: View {
             if case .success(let url) = result { model.restore(url: url, password: password) }
             password = ""
             confirmation = ""
+        }
+        .sheet(isPresented: $addingOTP) { OTPSetupView(model: model) }
+        .confirmationDialog("Delete this entry?", isPresented: Binding(
+            get: { deleting != nil }, set: { if !$0 { deleting = nil } }
+        ), titleVisibility: .visible) {
+            if let item = deleting {
+                Button("Delete \(item.title)", role: .destructive) {
+                    model.deleteItem(item)
+                    deleting = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { deleting = nil }
+        } message: {
+            Text("This also deletes the entry from synced devices. Keep another way to sign in to the account.")
         }
     }
 
@@ -133,6 +151,9 @@ struct VaultHomeView: View {
                         .padding(.vertical, 6)
                     }
                     .accessibilityElement(children: .combine)
+                    .swipeActions {
+                        Button("Delete", role: .destructive) { deleting = item }
+                    }
                 }
             }
             .overlay {
@@ -144,7 +165,10 @@ struct VaultHomeView: View {
             .navigationTitle("Vault")
             .searchable(text: $search, prompt: "Search sites and accounts")
             .onChange(of: search) { _, _ in model.touch() }
-            .toolbar { Button("Lock", systemImage: "lock") { model.lock() } }
+            .toolbar {
+                Button("Add 2FA code", systemImage: "plus") { addingOTP = true }
+                Button("Lock", systemImage: "lock") { model.lock() }
+            }
         }
     }
 

@@ -48,6 +48,8 @@ canonical["digits"] = 6
 canonical["updatedAt"] = 5
 canonical["futureField"] = "keep"
 try vault.importBackup(JSONSerialization.data(withJSONObject: ["totpEntries": [canonical]]))
+let imported = try JSONSerialization.jsonObject(with: vault.syncSnapshot()) as! [String: Any]
+let importedRecord = (imported["totpEntries"] as! [[String: Any]])[0]
 require(try vault.items().first?.kind == .hotp && vault.items().first?.code == nil,
         "HOTP was previewed without committing its counter")
 require(try vault.issueHOTP("otp") == "755224", "First HOTP issue differs from RFC 4226")
@@ -68,10 +70,11 @@ require(Set(issued).count == 20, "Concurrent HOTP issuers reused a code")
 require(try vault.loadTOTP().first?.counter == 22, "Concurrent HOTP counter advances were lost")
 let snapshot = try JSONSerialization.jsonObject(with: Data(vault.snapshotJSON().utf8)) as! [String: Any]
 let record = (snapshot["totpEntries"] as! [[String: Any]])[0]
-require(record["updatedAt"] as? Int == 5 && record["futureField"] as? String == "keep", "HOTP issue changed unrelated fields")
+require(record["updatedAt"] as? Double == importedRecord["updatedAt"] as? Double &&
+        record["futureField"] as? String == "keep", "HOTP issue changed unrelated fields")
 let setup = try OTPSetup.fromURI("otpauth://totp/Example:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Example")
 try vault.addOTP(setup)
-let added = try vault.loadTOTP().first { $0.account == "alice" }!
+let added = try vault.loadTOTP().first { $0.id != "otp" && $0.account == "alice" }!
 require(TOTP.code(for: added, at: Date(timeIntervalSince1970: 59)) == "287082", "OTP setup changed the secret")
 let beforeDeletion = try vault.syncSnapshot()
 try vault.deleteItem(added.id, kind: .totp)
