@@ -9,6 +9,11 @@ options:
     iOS: "17.0"
   createIntermediateGroups: true
   groupSortPosition: top
+  postGenCommand: bash pin-packages.sh FenkoVault.xcodeproj
+
+packages:
+  VaultSync:
+    path: Sync
 
 settings:
   base:
@@ -37,6 +42,7 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
     dependencies:
       - target: CredentialProvider
+      - package: VaultSync
 
   CredentialProvider:
     type: app-extension

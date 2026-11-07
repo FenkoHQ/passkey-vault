@@ -32,6 +32,7 @@ jobs:
         run: |
           xcodegen generate
           xcodebuild -project FenkoVault.xcodeproj -scheme FenkoVault \
+            -onlyUsePackageVersionsFromResolvedFile \
             -derivedDataPath "$RUNNER_TEMP/FenkoVault-simulator" \
             -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
       - name: Launch the native app in Simulator
@@ -64,6 +65,7 @@ jobs:
         working-directory: ios
         run: |
           xcodebuild -project FenkoVault.xcodeproj -scheme FenkoVault \
+            -onlyUsePackageVersionsFromResolvedFile \
             -configuration Release -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/FenkoVault.xcarchive" \
             CODE_SIGNING_ALLOWED=NO archive
@@ -72,4 +74,5 @@ jobs:
         run: |
           xcodegen generate --spec project-devsync.yml
           xcodebuild -project FenkoVaultSync.xcodeproj -scheme FenkoVaultSync \
+            -onlyUsePackageVersionsFromResolvedFile \
             -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build

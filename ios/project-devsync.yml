@@ -9,6 +9,11 @@ options:
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
+  postGenCommand: bash pin-packages.sh FenkoVaultSync.xcodeproj
+
+packages:
+  VaultSync:
+    path: Sync
 
 settings:
   base:
@@ -35,3 +40,5 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCAL_DEVICE_TEST"
         # No CODE_SIGN_ENTITLEMENTS — default dev entitlements sign on a free team.
+    dependencies:
+      - package: VaultSync
